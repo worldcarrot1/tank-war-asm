@@ -3,7 +3,7 @@
 ; 用 GetAsyncKeyState 每个逻辑 tick 采样一次（而不是依赖
 ; WM_KEYDOWN 消息），保证帧率波动时输入节奏一致。
 ;
-; 键位：WASD 移动 / 空格开火
+; 键位：WASD 移动 / 空格开火 / R 重新开始
 ; 采样结果写入 game.asm 的输入快照变量，供 GameUpdate 消费。
 ; ============================================================
 
@@ -11,27 +11,22 @@
 .model flat, stdcall
 option casemap:none
 
-include windows.inc
-include user32.inc
-include kernel32.inc
-includelib user32.lib
-includelib kernel32.lib
-
-include ..\inc\game.inc
+include win32.inc
 
 extern inputUp      :dword
 extern inputDown    :dword
 extern inputLeft    :dword
 extern inputRight   :dword
 extern inputFire    :dword
+extern inputRestart :dword
 
 .code
 
 ; ------------------------------------------------------------
-; KeyDown —— 辅助宏过程：检测某键当前是否按下
-; 入参 eax = VK 码，返回 eax = 1(按下) / 0(抬起)
+; KeyDown —— 检测某键当前是否按下
+; 入参：vk = VK 码，返回 eax = 1(按下) / 0(抬起)
 ; ------------------------------------------------------------
-KeyDown proc vk: dword
+KeyDown proc vk: DWORD
     invoke GetAsyncKeyState, vk
     and eax, 8000h                   ; 取最高位：当前是否按下
     .if eax != 0
@@ -56,6 +51,8 @@ InputSample proc
     mov inputRight, eax
     invoke KeyDown, VK_SPACE
     mov inputFire, eax
+    invoke KeyDown, VK_R
+    mov inputRestart, eax
     ret
 InputSample endp
 

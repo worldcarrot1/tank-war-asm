@@ -4,27 +4,27 @@
 ;   - NetInit:   WSAStartup -> UDP socket -> bind NET_PORT
 ;   - NetFlush:  每 tick 由主循环调用：
 ;       1) 把本端坦克状态 + 开火事件打包成 NET_PKT
-;       2) sendto 给对方地址（首次由对方广播/手输 IP 建立）
+;       2) sendto 给对方地址（阶段 3 由广播/手输 IP 建立）
 ;       3) recvfrom 非阻塞收包，比对本端 seq 丢弃旧包，
 ;          把对方坦克状态覆盖写入 tanks[PLAYER_PEER]
-;   - 阶段 4 增加：UDP 广播发现对方（255.255.255.255:NET_PORT）
+;   - 阶段 3 增加：UDP 广播发现对方（255.255.255.255:NET_PORT）
 ; ============================================================
 
 .386
 .model flat, stdcall
 option casemap:none
 
-include windows.inc
-include kernel32.inc
-include ws2_32.inc
-includelib kernel32.lib
-includelib ws2_32.lib
+include win32.inc
+include game.inc
 
-include ..\inc\game.inc
+public NetInit
+public NetFlush
+public NetShutdown
 
-extern tanks       :TANK
+extern tanks        :TANK
 extern fireHappened :dword
-extern SpawnBullet :proc
+extern seqSelf      :word
+SpawnBullet PROTO stdcall :DWORD
 
 .data
     hSock       dd ?                 ; UDP socket 句柄
@@ -42,8 +42,8 @@ extern SpawnBullet :proc
 .code
 
 ; ------------------------------------------------------------
-; NetInit —— Winsock 初始化 + 建socket + bind
-; 阶段 4 会在此处增加「等待对方广播」或「手输对方 IP」入口
+; NetInit —— Winsock 初始化 + 建 socket + bind
+; 阶段 3 会在此处增加「等待对方广播」或「手输对方 IP」入口
 ; ------------------------------------------------------------
 NetInit proc
     invoke WSAStartup, 0202h, addr wsaData
@@ -73,7 +73,7 @@ NetInit endp
 ; PackState —— 把本端状态写进 sendPkt
 ; ------------------------------------------------------------
 PackState proc
-    mov sendPkt.magic, 'WT'          ; 'T','W' 小端存放
+    mov sendPkt.magic, 'WT'          ; 字节序为 'W','T'
     inc seqSelf
     mov ax, seqSelf
     mov sendPkt.seq, ax
@@ -94,14 +94,14 @@ PackState endp
 ; NetFlush —— 每 tick：发包 + 收包
 ; ------------------------------------------------------------
 NetFlush proc
-    ; ---- 1) 发送状态包 ----
+    ; ---- 1) 发送状态包（尚未联机时跳过）----
     .if peerKnown != 0
         call PackState
         invoke sendto, hSock, addr sendPkt, NET_PKT_SIZE, 0,
                addr peerAddr, SIZEOF sockaddr_in
     .endif
 
-    ; ---- 2) 非阻塞收包（每次可能积压多包，循环收干）----
+    ; ---- 2) 非阻塞收包（可能积压多包，循环收干）----
 RecvLoop:
     mov fromLen, SIZEOF sockaddr_in
     invoke recvfrom, hSock, addr recvBuf, NET_PKT_SIZE, 0,
@@ -112,27 +112,27 @@ RecvLoop:
     ; 校验 magic
     mov ax, word ptr recvBuf[0]
     .if ax == 'WT'
-        ; 丢弃乱序旧包
-        movzx eax, word ptr recvBuf[2]
-        movzx edx, peerSeq
-        .if ax > dx
-            mov peerSeq, ax
-            ; 对方坦克状态直接覆盖（状态同步）
-            movzx edx, word ptr recvBuf[4]
-            mov tanks[PLAYER_PEER*SIZEOF TANK].x, edx
-            movzx edx, word ptr recvBuf[6]
-            mov tanks[PLAYER_PEER*SIZEOF TANK].y, edx
-            movzx edx, byte ptr recvBuf[8]
-            mov tanks[PLAYER_PEER*SIZEOF TANK].dir, edx
-            movzx edx, byte ptr recvBuf[9]
-            mov tanks[PLAYER_PEER*SIZEOF TANK].hp, edx
-            mov tanks[PLAYER_PEER*SIZEOF TANK].alive, 1
-            ; 对方本 tick 开火 -> 本地也生成一颗子弹
-            movzx edx, byte ptr recvBuf[10]
-            .if edx & 1
-                invoke SpawnBullet, PLAYER_PEER
-            .endif
-        .endif
+        ; 丢弃乱序旧包（seq 用无符号比较）
+        mov ax, word ptr recvBuf[2]
+        mov dx, peerSeq
+        cmp ax, dx
+        jbe RecvLoop                 ; 旧包/重复包，丢弃
+        mov peerSeq, ax
+        ; 对方坦克状态直接覆盖（状态同步）
+        movzx edx, word ptr recvBuf[4]
+        mov tanks[PLAYER_PEER*SIZEOF TANK].x, edx
+        movzx edx, word ptr recvBuf[6]
+        mov tanks[PLAYER_PEER*SIZEOF TANK].y, edx
+        movzx edx, byte ptr recvBuf[8]
+        mov tanks[PLAYER_PEER*SIZEOF TANK].dir, edx
+        movzx edx, byte ptr recvBuf[9]
+        mov tanks[PLAYER_PEER*SIZEOF TANK].hp, edx
+        mov tanks[PLAYER_PEER*SIZEOF TANK].alive, 1
+        ; 对方本 tick 开火 -> 本地也生成一颗子弹
+        movzx edx, byte ptr recvBuf[10]
+        test edx, 1
+        jz RecvLoop
+        invoke SpawnBullet, PLAYER_PEER
     .endif
     jmp RecvLoop
 RecvDone:

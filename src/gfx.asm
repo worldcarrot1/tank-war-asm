@@ -4,69 +4,64 @@
 ; 内存位图，最后一轮 BitBlt 整幅上屏，避免闪烁。
 ;
 ; 阶段 1 用 FillRect 画纯色方块（坦克/子弹都是矩形），
-; 阶段 3 可替换为 LoadImage 加载的位图精灵，接口不变。
+; 后续可替换为 LoadImage 加载的位图精灵，接口不变。
+; 注意：Win32 ABI 中 eax/ecx/edx 跨 invoke 会被破坏，
+; 循环计数一律用 ebx/esi/edi（被调用方保证保存）。
 ; ============================================================
 
 .386
 .model flat, stdcall
 option casemap:none
 
-include windows.inc
-include user32.inc
-include kernel32.inc
-include gdi32.inc
-includelib user32.lib
-includelib kernel32.lib
-includelib gdi32.lib
-
-include ..\inc\game.inc
+include win32.inc
+include game.inc
 
 extern hWnd        :dword          ; main.asm 里的主窗口句柄
-extern mapData     :byte           ; game.inc 里的地图数组
-
-; ---- 需要读取的游戏状态（game.asm 定义）----
-extern tanks       :TANK
-extern bullets     :BULLET
+extern mapData     :byte           ; game.asm 里的地图数组
+extern tanks       :TANK           ; game.asm 里的坦克状态
+extern bullets     :BULLET         ; game.asm 里的子弹池
 
 .data
+    hdcWin      dd ?                ; 窗口 DC（临时缓存）
     hdcBack     dd ?                ; 后台内存 DC
     hbmBack     dd ?                ; 后台位图
     hbmOld      dd ?
-    brushEmpty  dd ?                ; 各类格子的画刷
-    brushBrick  dd ?
-    brushSteel  dd ?
-    brushSelf   dd ?                ; 自己的坦克（蓝）
-    brushPeer   dd ?                ; 对方坦克（红）
-    brushBullet dd ?
+    brushEmpty  dd ?                ; 空地：黑
+    brushBrick  dd ?                ; 砖墙：砖红
+    brushSteel  dd ?                ; 钢墙：灰
+    brushSelf   dd ?                ; 己方坦克：橙
+    brushPeer   dd ?                ; 对方坦克：蓝
+    brushBullet dd ?                ; 子弹：白
 
 .code
 
 ; ------------------------------------------------------------
 ; GfxInit —— 创建后台缓冲与画刷
+; 颜色为 COLORREF（0x00BBGGRR，GDI 的 BGR 序）
 ; ------------------------------------------------------------
 GfxInit proc
     invoke GetDC, hWnd
-    mov edx, eax                     ; 暂存窗口 DC
-    invoke CreateCompatibleDC, edx
+    mov hdcWin, eax
+    invoke CreateCompatibleDC, hdcWin
     mov hdcBack, eax
-    invoke CreateCompatibleBitmap, edx, WND_W, WND_H
+    invoke CreateCompatibleBitmap, hdcWin, WND_W, WND_H
     mov hbmBack, eax
     invoke SelectObject, hdcBack, hbmBack
     mov hbmOld, eax
-    invoke ReleaseDC, hWnd, edx
+    invoke ReleaseDC, hWnd, hdcWin
 
     invoke CreateSolidBrush, 00000000h
-    mov brushEmpty, eax              ; 空地：黑
-    invoke CreateSolidBrush, 00804020h
-    mov brushBrick, eax              ; 砖墙：暗橙红（GDI 是 BGR 序）
+    mov brushEmpty, eax
+    invoke CreateSolidBrush, 00004080h
+    mov brushBrick, eax
     invoke CreateSolidBrush, 00A0A0A0h
-    mov brushSteel, eax              ; 钢墙：灰
-    invoke CreateSolidBrush, 00E07000h
-    mov brushSelf, eax               ; 己方：橙蓝 0000E070? 见下
-    invoke CreateSolidBrush, 0000C0F0h
+    mov brushSteel, eax
+    invoke CreateSolidBrush, 000080F0h
+    mov brushSelf, eax
+    invoke CreateSolidBrush, 00F08000h
     mov brushPeer, eax
     invoke CreateSolidBrush, 00FFFFFFh
-    mov brushBullet, eax             ; 子弹：白
+    mov brushBullet, eax
     ret
 GfxInit endp
 
@@ -77,21 +72,18 @@ GfxRender proc
     local rc:RECT
 
     ; 1) 清屏为空地颜色
-    invoke SelectObject, hdcBack, brushEmpty
     mov rc.left, 0
     mov rc.top, 0
     mov rc.right, WND_W
     mov rc.bottom, WND_H
     invoke FillRect, hdcBack, addr rc, brushEmpty
 
-    ; 2) 逐格画地图（esi 遍历 mapData）
-    xor esi, esi                     ; 格子索引
-    xor edi, edi                     ; 行号
+    ; 2) 逐格画地图：esi=格子索引，edi=行，ebx=列
+    xor esi, esi
+    xor edi, edi
 RowLoop:
-    xor ebx, ebx                     ; 列号
+    xor ebx, ebx
 ColLoop:
-    mov al, mapData[esi]
-    ; 计算该格像素矩形
     mov eax, ebx
     imul eax, CELL
     mov rc.left, eax
@@ -102,7 +94,7 @@ ColLoop:
     mov rc.top, eax
     add eax, CELL
     mov rc.bottom, eax
-    ; 按格子类型选画刷
+
     mov al, mapData[esi]
     .if al == TILE_BRICK
         invoke FillRect, hdcBack, addr rc, brushBrick
@@ -119,12 +111,12 @@ ColLoop:
         jmp RowLoop
     .endif
 
-    ; 3) 画两辆坦克（32x32 矩形，死亡跳过）
-    mov ecx, 2
+    ; 3) 画两辆坦克（32x32 矩形，死亡跳过）；ebx=玩家编号
+    mov ebx, 2
 TankLoop:
-    dec ecx
+    dec ebx
     mov eax, SIZEOF TANK
-    imul eax, ecx
+    imul eax, ebx
     lea esi, tanks
     add esi, eax
     mov eax, (TANK ptr [esi]).alive
@@ -137,21 +129,21 @@ TankLoop:
         mov rc.top, eax
         add eax, CELL
         mov rc.bottom, eax
-        .if ecx == PLAYER_SELF
+        .if ebx == PLAYER_SELF
             invoke FillRect, hdcBack, addr rc, brushSelf
         .else
             invoke FillRect, hdcBack, addr rc, brushPeer
         .endif
     .endif
-    .if ecx > 0
+    .if ebx > 0
         jmp TankLoop
     .endif
 
-    ; 4) 画子弹（8x8 矩形）
-    xor ecx, ecx
+    ; 4) 画子弹（8x8 矩形，画在格子中心）；ebx=槽位号
+    xor ebx, ebx
 BulletLoop:
     mov eax, SIZEOF BULLET
-    imul eax, ecx
+    imul eax, ebx
     lea esi, bullets
     add esi, eax
     mov eax, (BULLET ptr [esi]).active
@@ -168,16 +160,16 @@ BulletLoop:
         mov rc.bottom, eax
         invoke FillRect, hdcBack, addr rc, brushBullet
     .endif
-    inc ecx
-    .if ecx < MAX_BULLETS
+    inc ebx
+    .if ebx < MAX_BULLETS
         jmp BulletLoop
     .endif
 
     ; 5) 整幅上屏
     invoke GetDC, hWnd
-    mov edx, eax
-    invoke BitBlt, edx, 0, 0, WND_W, WND_H, hdcBack, 0, 0, SRCCOPY
-    invoke ReleaseDC, hWnd, edx
+    mov hdcWin, eax
+    invoke BitBlt, hdcWin, 0, 0, WND_W, WND_H, hdcBack, 0, 0, SRCCOPY
+    invoke ReleaseDC, hWnd, hdcWin
     ret
 GfxRender endp
 

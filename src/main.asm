@@ -24,11 +24,13 @@ GameUpdate  PROTO                   ; game.asm 推进一个逻辑 tick
 NetInit     PROTO                   ; net.asm  Winsock 初始化 + 绑定端口
 NetFlush    PROTO                   ; net.asm  发送状态包 + 收包应用
 NetShutdown PROTO                   ; net.asm  关闭 socket
+SelfTestRun PROTO                   ; game.asm 无头自测（tankwar selftest）
 
 .data
     public hWnd                 ; gfx.asm / net.asm 需要引用主窗口句柄
     className   db "TankWarAsmWnd", 0
-    appName     db "Tank War ASM - WASD move / SPACE fire / R restart", 0
+    appName     db "Tank War ASM M1 - P1: WASD+SPACE | P2: Arrows+ENTER | R restart", 0
+    selftestArg db "selftest"
     hInstance   dd ?
     hWnd        dd ?
     msg         MSG <?>
@@ -138,5 +140,32 @@ ExitLoop:
 WinMain endp
 
 start:
+    ; 命令行含 "selftest" -> 跑无头自测后退出
+    invoke GetCommandLineA
+    mov esi, eax
+ArgScan:
+    movzx eax, byte ptr [esi]
+    .if eax == 0
+        jmp NoSelfTest
+    .endif
+    mov ebx, esi
+    mov edi, offset selftestArg
+    mov ecx, 8
+ArgCmp:
+    mov al, [ebx]
+    cmp al, [edi]
+    jne ArgNext
+    inc ebx
+    inc edi
+    dec ecx
+    .if ecx != 0
+        jmp ArgCmp
+    .endif
+    invoke SelfTestRun
+    invoke ExitProcess, 0
+ArgNext:
+    inc esi
+    jmp ArgScan
+NoSelfTest:
     invoke WinMain
 end start

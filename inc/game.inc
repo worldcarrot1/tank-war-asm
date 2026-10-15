@@ -1,24 +1,32 @@
 ; ============================================================
-; game.inc —— 公共常量与结构体定义
-; 所有模块共享的定义集中在这里，改协议/平衡性只动这个文件
+; game.inc —— 公共常量与结构体定义（v2 对战版）
+; 所有模块共享的定义集中在这里，改协议/平衡性只动这个文件。
+; 对应设计文档 docs/GAME_DESIGN.md v2（纯对战射击）。
+; 注意：变量（mapData / tanks / bullets 等）统一定义在 game.asm，
+; 其他模块用 extern 声明引用，本文件只放常量与结构体，避免重复定义。
 ; ============================================================
 
 ; ---- 窗口与渲染 ----
 WND_W       equ 640                 ; 窗口客户区宽度（像素）
 WND_H       equ 480                 ; 窗口客户区高度（像素）
 CELL        equ 32                  ; 地图格子边长（像素）
+SUBPX       equ 16                  ; 砖墙子块边长（CELL/2，2x2 子块）
 COLS        equ WND_W / CELL        ; 20 列
 ROWS        equ WND_H / CELL        ; 15 行
 
 ; ---- 游戏节奏 ----
 TICK_MS     equ 16                  ; 约 60 tick/秒
-; NET_SEND_SKIP equ 2                ; 每 2 tick 发一次网络包（约 30Hz）
 
-; ---- 地图格子类型 ----
-TILE_EMPTY  equ 0
-TILE_BRICK  equ 1                   ; 砖墙，可被子弹摧毁
-TILE_STEEL  equ 2                   ; 钢墙，不可摧毁
-TILE_BASE   equ 3                   ; 基地，被摧毁判负
+; ---- 地图格子类型（字符画 -> 运行时编码）----
+TILE_EMPTY  equ 0                   ; '.'
+TILE_STEEL  equ 1                   ; '#'  子弹反弹
+TILE_BRICK  equ 2                   ; 'b'  清子块后反弹，整格空后穿过
+TILE_WATER  equ 3                   ; '~'  挡坦克，子弹穿过
+TILE_ICE    equ 4                   ; '-'  坦克滑行，子弹穿过
+ARENA_COUNT equ 5                   ; 内置对战图 ARENA1..5
+
+; ---- 砖墙子块（每格 4 bit）----
+BRICK_FULL  equ 00Fh                ; bit0 左上 bit1 右上 bit2 左下 bit3 右下
 
 ; ---- 方向 ----
 DIR_UP      equ 0
@@ -26,42 +34,30 @@ DIR_RIGHT   equ 1
 DIR_DOWN    equ 2
 DIR_LEFT    equ 3
 
-; ---- 坦克属性 ----
+; ---- 坦克 ----
+MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
 TANK_SPEED  equ 2                   ; 每 tick 移动像素
 TANK_HP     equ 3
-MAX_BULLETS equ 8                   ; 场上子弹上限（固定数组，便于汇编遍历）
-BULLET_SPEED equ 6
-
-; ---- 玩家编号 ----
+FIRE_CD     equ 20                  ; 开火冷却 tick（§3）
 PLAYER_SELF equ 0
 PLAYER_PEER equ 1
+PLAYER_P2   equ 1                   ; 本地第二坦克（对练用）
 
-; ============================================================
-; 结构体定义
-; ============================================================
+; ---- 冰面滑行 ----
+ICE_SLIDE_MIN equ 6                 ; 滑行 tick 下限
+ICE_SLIDE_RNG equ 5                 ; 6 + rand%5 -> 6..10
 
-; 坦克状态（一个玩家一条）
-TANK STRUCT
-    x       dd ?                     ; 左上角像素坐标
-    y       dd ?
-    dir     dd ?                     ; DIR_UP..DIR_LEFT
-    hp      dd ?
-    alive   dd ?                     ; 0=死亡 1=存活
-    fireCd  dd ?                     ; 开火冷却剩余 tick
-TANK ENDS
+; ---- 子弹（§3）----
+MAX_BULLETS     equ 56              ; 全场弹池
+MAX_PER_TANK    equ 10              ; 每辆坦克同屏上限
+BULLET_SPEED    equ 6               ; px/tick
+BULLET_SIZE_PX  equ 8               ; 弹体 8x8
+BULLET_LIFE     equ 600             ; 存活 600 tick（10 秒）自动消失
+BULLET_MAX_BOUNCE equ 10            ; 反弹 >=10 次消失
 
-; 子弹（场上所有子弹存进固定数组 bullets[MAX_BULLETS]）
-BULLET STRUCT
-    x       dd ?
-    y       dd ?
-    dir     dd ?
-    owner   dd ?                     ; PLAYER_SELF / PLAYER_PEER
-    active  dd ?                     ; 0=空闲槽位 1=在飞
-BULLET ENDS
-
-; 网络状态包（见 docs/PROTOCOL.md，定长便于汇编收发）
+; ---- 网络状态包（v1 兼容，M3 扩展为 slot 版）----
 NET_PKT STRUCT
-    magic   dw ?                     ; 标识字 'TW'
+    magic   dw ?                     ; 标识 'TW'
     seq     dw ?                     ; 包序号，用于丢弃乱序旧包
     tx      dw ?                     ; 本端坦克 tile 坐标 x
     ty      dw ?                     ; 本端坦克 tile 坐标 y
@@ -77,5 +73,32 @@ NET_PKT ENDS
 
 NET_PKT_SIZE equ SIZEOF NET_PKT
 NET_PORT    equ 28888                ; 本地监听端口（收发同端口）
-; 注意：变量（mapData / tanks / bullets 等）统一定义在 game.asm，
-; 其他模块用 extern 声明引用，本文件只放常量与结构体，避免重复定义。
+
+; ============================================================
+; 结构体定义
+; ============================================================
+
+; 坦克状态（一个玩家一条，tanks[MAX_PLAYERS]）
+TANK STRUCT
+    x       dd ?                     ; 左上角像素坐标
+    y       dd ?
+    dir     dd ?                     ; DIR_UP..DIR_LEFT
+    hp      dd ?
+    alive   dd ?                     ; 0=死亡 1=存活
+    fireCd  dd ?                     ; 开火冷却剩余 tick
+    slide   dd ?                     ; 冰面滑行剩余 tick（0=无）
+    sdir    dd ?                     ; 滑行方向
+TANK ENDS
+
+; 子弹（全场固定池 bullets[MAX_BULLETS]）
+; 反弹物理：存速度分量 vx/vy，反弹 = 对应分量取反（零乘除）
+BULLET STRUCT
+    x       dd ?                     ; 弹体 8x8 左上角像素
+    y       dd ?
+    vx      dd ?                     ; 速度分量，0 或 ±BULLET_SPEED
+    vy      dd ?
+    owner   dd ?                     ; 所属坦克槽位
+    active  dd ?                     ; 0=空闲槽位 1=在飞
+    bounces dd ?                     ; 已反弹次数
+    age     dd ?                     ; 已存活 tick 数
+BULLET ENDS

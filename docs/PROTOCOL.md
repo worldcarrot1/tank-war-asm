@@ -1,5 +1,9 @@
 # 网络协议设计（v0）
 
+> 注（M1）：BULLET 结构已改为弹道向量模型 —— `x/y/vx/vy/owner/active/
+> bounces/age`（32 字节），反弹 = 对应轴速度分量取反。NET_PKT 本身未变，
+> slot 化扩展（tlvl/tpow/事件字节/地形事件重发）在 M3 落地时同步本文件。
+
 ## 基本设定
 
 | 项 | 值 |

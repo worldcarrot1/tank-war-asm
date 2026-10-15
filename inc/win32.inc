@@ -28,6 +28,11 @@ PM_REMOVE   equ 0001h
 
 ; ---- 虚拟键码 ----
 VK_SPACE    equ 020h
+VK_RETURN   equ 00Dh
+VK_LEFT     equ 025h
+VK_UP       equ 026h
+VK_RIGHT    equ 027h
+VK_DOWN     equ 028h
 VK_A        equ 041h
 VK_D        equ 044h
 VK_R        equ 052h
@@ -117,6 +122,14 @@ GetModuleHandleA PROTO stdcall :DWORD
 GetTickCount     PROTO stdcall
 Sleep            PROTO stdcall :DWORD
 ExitProcess      PROTO stdcall :DWORD
+GetCommandLineA  PROTO stdcall
+CreateFileA      PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+WriteFile        PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+CloseHandle      PROTO stdcall :DWORD
+
+GENERIC_WRITE        equ 40000000h
+CREATE_ALWAYS        equ 2
+FILE_ATTRIBUTE_NORMAL equ 00000080h
 
 ; user32
 RegisterClassA     PROTO stdcall :DWORD

@@ -35,6 +35,7 @@ extern matchOver   :dword          ; 比赛结束标志（game.asm）
 extern langFlag    :dword          ; 0=英 1=中（ui.asm）
 extern menuFont    :dword          ; 菜单大字体（ui.asm）
 extern fontSmall   :dword          ; 小字体（ui.asm）
+extern playerName  :byte           ; 玩家名（ui.asm，每人 16 字节）
 
 WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
 UiTextZ   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD   ; ui.asm：ASCII 文本
@@ -149,6 +150,85 @@ GfxInit proc
     mov penPreview, eax
     ret
 GfxInit endp
+
+; ------------------------------------------------------------
+; DrawHud —— 底部计分条：坦克色块图标 + 玩家名 + 分数（每人均分）
+; ------------------------------------------------------------
+DrawHud proc uses ebx esi edi
+    local rc:RECT
+    xor ebx, ebx
+DH_Slot:
+    .if ebx >= numPlayers
+        ret
+    .endif
+    mov eax, ebx
+    imul eax, eax, MAP_W/4
+    mov esi, eax                    ; x0（槽位区左缘）
+    ; 坦克颜色小图标（14x14，参照坦克深色方圆风格）
+    mov eax, esi
+    add eax, 10
+    mov rc.left, eax
+    add eax, 14
+    mov rc.right, eax
+    mov eax, MAP_H + 9
+    mov rc.top, eax
+    add eax, 14
+    mov rc.bottom, eax
+    mov eax, ebx
+    .if eax == 0
+        invoke FillRect, hdcBack, addr rc, brushP1
+    .elseif eax == 1
+        invoke FillRect, hdcBack, addr rc, brushP2
+    .elseif eax == 2
+        invoke FillRect, hdcBack, addr rc, brushP3
+    .else
+        invoke FillRect, hdcBack, addr rc, brushP4
+    .endif
+    invoke FrameRect, hdcBack, addr rc, brushMortar
+    ; 玩家名
+    mov eax, ebx
+    imul eax, eax, 16
+    add eax, offset playerName
+    lea edi, scoreBuf
+    xor ecx, ecx
+DH_Name:
+    mov dl, [eax+ecx]
+    .if dl == 0
+        jmp DH_NameDone
+    .endif
+    mov [edi+ecx], dl
+    inc ecx
+    .if ecx < 15
+        jmp DH_Name
+    .endif
+DH_NameDone:
+    mov byte ptr [edi+ecx], 0
+    mov eax, esi
+    add eax, 32
+    invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, ecx
+    ; 分数（两位，槽位区右侧）
+    mov eax, ebx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov eax, (TANK ptr [eax]).score
+    .if eax > 99
+        mov eax, 99
+    .endif
+    xor edx, edx
+    mov ecx, 10
+    div ecx
+    add al, '0'
+    add dl, '0'
+    lea edi, scoreBuf
+    mov [edi], al
+    mov [edi+1], dl
+    mov byte ptr [edi+2], 0
+    mov eax, esi
+    add eax, MAP_W/4 - 44
+    invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, 2
+    inc ebx
+    jmp DH_Slot
+DrawHud endp
 
 ; ------------------------------------------------------------
 ; FormatScore —— 生成比分文本 "P1 SS : SS P2"，返回 eax = 长度
@@ -305,7 +385,6 @@ DrawTankBadges proc uses ebx esi edi tk: dword
         add eax, 8
         mov r2.right, eax
         mov eax, (TANK ptr [esi]).y
-        add eax, HUD_H
         mov r2.top, eax
         add eax, 8
         mov r2.bottom, eax
@@ -321,7 +400,7 @@ DrawTankBadges proc uses ebx esi edi tk: dword
         add eax, TANK_SIZE+8
         mov r2.right, eax
         mov eax, (TANK ptr [esi]).y
-        add eax, HUD_H-4
+        sub eax, 4
         mov r2.top, eax
         add eax, TANK_SIZE+8
         mov r2.bottom, eax
@@ -335,7 +414,7 @@ DrawTankBadges proc uses ebx esi edi tk: dword
         add eax, 5
         mov r2.right, eax
         mov eax, (TANK ptr [esi]).y
-        add eax, HUD_H + TANK_SIZE-5
+        add eax, TANK_SIZE-5
         mov r2.top, eax
         add eax, 5
         mov r2.bottom, eax
@@ -349,7 +428,6 @@ DrawTankBadges proc uses ebx esi edi tk: dword
         add eax, 5
         mov r2.right, eax
         mov eax, (TANK ptr [esi]).y
-        add eax, HUD_H
         mov r2.top, eax
         add eax, 5
         mov r2.bottom, eax
@@ -364,7 +442,7 @@ DrawTankBadges proc uses ebx esi edi tk: dword
         add eax, 5
         mov r2.right, eax
         mov eax, (TANK ptr [esi]).y
-        add eax, HUD_H + TANK_SIZE-5
+        add eax, TANK_SIZE-5
         mov r2.top, eax
         add eax, 5
         mov r2.bottom, eax
@@ -379,7 +457,7 @@ DrawTankBadges proc uses ebx esi edi tk: dword
         add eax, 5
         mov r2.right, eax
         mov eax, (TANK ptr [esi]).y
-        add eax, HUD_H + TANK_SIZE-5
+        add eax, TANK_SIZE-5
         mov r2.top, eax
         add eax, 5
         mov r2.bottom, eax
@@ -440,18 +518,14 @@ GfxRender proc
     mov rc.right, WND_W
     mov rc.bottom, WND_H
     invoke FillRect, hdcBack, addr rc, brushBg
-    mov rc.bottom, HUD_H
+    ; 计分条在地图下方：坦克色块图标 + 玩家名 + 分数
+    mov rc.top, MAP_H
+    mov rc.bottom, WND_H
     invoke FillRect, hdcBack, addr rc, brushHud
     invoke SetBkMode, hdcBack, TRANSPARENT
     invoke SetTextColor, hdcBack, 00FFFFFFh
-    invoke FormatScore
-    mov txtLen, eax                   ; 保存长度（勿被居中计算覆盖）
-    mov eax, txtLen
-    shl eax, 3                        ; len*8（近似字符宽）
-    mov ecx, MAP_W
-    sub ecx, eax
-    sar ecx, 1
-    invoke TextOutA, hdcBack, ecx, 9, offset scoreBuf, txtLen
+    invoke SelectObject, hdcBack, fontSmall
+    invoke DrawHud
 
     ; 1a) 地面层（先画，位于墙/坦克下面）：水/冰/泥 整格铺满
     xor esi, esi
@@ -466,7 +540,6 @@ GroundCol:
     mov rc.right, eax
     mov eax, edi
     imul eax, CELL
-    add eax, HUD_H
     mov rc.top, eax
     add eax, CELL
     mov rc.bottom, eax
@@ -647,7 +720,6 @@ BR_Done:
         add eax, PICKUP_SIZE
         mov rc.right, eax
         mov eax, pickupY
-        add eax, HUD_H
         mov rc.top, eax
         add eax, PICKUP_SIZE
         mov rc.bottom, eax
@@ -660,7 +732,6 @@ BR_Done:
         mov eax, pickupX
         add eax, 6
         mov ecx, pickupY
-        add ecx, HUD_H+1
         invoke TextOutA, hdcBack, eax, ecx, offset skillNum, 1
     .endif
 
@@ -685,7 +756,6 @@ TankLoop:
         mov eax, (TANK ptr [esi]).x
         mov ecx, eax                   ; px
         mov eax, (TANK ptr [esi]).y
-        add eax, HUD_H
         mov edx, eax                   ; py（含计分条偏移）
         mov eax, (TANK ptr [esi]).dir
         invoke DrawTank, hdcBack, ecx, edx, eax
@@ -698,7 +768,6 @@ TankLoop:
         push esi
         mov eax, (TANK ptr [esi]).phantomX
         mov ecx, (TANK ptr [esi]).phantomY
-        add ecx, HUD_H
         invoke DrawPhantom, hdcBack, eax, ecx
         pop esi
         pop ebx
@@ -723,7 +792,6 @@ BulletLoop:
         add eax, 6
         mov rc.right, eax
         mov eax, (BULLET ptr [esi]).y
-        add eax, HUD_H + 1
         mov rc.top, eax
         add eax, 6
         mov rc.bottom, eax
@@ -740,7 +808,6 @@ BulletLoop:
     .if eax > 0 && laserN >= 2
         invoke SelectObject, hdcBack, penLaser
         mov eax, laserY[0]
-        add eax, HUD_H
         invoke MoveToEx, hdcBack, laserX[0], eax, 0
         xor ebx, ebx
 GL_Seg:
@@ -750,7 +817,6 @@ GL_Seg:
             mov edx, ebx
             shl edx, 2
             mov eax, laserY[edx]
-            add eax, HUD_H
             mov ecx, laserX[edx]
             invoke LineTo, hdcBack, ecx, eax
             jmp GL_Seg
@@ -760,7 +826,6 @@ GL_Seg:
     .if eax != -1 && prevN >= 2
         invoke SelectObject, hdcBack, penPreview
         mov eax, prevY[0]
-        add eax, HUD_H
         invoke MoveToEx, hdcBack, prevX[0], eax, 0
         xor ebx, ebx
 GP_Seg:
@@ -770,7 +835,6 @@ GP_Seg:
             mov edx, ebx
             shl edx, 2
             mov eax, prevY[edx]
-            add eax, HUD_H
             mov ecx, prevX[edx]
             invoke LineTo, hdcBack, ecx, eax
             jmp GP_Seg

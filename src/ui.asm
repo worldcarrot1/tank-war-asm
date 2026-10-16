@@ -26,6 +26,7 @@ public netMode
 public menuFont
 public fontSmall
 public langFlag
+public playerName
 public UiInit
 public UiTick
 public UiRender
@@ -50,6 +51,7 @@ extern hSock     :dword
 
 ; win32.inc 未收录的鼠标 API 原型与常量
 VK_LBUTTON     equ 001h
+VK_BACK        equ 008h
 GetCursorPos   PROTO stdcall :DWORD
 ScreenToClient PROTO stdcall :DWORD,:DWORD
 
@@ -74,6 +76,9 @@ RST_H      equ 30
     menuSel     dd 0
     numSel      dd 2
     roundsSel   dd 11                  ; 人数页可调的比赛局数（11..51 奇数）
+    playerName  db "P1", 0, 13 dup (0), "P2", 0, 13 dup (0)
+                db "P3", 0, 13 dup (0), "P4", 0, 13 dup (0)   ; 每人 16 字节
+    editSlot    dd -1                  ; 正在改名的容器槽位（-1=无）
     setSel      dd 0
     rebindWait  dd 0
     prevUp      dd 0
@@ -138,6 +143,8 @@ RST_H      equ 30
     szNumR      db ">>", 0
     szRounds    db "ROUNDS", 0
     szHint      db "ENTER: CONFIRM   ESC: BACK", 0
+    szNameHint  db "CLICK NAME TO RENAME", 0
+    szNameEdit  db "TYPE A NAME, ENTER TO OK", 0
     szReset     db "RESET ALL KEYS", 0
     szReb2      db "PRESS ANY KEY ... (ESC = CANCEL)", 0
     szSetT      db "KEY SETTINGS", 0
@@ -164,6 +171,8 @@ RST_H      equ 30
     CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
     CN_ROUNDS dw 5c40h,6570h, 0                                          ; 局数
     CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
+    CN_NAMEHINT dw 70B9h,51FBh,540Dh,5B57h,53EFh,6539h,540Dh, 0   ; 点击名字可改名
+    CN_NAMEEDIT dw 8F93h,5165h,540Dh,5B57h,56DEh,8F66h,786Eh,8BA4h, 0 ; 输入名字回车确认
     CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
     CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0ff08h,0045h,0073h,0063h,0020h,003dh,0020h,53d6h,6d88h,0ff09h, 0 ; 请按任意键（Esc = 取消）
     CN_KEYS dw 952eh,4f4dh, 0                                            ; 键位
@@ -452,7 +461,8 @@ IpToStr endp
 
 ; ------------------------------------------------------------
 ; NumSelHitTest -- 人数页鼠标命中测试
-; 返回 eax: 0..19 = 键位槽位（slot*5+动作），-2 = 重置按钮，-1 = 无
+; 返回 eax: 0..19 = 键位槽位（slot*KEY_PER+动作），-2 = 重置按钮，
+;           -3-slot = 容器标题（点击改名），-1 = 无
 ; ------------------------------------------------------------
 NumSelHitTest proc uses ebx esi
     ; 重置按钮（容器区右下角）
@@ -473,6 +483,13 @@ NHT_Box:
     mov ecx, eax                     ; ecx = 容器左缘
     add eax, KBBOX_W
     .if mouseX >= ecx && mouseX < eax
+        ; 容器标题区（P1..P4，y KBBOX_Y+4 .. +30）-> 改名
+        mov eax, mouseY
+        .if eax >= KBBOX_Y+4 && eax < KBBOX_Y+30
+            mov eax, -3
+            sub eax, ebx             ; -3-slot
+            ret
+        .endif
         mov edx, KBBOX_Y + KBROW_Y0  ; 首行顶部
         xor esi, esi
 NHT_Row:
@@ -598,6 +615,75 @@ UT_MMouseDone:
 
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
+        ; ---- 玩家名编辑：点击容器标题进入；字符输入；Enter/Esc 确认 ----
+        .if editSlot != -1
+            inc blinkTick
+            invoke KeyEdge, VK_RETURN, addr prevEnter
+            .if eax != 0
+                mov editSlot, -1
+            .else
+                invoke GetAsyncKeyState, VK_ESCAPE
+                and eax, 8000h
+                .if eax != 0
+                    mov editSlot, -1
+                .else
+                    invoke GetAsyncKeyState, VK_BACK
+                    and eax, 1
+                    .if eax != 0
+                        ; 删尾字符
+                        mov eax, editSlot
+                        imul eax, eax, 16
+                        add eax, offset playerName
+                        mov edi, eax
+                        xor ecx, ecx
+UTN_BLen:
+                        cmp byte ptr [edi+ecx], 0
+                        je UTN_BCut
+                        inc ecx
+                        .if ecx < 14
+                            jmp UTN_BLen
+                        .endif
+UTN_BCut:
+                        .if ecx > 0
+                            mov byte ptr [edi+ecx-1], 0
+                        .endif
+                    .endif
+                    ; 可打印字符 0x20..0x5A（空格/数字/大写字母），0x1 边沿位
+                    mov scanVk, 20h
+UTN_Scan:
+                    mov eax, scanVk
+                    .if eax >= 5Bh
+                        jmp UTN_ScanDone
+                    .endif
+                    invoke GetAsyncKeyState, eax
+                    and eax, 1
+                    .if eax != 0
+                        mov eax, editSlot
+                        imul eax, eax, 16
+                        add eax, offset playerName
+                        mov edi, eax
+                        xor ecx, ecx
+UTN_Len:
+                        cmp byte ptr [edi+ecx], 0
+                        je UTN_Append
+                        inc ecx
+                        .if ecx < 14
+                            jmp UTN_Len
+                        .endif
+UTN_Append:
+                        .if ecx < 12
+                            mov edx, scanVk
+                            mov [edi+ecx], dl
+                            mov byte ptr [edi+ecx+1], 0
+                        .endif
+                    .endif
+                    inc scanVk
+                    jmp UTN_Scan
+UTN_ScanDone:
+                .endif
+            .endif
+            jmp UT_Done              ; 编辑改名中：屏蔽本页其他操作
+        .endif
         ; 人数变少时改键目标可能指向已隐藏的容器 -> 清理
         mov eax, numSel
         imul eax, eax, KEY_PER
@@ -687,6 +773,10 @@ UT_Scan2Done:
                     mov rebindSlot, eax      ; 点击键位 -> 闪烁等待新键
                 .elseif eax == -2
                     invoke InitKeyDefaults   ; 重置所有更改按键
+                .elseif eax <= -3
+                    neg eax                  ; eax = 3 + slot
+                    sub eax, 3
+                    mov editSlot, eax        ; 点击容器标题 -> 改名该槽位
                 .else
                     ; PLAYERS << 400..460, y190..242
                     mov eax, mouseX
@@ -925,13 +1015,33 @@ NS_Box:
         add eax, KBBOX_H
         mov boxRc.bottom, eax
         invoke FrameRect, hdcBack, addr boxRc, boxBrush
-        ; 容器标题 P1..P4
-        lea edi, uiBuf
-        mov byte ptr [edi], 'P'
+        ; 容器标题：玩家名（可点击改名；编辑中光标 '_' 闪烁）
         mov eax, ebx
-        add al, '1'
-        mov [edi+1], al
-        mov byte ptr [edi+2], 0
+        imul eax, eax, 16
+        add eax, offset playerName
+        lea edi, uiBuf
+        xor ecx, ecx
+NT_Copy:
+        mov dl, [eax+ecx]
+        .if dl == 0
+            jmp NT_Copied
+        .endif
+        mov [edi+ecx], dl
+        inc ecx
+        .if ecx < 14
+            jmp NT_Copy
+        .endif
+NT_Copied:
+        .if ebx == editSlot
+            mov eax, blinkTick
+            shr eax, 3
+            and eax, 1
+            .if eax != 0
+                mov byte ptr [edi+ecx], '_'
+                inc ecx
+            .endif
+        .endif
+        mov byte ptr [edi+ecx], 0
         invoke UiTextZ, hdcBack, boxRc.left, KBBOX_Y+8, offset uiBuf, colDark
         ; 5 行键位：0上 1下 2左 3右 4开火 5技能
         mov rowY, KBBOX_Y + KBROW_Y0
@@ -1008,8 +1118,11 @@ NS_BoxDone:
         ; ---- 底部提示：改键等待时显示引导，否则显示操作提示 ----
         .if rebindSlot != -1
             invoke UiTextL, hdcBack, 360, 600, offset szReb2, offset CN_REB2, colHi
+        .elseif editSlot != -1
+            invoke UiTextL, hdcBack, 350, 600, offset szNameEdit, offset CN_NAMEEDIT, colHi
         .else
-            invoke UiTextL, hdcBack, 380, 600, offset szHint, offset CN_HINT, colGray
+            invoke UiTextL, hdcBack, 330, 600, offset szHint, offset CN_HINT, colGray
+            invoke UiTextL, hdcBack, 620, 600, offset szNameHint, offset CN_NAMEHINT, colGray
         .endif
         invoke SelectObject, hdcBack, menuFont
 

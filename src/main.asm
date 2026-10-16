@@ -32,6 +32,7 @@ UiTick    PROTO
 UiRender  PROTO
 extern gameState :dword
 extern netMode   :dword
+extern pauseMode :dword
 
 .data
     public hWnd                 ; gfx.asm / net.asm 需要引用主窗口句柄
@@ -144,12 +145,15 @@ MainLoop:
     .if eax >= nextTick
         add nextTick, TICK_MS
         invoke UiTick              ; 1. 界面状态机（菜单/联机/对局切换）
-        .if gameState == ST_PLAY   ; 2. 仅对局状态推进玩法
-            invoke InputSample
-            invoke GameUpdate
-            mov eax, netMode
-            .if eax != 0
-                invoke NetFlush    ; 3. 联机对局：交换状态包
+        .if gameState == ST_PLAY   ; 2. 仅对局状态推进玩法（暂停时冻结）
+            mov eax, pauseMode
+            .if eax == 0
+                invoke InputSample
+                invoke GameUpdate
+                mov eax, netMode
+                .if eax != 0
+                    invoke NetFlush    ; 3. 联机对局：交换状态包
+                .endif
             .endif
         .endif
     .endif

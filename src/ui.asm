@@ -27,6 +27,12 @@ public menuFont
 public fontSmall
 public langFlag
 public playerName
+public pauseMode
+public pauseSel
+public countT
+public volumeLvl
+public sfxOn
+public themeNight
 public UiInit
 public UiTick
 public UiRender
@@ -79,6 +85,12 @@ RST_H      equ 30
     playerName  db "P1", 0, 13 dup (0), "P2", 0, 13 dup (0)
                 db "P3", 0, 13 dup (0), "P4", 0, 13 dup (0)   ; 每人 16 字节
     editSlot    dd -1                  ; 正在改名的容器槽位（-1=无）
+    pauseMode   dd 0                   ; 0=无 1=暂停菜单 2=继续倒计时
+    pauseSel    dd 0                   ; 暂停菜单选中项 0继续 1音量 2音效 3退出
+    countT      dd 0                   ; 倒计时剩余 tick
+    volumeLvl   dd 70                  ; 主音量 0..100
+    sfxOn       dd 1                   ; 音效开关
+    themeNight  dd 0                   ; 深夜模式（主页面黑风）
     setSel      dd 0
     rebindWait  dd 0
     prevUp      dd 0
@@ -514,6 +526,22 @@ NHT_Next:
 NumSelHitTest endp
 
 ; ------------------------------------------------------------
+; UT_QuitToMenu -- 从暂停/对局退出到主菜单（联机时断开重置）
+; ------------------------------------------------------------
+UT_QuitToMenu proc
+    mov pauseMode, 0
+    mov matchOver, 0
+    mov gameState, ST_MENU
+    .if netMode != 0
+        invoke NetShutdown
+        mov netMode, 0
+        invoke NetInit
+        mov peerKnown, 0
+    .endif
+    ret
+UT_QuitToMenu endp
+
+; ------------------------------------------------------------
 ; UiTick -- 每逻辑 tick 调用
 ; ------------------------------------------------------------
 UiTick proc uses ebx esi edi
@@ -521,34 +549,7 @@ UiTick proc uses ebx esi edi
     local enE:dword, esE:dword, scanVk:dword
     local lbE:dword
 
-    ; ---------- 对局中：Esc 暂停 / 比赛结束回菜单 ----------
-    .if gameState == ST_PLAY
-        ; 打满局数：Enter/Esc 回主菜单
-        mov eax, matchOver
-        .if eax != 0
-            invoke KeyEdge, VK_RETURN, addr prevEnter
-            mov ecx, eax
-            invoke KeyEdge, VK_ESCAPE, addr prevEsc
-            .if ecx != 0 || eax != 0
-                mov matchOver, 0
-                mov gameState, ST_MENU
-            .endif
-            jmp UT_Done
-        .endif
-        invoke KeyEdge, VK_ESCAPE, addr prevEsc
-        .if eax != 0
-            mov gameState, ST_MENU
-            .if netMode != 0
-                invoke NetShutdown
-                mov netMode, 0
-                invoke NetInit
-                mov peerKnown, 0
-            .endif
-        .endif
-        jmp UT_Done
-    .endif
-
-    ; ---- 鼠标采样（菜单界面用）：客户区坐标 + 左键点击边沿 ----
+    ; ---- 鼠标采样（暂停菜单也用）：客户区坐标 + 左键点击边沿 ----
     invoke GetCursorPos, addr mousePt
     invoke ScreenToClient, hWnd, addr mousePt
     mov eax, mousePt.x
@@ -570,6 +571,109 @@ UiTick proc uses ebx esi edi
     mov enE, eax
     invoke KeyEdge, VK_ESCAPE, addr prevEsc
     mov esE, eax
+
+    ; ---------- 对局中：Esc 暂停 / 比赛结束回菜单 ----------
+    .if gameState == ST_PLAY
+        ; 倒计时（pauseMode==2）：到 0 恢复对局
+        mov eax, pauseMode
+        .if eax == 2
+            dec countT
+            .if countT == 0
+                mov pauseMode, 0
+            .endif
+            jmp UT_Done
+        .endif
+        ; 暂停菜单（pauseMode==1）
+        .if eax == 1
+            invoke KeyEdge, VK_UP, addr prevUp
+            .if eax != 0
+                dec pauseSel
+                .if pauseSel < 0
+                    mov pauseSel, 3
+                .endif
+            .endif
+            invoke KeyEdge, VK_DOWN, addr prevDown
+            .if eax != 0
+                inc pauseSel
+                .if pauseSel > 3
+                    mov pauseSel, 0
+                .endif
+            .endif
+            ; 音量：暂停中 ←→ 直接调节
+            invoke KeyEdge, VK_LEFT, addr prevLeft
+            .if eax != 0
+                sub volumeLvl, 5
+                .if volumeLvl < 0
+                    mov volumeLvl, 0
+                .endif
+            .endif
+            invoke KeyEdge, VK_RIGHT, addr prevRight
+            .if eax != 0
+                add volumeLvl, 5
+                .if volumeLvl > 100
+                    mov volumeLvl, 100
+                .endif
+            .endif
+            invoke KeyEdge, VK_RETURN, addr prevEnter
+            .if eax != 0
+                .if pauseSel == 0
+                    mov pauseMode, 2           ; 继续 -> 3s 倒计时
+                    mov countT, 180
+                .elseif pauseSel == 2
+                    xor sfxOn, 1               ; 音效开关
+                .elseif pauseSel == 3
+                    call UT_QuitToMenu
+                .else
+                    mov pauseMode, 2           ; 选中音量行回车 = 直接继续
+                    mov countT, 180
+                .endif
+            .endif
+            .if lbE != 0
+                ; 菜单项区域：x 420..600，项 y 300+idx*44 .. +38
+                mov eax, mouseX
+                .if eax >= 420 && eax < 600
+                    mov eax, mouseY
+                    sub eax, 300
+                    .if eax >= 0
+                        xor edx, edx
+                        mov ecx, 44
+                        div ecx                ; eax = 项号
+                        .if eax <= 3
+                            mov pauseSel, eax
+                            .if eax == 0 || eax == 1
+                                mov pauseMode, 2
+                                mov countT, 180
+                            .elseif eax == 2
+                                xor sfxOn, 1
+                            .else
+                                call UT_QuitToMenu
+                            .endif
+                        .endif
+                    .endif
+                .endif
+            .endif
+            jmp UT_Done
+        .endif
+        ; 打满局数：Enter/Esc 回主菜单
+        mov eax, matchOver
+        .if eax != 0
+            invoke KeyEdge, VK_RETURN, addr prevEnter
+            mov ecx, eax
+            invoke KeyEdge, VK_ESCAPE, addr prevEsc
+            .if ecx != 0 || eax != 0
+                mov matchOver, 0
+                mov gameState, ST_MENU
+            .endif
+            jmp UT_Done
+        .endif
+        ; Esc -> 暂停
+        invoke KeyEdge, VK_ESCAPE, addr prevEsc
+        .if eax != 0
+            mov pauseMode, 1
+            mov pauseSel, 0
+        .endif
+        jmp UT_Done
+    .endif
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU

@@ -36,9 +36,15 @@ extern langFlag    :dword          ; 0=英 1=中（ui.asm）
 extern menuFont    :dword          ; 菜单大字体（ui.asm）
 extern fontSmall   :dword          ; 小字体（ui.asm）
 extern playerName  :byte           ; 玩家名（ui.asm，每人 16 字节）
+extern pauseMode   :dword          ; 0=无 1=暂停 2=倒计时（ui.asm）
+extern pauseSel    :dword          ; 暂停菜单选中项
+extern countT      :dword          ; 倒计时剩余
+extern volumeLvl   :dword          ; 音量 0..100
+extern sfxOn       :dword          ; 音效开关
 
 WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
 UiTextZ   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD   ; ui.asm：ASCII 文本
+UiTextL   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD ; ui.asm：双语文本
 
 .data
     hdcWin      dd ?                ; 窗口 DC（临时缓存）
@@ -67,11 +73,26 @@ UiTextZ   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD   ; ui.asm：ASCII 文本
     penLaser    dd ?                ; 发射激光：红实线 2px
     penPreview  dd ?                ; 激光预览：灰虚线 1px
     skillNum    db "0", 0           ; 拾取物上的技能序号
-    scoreBuf    db 48 dup (0)       ; 比分文本 "P1 nn P2 nn ..."
+    scoreBuf    db 48 dup (0)       ; 比分/临时文本缓冲
+    itemCol     dd 0                ; 暂停菜单当前项颜色
     szWinsEn    db "WINS THE MATCH!", 0
     szBackEn    db "PRESS ENTER FOR MENU", 0
+    szPaused    db "PAUSED", 0
+    szResume    db "RESUME (ENTER)", 0
+    szVol       db "VOLUME: <- ->", 0
+    szSfx       db "SOUND FX", 0
+    szQuit      db "QUIT TO MENU", 0
+    szOn        db "ON", 0
+    szOff       db "OFF", 0
     CN_WIN      dw 83B7h,5F97h,6BD4h,8D5Bh,80DCh,5229h,0FF01h, 0 ; 获得比赛胜利！
     CN_BACKMENU dw 6309h,56DEh,8F66h,8FD4h,56DEh,4E3Bh,83DCh,5355h, 0 ; 按回车返回主菜单
+    CN_PAUSED   dw 5df2h,6682h,505ch, 0                       ; 已暂停
+    CN_RESUME   dw 7ee7h,7eedh,6e38h,620fh,0FF08h,56deh,8f66h,0FF09h, 0 ; 继续游戏(回车)
+    CN_VOL      dw 97f3h,91cfh,0FF1Ah, 0                      ; 音量：
+    CN_SFX      dw 97f3h,6548h, 0                             ; 音效
+    CN_QUIT     dw 9000h,51fah,6e38h,620fh, 0                 ; 退出游戏
+    CN_ON       dw 5f00h, 0                                   ; 开
+    CN_OFF      dw 5173h, 0                                   ; 关
 
 .code
 
@@ -839,6 +860,76 @@ GP_Seg:
             invoke LineTo, hdcBack, ecx, eax
             jmp GP_Seg
         .endif
+    .endif
+
+    ; 4b) 暂停 / 倒计时覆盖层
+    mov eax, pauseMode
+    .if eax == 1
+        ; 半透风格深色覆盖（整幅地图区）
+        mov rc.left, 0
+        mov rc.top, 0
+        mov rc.right, WND_W
+        mov rc.bottom, WND_H
+        invoke FillRect, hdcBack, addr rc, brushHud
+        invoke SelectObject, hdcBack, menuFont
+        invoke UiTextL, hdcBack, 440, 220, offset szPaused, offset CN_PAUSED, 0000E0E0h
+        xor ebx, ebx                     ; 菜单项号
+GP_Item:
+        ; 项高亮色
+        mov eax, pauseSel
+        .if eax == ebx
+            mov eax, 0000E0E0h
+        .else
+            mov eax, 00A0A0A0h
+        .endif
+        mov itemCol, eax
+        invoke SelectObject, hdcBack, fontSmall
+        mov eax, ebx
+        .if eax == 0
+            invoke UiTextL, hdcBack, 470, 300, offset szResume, offset CN_RESUME, itemCol
+        .elseif eax == 1
+            invoke UiTextL, hdcBack, 470, 344, offset szVol, offset CN_VOL, itemCol
+            ; 音量数值 nn%
+            lea edi, scoreBuf
+            mov eax, volumeLvl
+            xor edx, edx
+            mov ecx, 10
+            div ecx
+            add al, '0'
+            add dl, '0'
+            mov [edi], al
+            mov [edi+1], dl
+            mov word ptr [edi+2], 0
+            invoke TextOutA, hdcBack, 560, 344, offset scoreBuf, 2
+        .elseif eax == 2
+            mov eax, sfxOn
+            .if eax != 0
+                invoke UiTextL, hdcBack, 470, 388, offset szSfx, offset CN_SFX, itemCol
+                invoke UiTextL, hdcBack, 560, 388, offset szOn, offset CN_ON, itemCol
+            .else
+                invoke UiTextL, hdcBack, 470, 388, offset szSfx, offset CN_SFX, itemCol
+                invoke UiTextL, hdcBack, 560, 388, offset szOff, offset CN_OFF, itemCol
+            .endif
+        .else
+            invoke UiTextL, hdcBack, 470, 432, offset szQuit, offset CN_QUIT, itemCol
+        .endif
+        inc ebx
+        .if ebx < 4
+            jmp GP_Item
+        .endif
+    .elseif eax == 2
+        ; 倒计时大数字（3/2/1）居中
+        invoke SelectObject, hdcBack, menuFont
+        mov eax, countT
+        add eax, 59
+        xor edx, edx
+        mov ecx, 60
+        div ecx                          ; eax = ceil(countT/60)
+        add al, '0'
+        lea edi, scoreBuf
+        mov [edi], al
+        mov word ptr [edi+1], 0
+        invoke UiTextZ, hdcBack, 480, 300, offset scoreBuf, 0000E0E0h
     .endif
 
     ; 4) 比赛结束覆盖层：胜者大字 + 提示

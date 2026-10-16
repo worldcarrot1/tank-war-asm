@@ -27,3 +27,6 @@ T17_USES_LEFT(expect2)=2
 T18_ARM_HP(expect3)=3
 T18_BOOM_HP(expect2)=2
 T18_MINE_GONE(expect1)=1
+T19_NORM_DX(expect2)=2
+T19_BOOST_DX(expect3)=3
+T19_MUD_BOOST(expect2)=2

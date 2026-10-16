@@ -575,6 +575,9 @@ arenaTable dd ARENA1,
     stT18a db "T18_ARM_HP(expect3)="       ; 20 字符
     stT18b db "T18_BOOM_HP(expect2)="      ; 21 字符
     stT18c db "T18_MINE_GONE(expect1)="    ; 23 字符
+    stT19a db "T19_NORM_DX(expect2)="      ; 21 字符
+    stT19b db "T19_BOOST_DX(expect3)="     ; 22 字符
+    stT19c db "T19_MUD_BOOST(expect2)="    ; 23 字符
 
 .code
 
@@ -1452,6 +1455,49 @@ T17Done:
     mov logVal, eax
     invoke LogStr, offset stT18c, 23
     invoke LogNum, logVal                ; expect 1（引爆后消失）
+T18Done:
+    ; T19: 燃油加速 —— 常速 2->3；泥地减速叠加：1->2
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].alive, 1
+    ; a) 常速一步
+    mov inputTable[12], 1
+    invoke GameUpdate
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, 96
+    mov logVal, eax
+    invoke LogStr, offset stT19a, 21
+    invoke LogNum, logVal                ; expect 2
+    ; b) 发动燃油加速 -> 一步 3px
+    mov tanks[0*SIZEOF TANK].skill, SK_NITRO
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].x      ; 发动后位置（前进一步 = 98）
+    mov ebx, eax                         ; ebx = 步前 x（ebx 跨 invoke 保存）
+    mov inputTable[12], 1
+    invoke GameUpdate
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, ebx
+    mov logVal, eax
+    invoke LogStr, offset stT19b, 22
+    invoke LogNum, logVal                ; expect 3
+    ; c) 泥地叠加：当前格设为泥，再走一步应 2px（(1*3+1)/2）
+    mov tanks[0*SIZEOF TANK].x, 96       ; 重置到 col3
+    mov mapData[13*COLS+3], TILE_DIRT
+    mov inputTable[12], 1
+    invoke GameUpdate
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, 96
+    mov logVal, eax
+    invoke LogStr, offset stT19c, 23
+    invoke LogNum, logVal                ; expect 2（泥1 + 加速叠加）
+    mov mapData[13*COLS+3], TILE_EMPTY
     call CloseLog
     ret
 SelfTestRun endp

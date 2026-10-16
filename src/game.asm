@@ -68,110 +68,113 @@ public InitKeyDefaults
 ; 字符表：. 空地  # 钢墙  b 砖墙  ~ 水  - 冰  S 出生点
 ; ---- 字符画对战地图（31x20，tools/gen_wide_maze.py 生成）----
 ; 字符表：. 空地  # 钢墙  b 砖墙  ~ 水(3x3)  - 冰(走廊宽条)  d 泥土(减速)  S 出生点
+; ---- 字符画对战地图（31x20，tools/gen_wide_maze.py v4 生成）----
+; 1 格走廊复杂迷宫 + 开阔广场（冰/泥整场、水 3x3 居中带走道）
+; 字符表：. 空地  # 钢墙  b 砖墙  ~ 水  - 冰广场  d 泥广场  S 出生点
 ARENA1 db "###############################"
-       db "#S...........................S#"
+       db "#S....#.................#....S#"
+       db "#..##.b.#######.#######.b.##..#"
+       db "#...#.#.#.....#.#.....#.#.#...#"
+       db "##b.#.#.#.#.###.###.#.#.#.#.b##"
+       db "#...#.#...#----.----#...#.#...#"
+       db "#.#.#.#.#b#----.----#b#.#.#.#.#"
+       db "#.#.b.#.b..----.----..b.#.b.#.#"
+       db "#.#.#.#.#.b####.####b.#.#.#.#.#"
+       db "#.#.dddd#.....#.#.....#dddd.#.#"
+       db "#.##dddd#.###.#.#.###.#dddd##.#"
+       db "#...dddd#...#.....#...#dddd...#"
+       db "#.#.dddd###.#######.###dddd.#.#"
+       db "#.b.#...#.b.#.....#.b.#...#.b.#"
+       db "###.###.....b#b.b#b.....###.###"
+       db "#.......~~~...#.#...~~~.......#"
+       db "#.####b.~~~.#.b.b.#.~~~.b####.#"
+       db "#S....#.~~~.#.....#.~~~.#....S#"
+       db "#..##.###...###.###...###.##..#"
        db "#.............................#"
-       db "##b##----###b.###.b###----##b##"
-       db "#dddd----.--...#...--.----dddd#"
-       db "#dddd.....--...b...--.....dddd#"
-       db "#dddd##b..--#..#..#--..b##dddd#"
-       db "#dddd.....--#.....#--.....dddd#"
-       db "#.........--#.....#--.........#"
-       db "#..#....b##b#.###.#b##b....#..#"
-       db "#..#...........#...........#..#"
-       db "#..#...........b...........#..#"
-       db "#..####..####..#..####..####..#"
-       db "#........#.....b.....#........#"
-       db "#........#.....#.....#........#"
-       db "#.###....#~~~..b..~~~#....###.#"
-       db "#.........~~~.....~~~.........#"
-       db "#S........~~~.....~~~........S#"
-       db "#########b###########b#########"
-       db "###############################"
 
 ARENA2 db "###############################"
-       db "#S..........#.....#..........S#"
-       db "#...........#.....#...........#"
-       db "#.....####..#..#..#..####.....#"
-       db "#......--#.....#.....#--......#"
-       db "#......--#.....#.....#--......#"
-       db "#..#...--##b#.#b#.#b##--...#..#"
-       db "#..#...--....dd.dd....--...#..#"
-       db "#..#...--....dd.dd....--...#..#"
-       db "#..#..#--#~~~ddbdd~~~#--#..#..#"
-       db "#ddddd#--#~~~dd#dd~~~#--#ddddd#"
-       db "#ddddd#--#~~~dd#dd~~~#--#ddddd#"
-       db "#.....b--#..#ddbdd#..#--b.....#"
-       db "#.....b--...bdd.ddb...--b.....#"
-       db "#.....b--...#dd.dd#...--b.....#"
-       db "#..#..#.###b##...##b###.#..#..#"
-       db "#..#-----------------------#..#"
-       db "#S.#-----------------------#.S#"
-       db "##b#########################b##"
-       db "###############################"
+       db "#S....#.....#.....#.....#....S#"
+       db "#..##.#.bb#.........#bb.#.##..#"
+       db "#...#...#...~~~.~~~...#...#...#"
+       db "#.#.b#b##.#.~~~.~~~.#.##b#b.#.#"
+       db "#.#.....#.#.~~~.~~~.#.#.....#.#"
+       db "#.#.#.#.#.#.###.###.#.#.#.#.#.#"
+       db "#...#.#...b.........b...#.#...#"
+       db "#.#b#.b##.###.#.#.###.##b.#b#.#"
+       db "#....----.#...#.#...#.----....#"
+       db "#.###----b#.###.###.#b----###.#"
+       db "#.#..----.#.#.....#.#.----..#.#"
+       db "#.#.#----.b.b.###.b.b.----#.#.#"
+       db "#.#.#...#.#.#.....#.#.#...#.#.#"
+       db "#.#.#####.#b###.###b#.#####.#.#"
+       db "#.#...dddddd#.....#dddddd...#.#"
+       db "#.####dddddd#.#.#.#dddddd####.#"
+       db "#S..#.dddddd..b.b..dddddd.#..S#"
+       db "#...#.###.###.#.#.###.###.#...#"
+       db "#...#.........#.#.........#...#"
 
 ARENA3 db "###############################"
-       db "#S...........................S#"
-       db "#......dddd.........dddd......#"
-       db "#ddddd#dddd#########dddd#ddddd#"
-       db "#ddddd#.................#ddddd#"
-       db "#..~~~#.................#~~~..#"
-       db "#..~~~#.......b#b.......#~~~..#"
-       db "#..~~~-------------------~~~..#"
-       db "#.....-------------------.....#"
-       db "#..b..b####...b#b...####b..b..#"
-       db "#..b.......................b..#"
-       db "#..#.......................#..#"
-       db "#..###b....###...###....b###..#"
-       db "#-----------------------------#"
-       db "#-----------------------------#"
-       db "#..b####...............####b..#"
+       db "#S........#.........#........S#"
+       db "#...#####.#.#######.#.#####...#"
+       db "#.....#.................#.....#"
+       db "#.#b#.#.~~~.###.###.~~~.#.#b#.#"
+       db "#.----b.~~~.#.....#.~~~.b----.#"
+       db "#.----b.~~~.#.#.#.#.~~~.b----.#"
+       db "#.----....#...#.#...#....----.#"
+       db "#.###.#.###.#.#.#.#.###.#.###.#"
+       db "#.#...#.....#.#.#.#.....#...#.#"
+       db "#.#.#b##bb###.#.#.###bb##b#.#.#"
+       db "#.#.#dddd.....#.#.....dddd#.#.#"
+       db "#.#.bdddd##.#.#.#.#.##ddddb.#.#"
+       db "#.#..dddd...#.#.#.#...dddd..#.#"
+       db "#.###.#...#.#.###.#.#...#.###.#"
+       db "#.....#...#.#.....#.#...#.....#"
+       db "#.###b####b##.b.b.##b####b###.#"
+       db "#S..b.......#.#.#.#.......b..S#"
+       db "#...#.#####.b##.##b.#####.#...#"
        db "#.............................#"
-       db "#S...........................S#"
-       db "######b###b##b###b##b###b######"
-       db "###############################"
 
 ARENA4 db "###############################"
-       db "#S..dd...--.........--...dd..S#"
-       db "#...dd...--.........--...dd...#"
-       db "#...dd...--##b...b##--...dd...#"
-       db "#...dd...--.........--...dd...#"
-       db "#...dd...--.........--...dd...#"
-       db "#...dd...#b###b#b###b#...dd...#"
-       db "#...~~~..#...........#..~~~...#"
-       db "#...~~~..#...........#..~~~...#"
-       db "#..#~~~..#....###....#..~~~#..#"
-       db "#..#.......................#..#"
-       db "#..#.......................#..#"
-       db "#..#.#bbb###b.b#b.b###bbb#.#..#"
-       db "#...--ddddddddddddddddddd--...#"
-       db "#...--ddddddddddddddddddd--...#"
-       db "#...--####..##b#b##..####--...#"
-       db "#...--...................--...#"
-       db "#S..--...................--..S#"
-       db "#############b###b#############"
-       db "###############################"
+       db "#S....b...#.........#...b....S#"
+       db "#..#b.#.#.#.###.###.#.#.#.b#..#"
+       db "#.....#.#...#.#.#.#...#.#.....#"
+       db "#.#####.###b#.#.#.#b###.#####.#"
+       db "#...........#.#.#.#...........#"
+       db "##b.b#b####.#.#.#.#.####b#b.b##"
+       db "#...#.........#.#.........#...#"
+       db "#.b##.#######.#.#.#######.##b.#"
+       db "#.#..dddd----.....----dddd..#.#"
+       db "#.#..dddd----.#b#.----dddd..#.#"
+       db "#.#..dddd----.#.#.----dddd..#.#"
+       db "#.#####.#.###.b.b.###.#.#####.#"
+       db "#.......#...#.#.#.#...#.......#"
+       db "#b###b#.#.#.........#.#.#b###b#"
+       db "#...#...#.#.~~~.~~~.#.#...#...#"
+       db "#...#.####b.~~~.~~~.b####.#...#"
+       db "#S..#.#.....~~~.~~~.....#.#..S#"
+       db "#..##.#.#######.#######.#.##..#"
+       db "#.......#.............#.......#"
 
 ARENA5 db "###############################"
-       db "#S........dd.......dd........S#"
-       db "#.........dd.......dd.........#"
-       db "#..#.b#bb#dd#######dd#bb#b.#..#"
-       db "#..#..--..dd.......dd..--..#..#"
-       db "#..#..--..dd.......dd..--..#..#"
-       db "#..#..--#bb.#######.bb#--..#..#"
-       db "#.....--ddddddddddddddd--.....#"
-       db "#.....--ddddddddddddddd--.....#"
-       db "#.....--####b#...#b####--.....#"
-       db "#.....--...............--.....#"
-       db "#.....--...............--.....#"
-       db "#..#b#####..##b#b##..#####b#..#"
-       db "#...~~~.................~~~...#"
-       db "#...~~~.................~~~...#"
-       db "#...~~~-----#######-----~~~...#"
-       db "#......-----.......-----......#"
-       db "#S...........................S#"
-       db "####b##########b##########b####"
-       db "###############################"
+       db "#S..b...#...#.....#...#...b..S#"
+       db "#...#.b.#.....#.#.....#.b.#...#"
+       db "#...#.#...~~~.#.#.~~~...#.#...#"
+       db "#.###.###.~~~.#.#.~~~.###.###.#"
+       db "#.........~~~.#.#.~~~.........#"
+       db "#b#.#.###.b##.#.#.##b.###.#.#b#"
+       db "#...#.#.....#.#.#.#.....#.#...#"
+       db "#.#.#.#.##b.#.#.#.#.b##.#.#.#.#"
+       db "#.b.#.#-----..#.#..-----#.#.b.#"
+       db "#.#.###-----###.###-----###.#.#"
+       db "#.#...#-----#.....#-----#...#.#"
+       db "#.b##.#.###.#b#.#b#.###.#.##b.#"
+       db "#.....#...#...b.b...#...#.....#"
+       db "#...#.###.###.#.#.###.###.#...#"
+       db "#...b.dddddd#.#.#.#dddddd.b...#"
+       db "#.##b.ddddddb.###.bdddddd.b##.#"
+       db "#S..#.dddddd#.....#dddddd.#..S#"
+       db "#...#.###.#.###.###.#.###.#...#"
+       db "#.#.......#.........#.......#.#"
 
 arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
     logName     db "selftest.log", 0
@@ -180,6 +183,8 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
     logHandle   dd 0
     written     dd 0
     logVal      dd 0
+    t11x0       dd 0                    ; T11 泥土测试起始坐标
+    t11y0       dd 0
     logBuf      db 64 dup (0)
     saveMap     db COLS*ROWS dup (0)
 
@@ -199,7 +204,7 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
     stT9b db "T9_P2_ALIVE(expect0)="
     stT9c db "T9_P2_HP(expect0)="
     stT10 db "T10_P1_SCORE(expect1)="       ; 22 字符（勿多打 1 字节）
-    stT11 db "T11_DIRT_SLOW_X(expect72)="
+    stT11 db "T11_DIRT_SLOW_DISP(expect2)="
 
 .code
 
@@ -429,7 +434,7 @@ FindOpenNeighbor proc uses ebx ecx edx cellIdx: dword
         add eax, nbCol
         mov ecx, eax
         movzx eax, mapData[ecx]
-        .if eax == TILE_EMPTY || eax == TILE_ICE
+        .if eax == TILE_EMPTY || eax == TILE_ICE || eax == TILE_DIRT
             mov nbDir, 0
             mov nbIdx, ecx
         .endif
@@ -444,7 +449,7 @@ FindOpenNeighbor proc uses ebx ecx edx cellIdx: dword
             inc eax
             mov ecx, eax
             movzx eax, mapData[ecx]
-            .if eax == TILE_EMPTY || eax == TILE_ICE
+            .if eax == TILE_EMPTY || eax == TILE_ICE || eax == TILE_DIRT
                 mov nbDir, 1
                 mov nbIdx, ecx
             .endif
@@ -460,7 +465,7 @@ FindOpenNeighbor proc uses ebx ecx edx cellIdx: dword
             add eax, nbCol
             mov ecx, eax
             movzx eax, mapData[ecx]
-            .if eax == TILE_EMPTY || eax == TILE_ICE
+            .if eax == TILE_EMPTY || eax == TILE_ICE || eax == TILE_DIRT
                 mov nbDir, 2
                 mov nbIdx, ecx
             .endif
@@ -476,7 +481,7 @@ FindOpenNeighbor proc uses ebx ecx edx cellIdx: dword
             dec eax
             mov ecx, eax
             movzx eax, mapData[ecx]
-            .if eax == TILE_EMPTY || eax == TILE_ICE
+            .if eax == TILE_EMPTY || eax == TILE_ICE || eax == TILE_DIRT
                 mov nbDir, 3
                 mov nbIdx, ecx
             .endif
@@ -570,6 +575,14 @@ SelfTestRun proc uses ebx esi edi
     mov rngState, 1
     mov spawnCount, 0
     invoke ParseArena, offset ARENA1
+    ; 自测专用：清空第 13 行做水平测试走廊（T1/T7/T9 依赖）
+    mov ecx, 13*COLS+1
+STClear13:
+    mov mapData[ecx], TILE_EMPTY
+    inc ecx
+    .if ecx < 13*COLS+COLS-1
+        jmp STClear13
+    .endif
     call ResetTanks
     ; 地图快照（验证墙体不可摧毁）
     cld
@@ -755,17 +768,55 @@ T9Done:
     invoke LogStr, offset stT10, 22
     invoke LogNum, tanks[0*SIZEOF TANK].score      ; expect 1
 
-    ; T11: 泥土减速 —— 传送到泥土块（row4 cols1-4 全 'd'）向右推
-    ;      40 tick，速度 1 -> x = 32 + 40 = 72（普通地面会是 112）
-    mov tanks[0*SIZEOF TANK].x, 32
-    mov tanks[0*SIZEOF TANK].y, 128
+    ; T11: 泥土减速 —— 找第一个 'd'，坦克置于其上，朝开放邻居方向推
+    ;      2 tick：泥上速度 1 -> 位移 2（普通地面会是 4）
+    xor esi, esi
+T11Find:
+    .if esi >= COLS*ROWS
+        mov logVal, 99
+        invoke LogStr, offset stT11, 28
+        invoke LogNum, logVal
+        jmp T11Done
+    .endif
+    cmp mapData[esi], TILE_DIRT
+    je T11Found
+    inc esi
+    jmp T11Find
+T11Found:
+    invoke FindOpenNeighbor, esi
+    mov ebx, eax                          ; 方向代码（跨 invoke 存 ebx）
+    mov eax, esi
+    xor edx, edx
+    mov ecx, COLS
+    div ecx
+    mov ecx, edx
+    imul ecx, ecx, CELL
+    mov t11x0, ecx
+    mov tanks[0*SIZEOF TANK].x, ecx
+    imul eax, eax, CELL
+    mov t11y0, eax
+    mov tanks[0*SIZEOF TANK].y, eax
     mov tanks[0*SIZEOF TANK].alive, 1
-    invoke SetDirInput, 1                          ; DIR_RIGHT
-    invoke AdvanceTicks, 40
+    invoke SetDirInput, ebx
+    invoke AdvanceTicks, 2
     invoke SetDirInput, 99
-    invoke LogStr, offset stT11, 26
-    invoke LogNum, tanks[0*SIZEOF TANK].x          ; expect 72
-
+    ; 位移 = |dx| + |dy|
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, t11x0
+    .if eax < 0
+        neg eax
+    .endif
+    mov ecx, eax
+    mov eax, tanks[0*SIZEOF TANK].y
+    sub eax, t11y0
+    .if eax < 0
+        neg eax
+    .endif
+    add eax, ecx
+    mov logVal, eax                      ; 中转（invoke 会破坏 eax）
+    invoke LogStr, offset stT11, 28
+    invoke LogNum, logVal                ; expect 2
+T11Done:
     call CloseLog
     ret
 SelfTestRun endp

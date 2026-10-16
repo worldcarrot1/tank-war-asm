@@ -1,242 +1,186 @@
 # -*- coding: utf-8 -*-
-# Maze generator v3 (2026-10-16 user feedback):
-#   1) NO dot walls: every wall cell must belong to a straight run >= 3
-#   2) water pools are 3x3 blocks (>= 9 cells)
-#   3) ice strips are corridor-wide (2 cells) and long (>= 4 cells)
-#   4) dirt strips (tan, slows tanks), also corridor-wide
-#   5) symmetric, spawns reachable, nothing sealed off
+# Maze generator v4 (2026-10-16 user feedback round 2):
+#   "道路" = open space BETWEEN walls. So:
+#   1) maze is now FINE-grained: 1-cell corridors (32px vs 21px tank =
+#      Tank Trouble ratio) on the full 31x20 grid -> much more complex
+#   2) walls form long continuous lines (perfect-maze grid lines),
+#      iteratively drop any isolated wall cell
+#   3) carve a few open PLAZAS inside the maze; ice / dirt fill a whole
+#      plaza (plaza width == road width), water pool 3x3 sits in the
+#      middle of a bigger plaza with a walkway around it
+#   4) mirrored L/R, spawns at 4 corners with 2x2 clear start area,
+#      full connectivity validation
 # ASCII only in output .inc (map chars are ASCII).
 import random
 from collections import deque
 
 MW, MH = 31, 20
-CW, CH = 10, 6
+CW, CH = 8, 10            # left-half maze cells (incl. axis col ci=7)
 SPAWNS = [(1,1),(1,29),(17,1),(17,29)]   # (r,c)
 
-def base_maze(seed, braid=0.15):
+def mirror(grid):
+    for r in range(MH):
+        for c in range(MW//2):
+            grid[r][MW-1-c] = grid[r][c]
+
+def gen(seed, braid=0.15):
     rng = random.Random(seed)
     grid = [['#']*MW for _ in range(MH)]
-    def cellblock(cx, cy):
-        for dy in range(2):
-            for dx in range(2):
-                grid[3*cy+1+dy][3*cx+1+dx] = '.'
-                grid[3*cy+1+dy][30-(3*cx+1+dx)] = '.'
-    for cx in range(CW):
-        for cy in range(CH):
-            cellblock(cx, cy)
-    visited = [[False]*CH for _ in range(CW)]
+
+    # ---- DFS maze on left-half cells (ci 0..7 -> col 2ci+1, cj 0..9) ----
+    # x = cell column (0..7), y = cell row (0..9)
+    visited = [[False]*CW for _ in range(CH)]
     passages = set()
     stack = [(0,0)]
     visited[0][0] = True
     while stack:
         x, y = stack[-1]
         nbrs = [(x+dx, y+dy) for dx, dy in ((1,0),(-1,0),(0,1),(0,-1))
-                if 0 <= x+dx < CW and 0 <= y+dy < CH and not visited[x+dx][y+dy]]
+                if 0 <= x+dx < CW and 0 <= y+dy < CH and not visited[y+dy][x+dx]]
         if not nbrs:
             stack.pop(); continue
         nx, ny = rng.choice(nbrs)
-        visited[nx][ny] = True
-        passages.add(tuple(sorted(((x,y),(nx,ny)))))
+        visited[ny][nx] = True
+        passages.add((min((x,y),(nx,ny)), max((x,y),(nx,ny))))
         stack.append((nx,ny))
+    # braid: open some extra walls for loops (fewer dead ends -> better flow)
     for x in range(CW):
         for y in range(CH):
-            if x+1 < CW:
-                a,b=(x,y),(x+1,y)
-                if tuple(sorted((a,b))) not in passages and rng.random() < braid:
-                    passages.add(tuple(sorted((a,b))))
-            if y+1 < CH:
-                a,b=(x,y),(x,y+1)
-                if tuple(sorted((a,b))) not in passages and rng.random() < braid:
-                    passages.add(tuple(sorted((a,b))))
+            if x+1 < CW and ((x,y),(x+1,y)) not in passages and rng.random() < braid:
+                passages.add(((x,y),(x+1,y)))
+            if y+1 < CH and ((x,y),(x,y+1)) not in passages and rng.random() < braid:
+                passages.add(((x,y),(x,y+1)))
+    # carve cells and passages
+    for x in range(CW):
+        for y in range(CH):
+            grid[2*y+1][2*x+1] = '.'
     for (a, b) in passages:
         (x1,y1),(x2,y2) = a, b
-        if x1 == x2:
-            r = 3*y1+3; c = 3*x1+1
+        if x2 == x1+1:
+            r, c = 2*y1+1, 2*x1+2      # wall col between side-by-side cells
         else:
-            r = 3*y1+1; c = 3*max(x1,x2)
-        for rr in (r, r+1):
-            grid[rr][c] = '.'; grid[rr][30-c] = '.'
-    for r, c in SPAWNS:
-        grid[r][c] = 'S'
-    return grid, rng
+            r, c = 2*y1+2, 2*x1+1      # wall row between stacked cells
+        grid[r][c] = '.'
 
-def runs_ok(grid, r, c, min_run):
-    """cell (r,c) is '#' and belongs to a straight wall run >= min_run?"""
-    L = 1
-    x = c-1
-    while x >= 0 and grid[r][x] == '#': L += 1; x -= 1
-    x = c+1
-    while x < MW and grid[r][x] == '#': L += 1; x += 1
-    if L >= min_run: return True
-    L = 1
-    y = r-1
-    while y >= 0 and grid[y][c] == '#': L += 1; y -= 1
-    y = r+1
-    while y < MH and grid[y][c] == '#': L += 1; y += 1
-    return L >= min_run
+    # ---- spawn start areas: 2x2 clear at top-left / bottom-left ----
+    for (sr, sc) in ((1,1),(17,1)):
+        for dr in (0,1):
+            for dc in (0,1):
+                grid[sr+dr][sc+dc] = '.'
+        grid[sr][sc] = 'S'
+    mirror(grid)
 
-def thin_walls(grid, min_run=3):
-    """Iteratively remove wall cells not part of a straight run >= min_run.
-    Kills isolated dots and short stubs; remaining walls are long lines."""
+    # ---- plazas: open rooms inside the maze ("roads") ----
+    def room_cells(r0, c0, w, h):
+        return set((r,c) for r in range(r0, r0+h) for c in range(c0, c0+w))
+    def near_spawn(cells, margin=2):
+        for (r,c) in cells:
+            for (sr,sc) in SPAWNS:
+                if abs(r-sr) <= margin and abs(c-sc) <= margin:
+                    return True
+        return False
+    picked = []
+    cand = []
+    for (w,h) in ((5,4),(4,4),(6,3),(5,3),(4,3),(6,4)):
+        for r0 in range(2, MH-1-h):
+            for c0 in range(2, 16-w+1):
+                cand.append((r0,c0,w,h))
+    rng.shuffle(cand)
+    for (r0,c0,w,h) in cand:
+        if len(picked) >= 3: break
+        cells = room_cells(r0,c0,w,h)
+        mcells = set((r, 30-c) for (r,c) in cells)
+        if near_spawn(cells) or near_spawn(mcells):
+            continue
+        ok = True
+        for (pr0,pc0,pw,ph) in picked:
+            if cells & room_cells(pr0,pc0,pw,ph): ok = False; break
+            pm = set((r, 30-c) for (r,c) in room_cells(pr0,pc0,pw,ph))
+            if cells & pm: ok = False; break
+        if ok:
+            picked.append((r0,c0,w,h))
+    if len(picked) < 3:
+        return None
+    # carve plazas
+    for (r0,c0,w,h) in picked:
+        for r in range(r0, r0+h):
+            for c in range(c0, c0+w):
+                grid[r][c] = '.'
+    # terrain: plaza 0 = ice, plaza 1 = dirt, plaza 2 = water 3x3 in middle
+    (r0,c0,w,h) = picked[0]
+    for r in range(r0, r0+h):
+        for c in range(c0, c0+w):
+            grid[r][c] = '-'
+    (r0,c0,w,h) = picked[1]
+    for r in range(r0, r0+h):
+        for c in range(c0, c0+w):
+            grid[r][c] = 'd'
+    (r0,c0,w,h) = picked[2]
+    if w >= 5 and h >= 4:
+        for r in range(r0+1, r0+4):
+            for c in range(c0+1, c0+4):
+                grid[r][c] = '~'
+    mirror(grid)
+
+    # ---- bricks: recolor some wall cells (visual variety, no new dots) ----
+    walls = [(r,c) for r in range(1,MH-1) for c in range(1,16) if grid[r][c]=='#']
+    rng.shuffle(walls)
+    for (r,c) in walls[:12]:
+        grid[r][c] = 'b'
+    mirror(grid)
+
+    # ---- drop isolated wall cells (no wall 4-neighbour) ----
     changed = True
     while changed:
         changed = False
-        kill = []
         for r in range(1, MH-1):
             for c in range(1, MW-1):
-                if grid[r][c] == '#' and not runs_ok(grid, r, c, min_run):
-                    kill.append((r,c))
-        for (r,c) in kill:
-            grid[r][c] = '.'
-            grid[r][30-c] = '.'
-            changed = True
-    return grid
+                if grid[r][c] in '#b':
+                    nb = sum(1 for dy,dx in ((1,0),(-1,0),(0,1),(0,-1))
+                             if grid[r+dy][c+dx] in '#b')
+                    if nb == 0:
+                        grid[r][c] = '.'
+                        changed = True
+        mirror(grid)
 
-def passable(grid, r, c):
-    v = grid[r][c]
-    return v not in '#b~'
-
-def connected(grid):
-    seen = {SPAWNS[0]}
-    dq = deque([SPAWNS[0]])
-    while dq:
-        y,x = dq.popleft()
-        for dy,dx in ((1,0),(-1,0),(0,1),(0,-1)):
-            ny,nx = y+dy, x+dx
-            if 0<=ny<MH and 0<=nx<MW and (ny,nx) not in seen and passable(grid,ny,nx):
-                seen.add((ny,nx)); dq.append((ny,nx))
-    total = sum(1 for y in range(MH) for x in range(MW) if passable(grid,y,x))
-    ok = len(seen) == total
-    for s in SPAWNS[1:]:
-        ok = ok and s in seen
-    return ok
-
-def near_spawn(r, c, margin=2):
-    for (sr,sc) in SPAWNS:
-        if abs(r-sr) <= margin and abs(c-sc) <= margin:
-            return True
-    return False
-
-def place_water(grid, rng, pools=1):
-    """3x3 water pools, symmetric, keep connectivity."""
-    placed = 0
-    cand = []
-    for r in range(1, MH-4):
-        for c in range(1, 13):        # window c..c+2 disjoint from mirror
-            if all(grid[r+dy][c+dx] == '.' for dy in range(3) for dx in range(3)):
-                if near_spawn(r, c, 3) or near_spawn(r, c+2, 3):
-                    continue
-                cand.append((r,c))
-    rng.shuffle(cand)
-    for (r,c) in cand:
-        if placed >= pools: break
-        cells = [(r+dy, c+dx) for dy in range(3) for dx in range(3)]
-        for (rr,cc) in cells:
-            grid[rr][cc] = '~'; grid[rr][30-cc] = '~'
-        if connected(grid):
-            placed += 1
-        else:
-            for (rr,cc) in cells:
-                grid[rr][cc] = '.'; grid[rr][30-cc] = '.'
-    return placed
-
-def h_runs(grid):
-    """horizontal 2-tall corridor runs: (r, c0, length), left half only."""
-    out = []
-    for r in range(1, MH-2):
-        run = []
-        for c in range(1, 16):
-            if grid[r][c] == '.' and grid[r+1][c] == '.':
-                run.append(c)
-            else:
-                if len(run) >= 4: out.append((r, run[0], len(run)))
-                run = []
-        if len(run) >= 4: out.append((r, run[0], len(run)))
-    return out
-
-def v_runs(grid):
-    """vertical 2-wide corridor runs: (c, r0, length), left half only."""
-    out = []
-    for c in range(1, 15):
-        run = []
-        for r in range(1, MH-1):
-            if grid[r][c] == '.' and grid[r][c+1] == '.':
-                run.append(r)
-            else:
-                if len(run) >= 4: out.append((c, run[0], len(run)))
-                run = []
-        if len(run) >= 4: out.append((c, run[0], len(run)))
-    return out
-
-def place_strip(grid, rng, ch, cand, max_strips):
-    """Mark corridor-wide strips (2 cells wide = road width, len>=4) as ch.
-    cand items: ('h', r, c0, L) horizontal 2-tall corridor at rows r,r+1
-                ('v', c, r0, L) vertical 2-wide corridor at cols c,c+1"""
-    placed = 0
-    cand = cand[:]
-    rng.shuffle(cand)
-    for (orient, a, b, L) in cand:
-        if placed >= max_strips: break
-        if orient == 'h':
-            cells = [(a, b+k) for k in range(L)] + [(a+1, b+k) for k in range(L)]
-        else:
-            cells = [(b+k, a) for k in range(L)] + [(b+k, a+1) for k in range(L)]
-        # skip if touches spawn cells (left-half check; map is mirrored)
-        if any(grid[rr][cc] == 'S' or near_spawn(rr, cc, 1)
-               for (rr,cc) in cells if cc <= 15):
-            continue
-        if any(grid[rr][cc] != '.' for (rr,cc) in cells):
-            continue
-        for (rr,cc) in cells:
-            grid[rr][cc] = ch; grid[rr][30-cc] = ch
-        if not connected(grid):
-            for (rr,cc) in cells:
-                grid[rr][cc] = '.'; grid[rr][30-cc] = '.'
-            continue
-        placed += 1
-    return placed
-
-def place_strips(grid, rng, ch, max_strips):
-    cand = ([('h', r, c0, L) for (r, c0, L) in h_runs(grid)] +
-            [('v', c, r0, L) for (c, r0, L) in v_runs(grid)])
-    return place_strip(grid, rng, ch, cand, max_strips)
-
-def gen(seed):
-    grid, rng = base_maze(seed)
-    thin_walls(grid, min_run=3)
-    if place_water(grid, rng, pools=1) < 1: return None
-    place_strips(grid, rng, '-', 2)       # ice strips
-    place_strips(grid, rng, 'd', 2)       # dirt strips
-    # bricks: recolor some wall cells adjacent to open cells (visual variety)
-    walls = [(r,c) for r in range(1,MH-1) for c in range(1,16) if grid[r][c]=='#'
-             and any(0<=r+dy<MH and 0<=c+dx<MW and grid[r+dy][c+dx]=='.' for dy,dx in ((1,0),(-1,0),(0,1),(0,-1)))]
-    rng.shuffle(walls)
-    for (r,c) in walls[:10]:
-        grid[r][c] = 'b'; grid[r][30-c] = 'b'
     rows = [''.join(r) for r in grid]
-    # final checks
+
+    # ---- validation ----
     for r in rows:
         if len(r) != 31 or r != r[::-1]: return None
     for r in range(1, MH-1):
         for c in range(1, MW-1):
             if rows[r][c] in '#b':
                 nb = sum(1 for dy,dx in ((1,0),(-1,0),(0,1),(0,-1))
-                         if 0<=r+dy<MH and 0<=c+dx<MW and rows[r+dy][c+dx] in '#b')
-                if nb == 0: return None        # dot wall!
-    if not connected(grid): return None
+                         if rows[r+dy][c+dx] in '#b')
+                if nb == 0: return None            # dot wall!
+    # connectivity over non-blocking cells
+    seen = {SPAWNS[0]}; dq = deque([SPAWNS[0]])
+    while dq:
+        y,x = dq.popleft()
+        for dy,dx in ((1,0),(-1,0),(0,1),(0,-1)):
+            ny,nx = y+dy, x+dx
+            if 0<=ny<MH and 0<=nx<MW and (ny,nx) not in seen and rows[ny][nx] not in '#b~':
+                seen.add((ny,nx)); dq.append((ny,nx))
+    total = sum(1 for y in range(MH) for x in range(MW) if rows[y][x] not in '#b~')
+    if len(seen) != total: return None
+    for s in SPAWNS[1:]:
+        if s not in seen: return None
     n_i = sum(r.count('-') for r in rows)
     n_d = sum(r.count('d') for r in rows)
     n_w = sum(r.count('~') for r in rows)
-    if n_i < 8 or n_d < 8 or n_w < 9: return None
+    n_wall = sum(r.count('#') + r.count('b') for r in rows)
+    if n_i < 12 or n_d < 12 or n_w < 9: return None
+    if n_wall < 260: return None          # maze must stay complex/dense
     return rows
 
 maps = []
 seed = 1
-while len(maps) < 5 and seed < 3000:
+while len(maps) < 5 and seed < 5000:
     rows = gen(seed)
     if rows:
         maps.append((seed, rows))
-        print(f"ARENA{len(maps)} seed={seed} OK "
+        print(f"ARENA{len(maps)} seed={seed} "
               f"ice={sum(r.count('-') for r in rows)} "
               f"dirt={sum(r.count('d') for r in rows)} "
               f"water={sum(r.count('~') for r in rows)} "

@@ -1,8 +1,11 @@
 ; ============================================================
 ; ui.asm —— 界面状态机：主菜单 / 人数选择 / 按键设置 / 联机大厅
 ; 键盘操作（边沿检测防连发，导航键固定不受自定义键位影响）：
-;   主菜单: ↑↓ 选择, Enter 确认
+;   主菜单: ↑↓ 选择, Enter 确认, 鼠标悬停+左键点击
 ;   人数选择: ←→ 调整 2..4, Enter 开始, Esc 返回
+;     下方按当前人数显示键位容器（2 人 2 个 .. 4 人 4 个）：
+;     鼠标点击某键位 -> 闪烁等待 -> 按新键完成改键（冲突则拒绝），
+;     容器区右下角"重置按键"按钮恢复默认；键盘操作全部保留
 ;   设置: ↑↓ 选择动作, Enter 进入重绑 -> 按任意键完成, Esc 返回
 ;   联机: 自动 UDP 广播发现对手(端口 28888), Enter 与发现的对手开战
 ;   对局中: Esc 回主菜单
@@ -24,11 +27,13 @@ public UiInit
 public UiTick
 public UiRender
 public UiForcePlay2
+public UiForceNumSel
 
 extern hWnd      :dword
 extern hdcBack   :dword
 extern keyTable  :dword
 GameInit  PROTO
+InitKeyDefaults PROTO
 GfxRender PROTO
 NetInit   PROTO
 NetFlush  PROTO
@@ -37,14 +42,28 @@ extern peerAddr  :sockaddr_in
 extern peerKnown :dword
 extern hSock     :dword
 
-; win32.inc 未收录的鼠标 API 原型与常量
+; win32.inc 未收录的鼠标/图形 API 原型与常量
 VK_LBUTTON     equ 001h
 GetCursorPos   PROTO stdcall :DWORD
 ScreenToClient PROTO stdcall :DWORD,:DWORD
+FrameRect      PROTO stdcall :DWORD,:DWORD,:DWORD
+
+; ---- 人数选择页键位容器布局（客户区 992x640）----
+KBBOX_X0   equ 28                  ; 首个容器左缘
+KBBOX_DX   equ 240                 ; 容器水平间距（宽 216 + 缝 24）
+KBBOX_W    equ 216                 ; 容器宽
+KBBOX_H    equ 196                 ; 容器高
+KBBOX_Y    equ 330                 ; 容器顶部 y
+KBROW_Y0   equ 40                  ; 容器顶 -> 首行偏移
+KBROW_DH   equ 30                  ; 行高
+RST_X      equ 745                 ; 重置按钮区（容器区右下角）
+RST_Y      equ 538
+RST_W      equ 210
+RST_H      equ 34
 
 .data
     gameState   dd ST_MENU
-    langFlag    dd 0                   ; 0=英文 1=中文
+    langFlag    dd 1                   ; 0=英文 1=中文（默认中文）
     numPlayers  dd 2
     netMode     dd 0                   ; 1 = 联机对局（主循环调用 NetFlush）
     menuSel     dd 0
@@ -62,6 +81,8 @@ ScreenToClient PROTO stdcall :DWORD,:DWORD
     mousePt     POINT <>               ; 鼠标客户区坐标（GetCursorPos+ScreenToClient）
     mouseX      dd 0
     mouseY      dd 0
+    rebindSlot  dd -1                  ; 人数页改键：正在等待新键的槽位（slot*5+动作），-1=无
+    blinkTick   dd 0                   ; 改键闪烁计数
     discTimer   dd 0
     discBuf     db "TWNET01"
     discFrom    sockaddr_in <>
@@ -72,6 +93,8 @@ ScreenToClient PROTO stdcall :DWORD,:DWORD
     uiBuf       db 96 dup (0)
     menuBrush   dd ?
     menuFont    dd ?
+    fontSmall   dd ?                   ; 键位容器用小字体（18px）
+    boxBrush    dd ?                   ; 容器边框画刷（深灰）
     fontOld     dd ?
     bcastAddr   sockaddr_in <>
     oneVal      dd 1
@@ -81,6 +104,13 @@ ScreenToClient PROTO stdcall :DWORD,:DWORD
     aLt         db "LEFT", 0
     aRt         db "RIGHT", 0
     aFire       db "FIRE", 0
+    ; 中文动作名：等长指针表（每项独立 0 结尾，按下标索引）
+    cUpW        dw 4E0Ah, 0             ; 上
+    cDnW        dw 4E0Bh, 0             ; 下
+    cLtW        dw 5DE6h, 0             ; 左
+    cRtW        dw 53F3h, 0             ; 右
+    cFireW      dw 5F00h, 706Bh, 0      ; 开火
+    cnActT      dd cUpW, cDnW, cLtW, cRtW, cFireW
     vkUpN       db "UP", 0
     vkDnN       db "DOWN", 0
     vkLtN       db "LEFT", 0
@@ -88,6 +118,7 @@ ScreenToClient PROTO stdcall :DWORD,:DWORD
     vkSpN       db "SPACE", 0
     vkEnN       db "ENTER", 0
     szTitle     db "T A N K   W A R   A S M", 0
+    szKeysLbl   db "KEYS (CLICK A KEY TO CHANGE)", 0
     szItem1     db "START GAME", 0
     szItem2     db "SETTINGS", 0
     szItem3     db "LAN PLAY", 0
@@ -96,6 +127,8 @@ ScreenToClient PROTO stdcall :DWORD,:DWORD
     szNumL      db "<<", 0
     szNumR      db ">>", 0
     szHint      db "ENTER: CONFIRM   ESC: BACK", 0
+    szReset     db "RESET ALL KEYS", 0
+    szReb2      db "PRESS ANY KEY ... (ESC = CANCEL)", 0
     szSetT      db "KEY SETTINGS", 0
     szSetH      db "ENTER: REBIND   ESC: BACK", 0
     szRebind    db " <- PRESS ANY KEY", 0
@@ -119,6 +152,9 @@ ScreenToClient PROTO stdcall :DWORD,:DWORD
     CN_LANG dw 8bedh,8a00h,0ff1ah,4e2dh,6587h, 0
     CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
     CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
+    CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
+    CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0ff08h,0045h,0073h,0063h,0020h,003dh,0020h,53d6h,6d88h,0ff09h, 0 ; 请按任意键（Esc = 取消）
+    CN_KEYS dw 952eh,4f4dh, 0                                            ; 键位
     CN_SETT dw 6309h,952eh,8bbeh,7f6eh, 0
     CN_SETH dw 56deh,8f66h,0ff1ah,6539h,952eh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
     CN_REBIND dw 0020h,003ch,002dh,0020h,8bf7h,6309h,4efbh,610fh,952eh, 0
@@ -141,10 +177,19 @@ ScreenToClient PROTO stdcall :DWORD,:DWORD
 UiInit proc
     invoke CreateSolidBrush, 00D2D2D2h
     mov menuBrush, eax
+    invoke CreateSolidBrush, 00232323h
+    mov boxBrush, eax
     invoke CreateFontA, 30, 0, 0, 0, FW_NORMAL, 0, 0, 0,
            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
            DEFAULT_QUALITY, DEFAULT_PITCH, offset szFont
     mov menuFont, eax
+    invoke CreateFontA, 18, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+           DEFAULT_QUALITY, DEFAULT_PITCH, offset szFont
+    mov fontSmall, eax
+    ; 键位默认值只在启动时设一次（GameInit 不再重置，
+    ; 否则人数页改的自定义键位每局开局都会被洗掉）
+    invoke InitKeyDefaults
     ret
 UiInit endp
 
@@ -159,6 +204,17 @@ UiForcePlay2 proc
     mov gameState, ST_PLAY
     ret
 UiForcePlay2 endp
+
+; ------------------------------------------------------------
+; UiForceNumSel -- 命令行 "tankwar numsel"：直入人数选择页
+; （无注入截图验收键位容器用）
+; ------------------------------------------------------------
+UiForceNumSel proc
+    mov numSel, 2
+    mov rebindSlot, -1
+    mov gameState, ST_NUMSEL
+    ret
+UiForceNumSel endp
 
 ; ------------------------------------------------------------
 ; UiTextZ -- 输出 0 结尾字符串
@@ -211,6 +267,7 @@ PickLang endp
 ; ------------------------------------------------------------
 MenuActivate proc
     .if menuSel == 0
+        mov rebindSlot, -1          ; 进入人数页清改键状态
         mov gameState, ST_NUMSEL
     .elseif menuSel == 1
         mov setSel, 0
@@ -376,6 +433,52 @@ IPS_Done:
 IpToStr endp
 
 ; ------------------------------------------------------------
+; NumSelHitTest -- 人数页鼠标命中测试
+; 返回 eax: 0..19 = 键位槽位（slot*5+动作），-2 = 重置按钮，-1 = 无
+; ------------------------------------------------------------
+NumSelHitTest proc uses ebx esi
+    ; 重置按钮（容器区右下角）
+    mov eax, mouseX
+    .if eax >= RST_X && eax < RST_X+RST_W && mouseY >= RST_Y && mouseY < RST_Y+RST_H
+        mov eax, -2
+        ret
+    .endif
+    xor ebx, ebx                     ; 容器序号
+NHT_Box:
+    .if ebx >= numSel
+        mov eax, -1
+        ret
+    .endif
+    mov eax, ebx
+    imul eax, eax, KBBOX_DX
+    add eax, KBBOX_X0
+    mov ecx, eax                     ; ecx = 容器左缘
+    add eax, KBBOX_W
+    .if mouseX >= ecx && mouseX < eax
+        mov edx, KBBOX_Y + KBROW_Y0  ; 首行顶部
+        xor esi, esi
+NHT_Row:
+        .if esi >= 5
+            jmp NHT_Next
+        .endif
+        mov eax, edx
+        add eax, KBROW_DH - 4        ; 行命中高度 26px
+        .if mouseY >= edx && mouseY < eax
+            mov eax, ebx
+            imul eax, eax, 5
+            add eax, esi             ; slot*5 + 动作
+            ret
+        .endif
+        add edx, KBROW_DH
+        inc esi
+        jmp NHT_Row
+    .endif
+NHT_Next:
+    inc ebx
+    jmp NHT_Box
+NumSelHitTest endp
+
+; ------------------------------------------------------------
 ; UiTick -- 每逻辑 tick 调用
 ; ------------------------------------------------------------
 UiTick proc uses ebx esi edi
@@ -465,50 +568,116 @@ UT_MMouseDone:
 
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
-        .if rtE != 0
-            inc numSel
-            .if numSel > 4
-                mov numSel, 2
-            .endif
+        ; 人数变少时改键目标可能指向已隐藏的容器 -> 清理
+        mov eax, numSel
+        imul eax, eax, 5
+        .if rebindSlot >= eax
+            mov rebindSlot, -1
         .endif
-        .if ltE != 0
-            dec numSel
-            .if numSel < 2
-                mov numSel, 4
-            .endif
-        .endif
-        .if enE != 0
-            mov eax, numSel
-            mov numPlayers, eax
-            invoke GameInit
-            mov netMode, 0
-            mov gameState, ST_PLAY
-        .endif
-        .if esE != 0
-            mov gameState, ST_MENU
-        .endif
-        ; ---- 鼠标：<< / >> 点击调整人数，点数字区确认开始 ----
-        ; 文本布局：<<(410,280) 数字(485,272) >>(545,280)，行高约 42px
-        .if lbE != 0
-            ; << 区域 400..460, 270..322
-            .if mouseX >= 400 && mouseX < 460 && mouseY >= 270 && mouseY < 322
-                dec numSel
-                .if numSel < 2
-                    mov numSel, 4
+        .if rebindSlot != -1
+            ; ---- 改键等待：目标键位闪烁，按新键完成（冲突拒绝），Esc 取消 ----
+            inc blinkTick
+            .if esE != 0
+                mov rebindSlot, -1
+            .else
+                ; 扫描 0x08..0xFF（含 Enter/方向键；跳过 Esc；鼠标键 < 0x08 不会误触）
+                mov scanVk, 08h
+UT_Scan2:
+                mov eax, scanVk
+                .if eax >= 100h
+                    jmp UT_Scan2Done
                 .endif
-            ; >> 区域 535..600, 270..322
-            .elseif mouseX >= 535 && mouseX < 600 && mouseY >= 270 && mouseY < 322
+                invoke GetAsyncKeyState, eax
+                and eax, 8000h
+                .if eax != 0
+                    ; 冲突校验：不得与其他任何坦克（含未显示的 3/4 号位）的键相同
+                    mov edx, scanVk
+                    xor ebx, ebx
+UT_Conf:
+                    .if ebx >= 20
+                        ; 无冲突：写入并结束等待
+                        mov eax, rebindSlot
+                        mov keyTable[eax*4], edx
+                        mov rebindSlot, -1
+                        jmp UT_Scan2Done
+                    .endif
+                    .if ebx != rebindSlot
+                        mov eax, keyTable[ebx*4]
+                        .if eax == edx
+                            jmp UT_Scan2Done     ; 冲突：保持闪烁等待换键
+                        .endif
+                    .endif
+                    inc ebx
+                    jmp UT_Conf
+                .endif
+                inc scanVk
+                jmp UT_Scan2
+UT_Scan2Done:
+            .endif
+            ; 等待中允许点击其他键位行切换目标 / 点重置按钮
+            .if lbE != 0
+                invoke NumSelHitTest
+                .if eax == -2
+                    invoke InitKeyDefaults
+                    mov rebindSlot, -1
+                .elseif eax != -1 && eax != rebindSlot
+                    mov rebindSlot, eax
+                .endif
+            .endif
+        .else
+            ; ---- 常规键盘操作（保留） ----
+            .if rtE != 0
                 inc numSel
                 .if numSel > 4
                     mov numSel, 2
                 .endif
-            ; 数字区 465..530, 260..322 -> 确认开始
-            .elseif mouseX >= 465 && mouseX < 530 && mouseY >= 260 && mouseY < 322
+            .endif
+            .if ltE != 0
+                dec numSel
+                .if numSel < 2
+                    mov numSel, 4
+                .endif
+            .endif
+            .if enE != 0
                 mov eax, numSel
                 mov numPlayers, eax
                 invoke GameInit
                 mov netMode, 0
                 mov gameState, ST_PLAY
+            .endif
+            .if esE != 0
+                mov gameState, ST_MENU
+            .endif
+            ; ---- 鼠标：键位容器改键 / 重置 / << >> 调人数 / 数字区开始 ----
+            .if lbE != 0
+                invoke NumSelHitTest
+                .if eax >= 0
+                    mov rebindSlot, eax      ; 点击键位 -> 闪烁等待新键
+                .elseif eax == -2
+                    invoke InitKeyDefaults   ; 重置所有更改按键
+                .else
+                    ; << 区域 400..460, 270..322
+                    mov eax, mouseX
+                    .if eax >= 400 && eax < 460 && mouseY >= 270 && mouseY < 322
+                        dec numSel
+                        .if numSel < 2
+                            mov numSel, 4
+                        .endif
+                    ; >> 区域 535..600, 270..322
+                    .elseif eax >= 535 && eax < 600 && mouseY >= 270 && mouseY < 322
+                        inc numSel
+                        .if numSel > 4
+                            mov numSel, 2
+                        .endif
+                    ; 数字区 465..530, 260..322 -> 确认开始
+                    .elseif eax >= 465 && eax < 530 && mouseY >= 260 && mouseY < 322
+                        mov eax, numSel
+                        mov numPlayers, eax
+                        invoke GameInit
+                        mov netMode, 0
+                        mov gameState, ST_PLAY
+                    .endif
+                .endif
             .endif
         .endif
 
@@ -609,9 +778,12 @@ UiTick endp
 ; ------------------------------------------------------------
 UiRender proc uses ebx esi edi
     local rc:RECT
+    local boxRc:RECT
     local rowY:dword
     local txtLen:dword
     local klen:dword
+    local rowCol:dword
+    local slotIdx:dword
 
     mov rc.left, 0
     mov rc.top, 0
@@ -670,7 +842,114 @@ UM_Items:
         mov [edi], al
         mov byte ptr [edi+1], 0
         invoke UiTextZ, hdcBack, 485, 272, offset uiBuf, 000000D0h
-        invoke UiTextL, hdcBack, 400, 400, offset szHint, offset CN_HINT, colGray
+
+        ; ---- 键位容器（小字体）：按当前选择的人数显示 2..4 个 ----
+        invoke SelectObject, hdcBack, fontSmall
+        invoke UiTextL, hdcBack, 30, 298, offset szKeysLbl, offset CN_KEYS, colGray
+        xor ebx, ebx
+NS_Box:
+        .if ebx >= numSel
+            jmp NS_BoxDone
+        .endif
+        ; 容器边框
+        mov eax, ebx
+        imul eax, eax, KBBOX_DX
+        add eax, KBBOX_X0
+        mov boxRc.left, eax
+        add eax, KBBOX_W
+        mov boxRc.right, eax
+        mov eax, KBBOX_Y
+        mov boxRc.top, eax
+        add eax, KBBOX_H
+        mov boxRc.bottom, eax
+        invoke FrameRect, hdcBack, addr boxRc, boxBrush
+        ; 容器标题 P1..P4
+        lea edi, uiBuf
+        mov byte ptr [edi], 'P'
+        mov eax, ebx
+        add al, '1'
+        mov [edi+1], al
+        mov byte ptr [edi+2], 0
+        invoke UiTextZ, hdcBack, boxRc.left, KBBOX_Y+8, offset uiBuf, colDark
+        ; 5 行键位：0上 1下 2左 3右 4开火
+        mov rowY, KBBOX_Y + KBROW_Y0
+        xor esi, esi                     ; 动作 0..4
+NS_Row:
+        .if esi >= 5
+            inc ebx
+            jmp NS_Box
+        .endif
+        mov eax, ebx
+        imul eax, eax, 5
+        add eax, esi
+        mov slotIdx, eax
+        ; 颜色：改键中的槽位闪烁；悬停高亮；其余灰
+        mov eax, slotIdx
+        .if eax == rebindSlot
+            mov eax, blinkTick
+            shr eax, 3
+            and eax, 1
+            .if eax != 0
+                mov eax, colHi
+                mov rowCol, eax
+            .else
+                mov eax, colDark
+                mov rowCol, eax
+            .endif
+        .else
+            mov eax, boxRc.left
+            add eax, 8
+            mov ecx, boxRc.right
+            sub ecx, 8
+            mov edi, rowY
+            mov edx, edi
+            add edx, KBROW_DH - 4
+            .if mouseX >= eax && mouseX < ecx && mouseY >= edi && mouseY < edx
+                mov eax, colHi
+                mov rowCol, eax
+            .else
+                mov eax, colGray
+                mov rowCol, eax
+            .endif
+        .endif
+        ; 动作名（语言感知）
+        mov eax, esi
+        mov edx, aTab[eax*4]             ; 英文动作名指针
+        mov eax, esi
+        mov ecx, cnActT[eax*4]           ; 中文动作名指针
+        invoke UiTextL, hdcBack, boxRc.left, rowY, edx, ecx, rowCol
+        ; 键名（VkName -> uiBuf）
+        mov eax, slotIdx
+        mov eax, keyTable[eax*4]
+        invoke VkName, eax, offset uiBuf
+        mov byte ptr uiBuf[eax], 0
+        mov eax, boxRc.left
+        add eax, 120
+        invoke UiTextZ, hdcBack, eax, rowY, offset uiBuf, rowCol
+        add rowY, KBROW_DH
+        inc esi
+        jmp NS_Row
+NS_BoxDone:
+        ; ---- 重置按钮（容器区右下角）----
+        mov eax, mouseX
+        .if eax >= RST_X && eax < RST_X+RST_W && mouseY >= RST_Y && mouseY < RST_Y+RST_H
+            mov edx, colHi
+        .else
+            mov edx, colDark
+        .endif
+        mov boxRc.left, RST_X-10
+        mov boxRc.top, RST_Y-4
+        mov boxRc.right, RST_X+RST_W+8
+        mov boxRc.bottom, RST_Y+RST_H+4
+        invoke FrameRect, hdcBack, addr boxRc, boxBrush
+        invoke UiTextL, hdcBack, RST_X, RST_Y, offset szReset, offset CN_RESET, edx
+        ; ---- 底部提示：改键等待时显示引导，否则显示操作提示 ----
+        .if rebindSlot != -1
+            invoke UiTextL, hdcBack, 360, 588, offset szReb2, offset CN_REB2, colHi
+        .else
+            invoke UiTextL, hdcBack, 380, 588, offset szHint, offset CN_HINT, colGray
+        .endif
+        invoke SelectObject, hdcBack, menuFont
 
     ; ---------- 按键设置 ----------
     .elseif gameState == ST_SET
@@ -707,9 +986,7 @@ SS_CopyAct:
             jmp SS_CopyAct
 SS_CopyDone:
         .else
-            mov esi, offset cnActW      ; 中文动作名（宽字符）
-            mov ecx, edx
-            imul ecx, ecx, 3            ; 每项最多 2 字 + 终止
+            mov esi, cnActT[edx*4]      ; 中文动作名（等长指针表，0 结尾）
 CN_CopyAct:
             mov ax, [esi]
             .if ax == 0
@@ -718,10 +995,7 @@ CN_CopyAct:
             mov [edi], ax
             add esi, 2
             add edi, 2
-            dec ecx
-            .if ecx != 0
-                jmp CN_CopyAct
-            .endif
+            jmp CN_CopyAct
 SS_CopyDone2:
         .endif
         mov word ptr [edi], ' '

@@ -26,6 +26,7 @@ NetFlush    PROTO                   ; net.asm  发送状态包 + 收包应用
 NetShutdown PROTO                   ; net.asm  关闭 socket
 SelfTestRun PROTO                   ; game.asm 无头自测（tankwar selftest）
 UiForcePlay2 PROTO                  ; ui.asm 直入 2P 对局（tankwar play2）
+UiForceNumSel PROTO                 ; ui.asm 直入人数选择页（tankwar numsel）
 UiInit    PROTO                     ; ui.asm 界面
 UiTick    PROTO
 UiRender  PROTO
@@ -38,7 +39,9 @@ extern netMode   :dword
     appName     db "Tank War ASM M1 - P1: WASD+SPACE | P2: Arrows+ENTER | R restart", 0
     selftestArg db "selftest"
     play2Arg    db "play2"
+    numselArg   db "numsel"
     play2Mode   dd 0
+    numselMode  dd 0
     hInstance   dd ?
     hWnd        dd ?
     msg         MSG <?>
@@ -114,6 +117,10 @@ WinMain proc
     ; "tankwar play2"：跳过菜单直接开 2P 本地对局
     .if play2Mode != 0
         invoke UiForcePlay2
+    .endif
+    ; "tankwar numsel"：直入人数选择页（截图验收）
+    .if numselMode != 0
+        invoke UiForceNumSel
     .endif
 
     ; ---- 主循环：固定步长逻辑 + 每帧渲染 ----
@@ -213,5 +220,32 @@ ArgNext2:
     inc esi
     jmp ArgScan2
 NoPlay2:
+    ; 再扫 "numsel" -> 直入人数页标志
+    invoke GetCommandLineA
+    mov esi, eax
+ArgScan3:
+    movzx eax, byte ptr [esi]
+    .if eax == 0
+        jmp NoNumSel
+    .endif
+    mov ebx, esi
+    mov edi, offset numselArg
+    mov ecx, 6
+ArgCmp3:
+    mov al, [ebx]
+    cmp al, [edi]
+    jne ArgNext3
+    inc ebx
+    inc edi
+    dec ecx
+    .if ecx != 0
+        jmp ArgCmp3
+    .endif
+    mov numselMode, 1
+    jmp NoNumSel
+ArgNext3:
+    inc esi
+    jmp ArgScan3
+NoNumSel:
     invoke WinMain
 end start

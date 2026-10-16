@@ -894,6 +894,7 @@ CountOwnBullets endp
 ; Deterministic: fixed ARENA1, simulated inputs, results -> selftest.log
 ; ------------------------------------------------------------
 SelfTestRun proc uses ebx esi edi
+    call InitKeyDefaults             ; 无头路径不经过 UiInit，补默认键位
     ; 固定 ARENA1 保证确定性
     mov rngState, 1
     mov spawnCount, 0
@@ -1188,7 +1189,8 @@ GameInit proc uses ebx esi edi
     mov ecx, arenaTable[eax*4]
     invoke ParseArena, ecx
     call ResetTanks
-    call InitKeyDefaults
+    ; 键位默认值改由 UiInit 启动时设一次；
+    ; 此处不再重置，避免人数页自定义键位每局被洗掉
     mov tanks[0*SIZEOF TANK].score, 0
     mov tanks[1*SIZEOF TANK].score, 0
     mov tanks[2*SIZEOF TANK].score, 0

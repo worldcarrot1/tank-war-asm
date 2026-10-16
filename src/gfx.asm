@@ -41,6 +41,7 @@ extern pauseSel    :dword          ; 暂停菜单选中项
 extern countT      :dword          ; 倒计时剩余
 extern volumeLvl   :dword          ; 音量 0..100
 extern sfxOn       :dword          ; 音效开关
+extern shakeT      :dword          ; 爆炸震屏剩余 tick（game.asm）
 
 WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
 UiTextZ   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD   ; ui.asm：ASCII 文本
@@ -975,11 +976,26 @@ GM_Best:
         .endif
     .endif
 
-    ; 5) 恢复画笔，整幅上屏
+    ; 5) 恢复画笔，整幅上屏（爆炸震屏：随机偏移 ±3px）
     invoke SelectObject, hdcBack, penOld
     invoke GetDC, hWnd
     mov hdcWin, eax
-    invoke BitBlt, hdcWin, 0, 0, WND_W, WND_H, hdcBack, 0, 0, SRCCOPY
+    xor ecx, ecx                     ; dx
+    xor edx, edx                     ; dy
+    mov eax, shakeT
+    .if eax > 0
+        invoke GetTickCount
+        mov ebx, eax
+        and ebx, 7
+        sub ebx, 3                   ; dx = -3..4
+        invoke GetTickCount
+        shr eax, 3
+        and eax, 7
+        sub eax, 3                   ; dy = -3..4
+        mov ecx, ebx
+        mov edx, eax
+    .endif
+    invoke BitBlt, hdcWin, ecx, edx, WND_W, WND_H, hdcBack, 0, 0, SRCCOPY
     invoke ReleaseDC, hWnd, hdcWin
     ret
 GfxRender endp

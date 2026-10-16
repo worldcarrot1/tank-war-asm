@@ -51,6 +51,8 @@ GfxRender PROTO
 NetInit   PROTO
 NetFlush  PROTO
 NetShutdown PROTO
+SndVolume PROTO :DWORD
+SndPlay   PROTO :DWORD
 extern peerAddr  :sockaddr_in
 extern peerKnown :dword
 extern hSock     :dword
@@ -574,10 +576,13 @@ UiTick proc uses ebx esi edi
 
     ; ---------- 对局中：Esc 暂停 / 比赛结束回菜单 ----------
     .if gameState == ST_PLAY
-        ; 倒计时（pauseMode==2）：到 0 恢复对局
+        ; 倒计时（pauseMode==2）：到 0 恢复对局；每秒哔一声
         mov eax, pauseMode
         .if eax == 2
             dec countT
+            .if countT == 180 || countT == 120 || countT == 60
+                invoke SndPlay, 4
+            .endif
             .if countT == 0
                 mov pauseMode, 0
             .endif
@@ -606,6 +611,7 @@ UiTick proc uses ebx esi edi
                 .if volumeLvl < 0
                     mov volumeLvl, 0
                 .endif
+                invoke SndVolume, volumeLvl
             .endif
             invoke KeyEdge, VK_RIGHT, addr prevRight
             .if eax != 0
@@ -613,6 +619,7 @@ UiTick proc uses ebx esi edi
                 .if volumeLvl > 100
                     mov volumeLvl, 100
                 .endif
+                invoke SndVolume, volumeLvl
             .endif
             invoke KeyEdge, VK_RETURN, addr prevEnter
             .if eax != 0

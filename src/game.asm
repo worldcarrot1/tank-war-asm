@@ -26,6 +26,7 @@ WallRects    PROTO :DWORD,:DWORD,:DWORD
 FindOpenNeighbor PROTO :DWORD
 DamageTankRaw PROTO :DWORD
 EndPhantom   PROTO :DWORD
+SndPlay      PROTO :DWORD
 WallRectsHit PROTO :DWORD,:DWORD,:DWORD,:DWORD
 TankBlocked  PROTO :DWORD,:DWORD
 SpawnBullet  PROTO :DWORD
@@ -54,6 +55,7 @@ public InitKeyDefaults
 public matchOver
 public maxRounds
 public roundsPlayed
+public shakeT
 public pickupType
 public pickupX
 public pickupY
@@ -78,6 +80,7 @@ public prevTank
     inputTable  dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] 每 tick 快照 0/1
     prevUse     dd MAX_PLAYERS dup (0)  ; 技能键上帧状态（边沿检测）
     gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
+    shakeT      dd 0                 ; 坦克爆炸震屏剩余 tick
     maxRounds   dd 11                ; 比赛局数（11..51，人数页可调）
     roundsPlayed dd 0                 ; 已完成局数
     matchOver   dd 0                  ; 1=打满局数，显示胜者等待回菜单
@@ -2241,6 +2244,8 @@ DamageTankRaw proc uses ebx slotIdx: dword
     mov eax, (TANK ptr [ebx]).hp
     .if eax <= 0
         mov (TANK ptr [ebx]).alive, 0
+        invoke SndPlay, 2            ; 坦克被击败：爆炸音
+        mov shakeT, 15               ; 震屏 0.25s
     .endif
     mov eax, 1
     ret
@@ -3017,6 +3022,7 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         or edx, EFF_PHANTOM
         mov (TANK ptr [ecx]).effOn, edx
         mov (TANK ptr [ecx]).effT, PHANTOM_TICKS
+        invoke SndPlay, 5            ; 虚影音
         ret                          ; 不走通用消耗（虚影期间 skill 保留）
     .endif
     ; 消耗技能
@@ -3088,6 +3094,7 @@ EffTick proc uses ebx slotIdx: dword
         mov eax, (TANK ptr [ebx]).effT
         .if eax == 0
             invoke EndPhantom, slotIdx
+            invoke SndPlay, 5        ; 收回音
         .endif
     .endif
     ret
@@ -3246,6 +3253,7 @@ SlotFound:
     mov (BULLET ptr [esi]).active, 1
     mov (BULLET ptr [esi]).bounces, 0
     mov (BULLET ptr [esi]).age, 0
+    invoke SndPlay, 1                ; 开炮音
     mov eax, bulIdx                  ; 返回子弹池索引（换位术绑定用）
     ret
 SpawnBullet endp
@@ -3449,6 +3457,11 @@ GameUpdate proc uses ebx esi edi
     .if eax != 0
         jmp GU_Done
     .endif
+    ; 震屏倒计时
+    mov eax, shakeT
+    .if eax > 0
+        dec shakeT
+    .endif
 
     ; ---- 任一坦克死亡时按 R 重新开始 ----
     xor ecx, ecx                       ; 存活数
@@ -3606,6 +3619,7 @@ GU_Slot:
                 mov pickupType, 0
                 mov eax, PICKUP_PERIOD
                 mov pickupTimer, eax
+                invoke SndPlay, 3    ; 拾取音
             .endif
         .endif
         .endif

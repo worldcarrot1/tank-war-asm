@@ -33,6 +33,10 @@ UiRender  PROTO
 extern gameState :dword
 extern netMode   :dword
 extern pauseMode :dword
+extern volumeLvl :dword
+SndInit    PROTO
+SndBgmStart PROTO
+SndVolume  PROTO :DWORD
 
 .data
     public hWnd                 ; gfx.asm / net.asm 需要引用主窗口句柄
@@ -115,6 +119,9 @@ WinMain proc
     invoke UiInit
     invoke GameInit
     invoke NetInit
+    invoke SndInit                    ; 程序化音频（BGM 文件 + 音效内存）
+    invoke SndVolume, volumeLvl
+    invoke SndBgmStart
     ; "tankwar play2"：跳过菜单直接开 2P 本地对局
     .if play2Mode != 0
         invoke UiForcePlay2

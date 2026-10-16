@@ -77,7 +77,8 @@ SK_MINE         equ 5               ; 地雷：隐藏雷 2s 后生效（含自�
 SK_NITRO        equ 6               ; 燃油加速：50% 加速（与地形叠加）
 SK_SWAP         equ 7               ; 换位术：发射子弹后可与之换位
 SK_WATER        equ 8               ; 驭水术：可在水域行走
-SKILL_COUNT     equ 8
+SK_PHANTOM      equ 9               ; 定格术：原地虚影 x2，实像免伤，6s
+SKILL_COUNT     equ 9
 PICKUP_PERIOD   equ 600             ; 10s @ 60tick
 PICKUP_SIZE     equ 18              ; 拾取物边长（像素）
 LASER_AIM_TICKS equ 42              ; 0.7s 瞄准延迟
@@ -87,6 +88,8 @@ GHOST_USES      equ 3               ; 穿墙 3 次
 MINE_ARM_TICKS  equ 120             ; 地雷 2s 生效
 NITRO_TICKS     equ 300             ; 燃油加速 5s
 WATER_TICKS     equ 360             ; 驭水 6s
+PHANTOM_TICKS   equ 360             ; 虚影 6s
+PHANTOM_USES    equ 2               ; 虚影可用 2 次
 MAX_MINES       equ 16
 MAX_LASER_PTS   equ 10              ; 起点 + 7 反弹折点 + 终点 = 9（留 1 富余）
 LASER_BOUNCE_MAX equ 7              ; 反射激光最多反射 7 次
@@ -94,6 +97,7 @@ EFF_SHIELD      equ 1
 EFF_NITRO       equ 2
 EFF_GHOST       equ 4
 EFF_WATER       equ 8
+EFF_PHANTOM     equ 16
 
 ; ---- 冰面滑行 ----
 ICE_SLIDE_MIN equ 6                 ; 滑行 tick 下限（6*4.5=27px 起步，可感）
@@ -150,6 +154,9 @@ TANK STRUCT
     aimT    dd ?                     ; 激光瞄准剩余 tick（0=无）
     aimSkill dd ?                    ; 瞄准中的技能 id
     lastCell dd ?                    ; 上 tick 中心格 index（穿墙计数）
+    phantomX dd ?                    ; 虚影左上角 x（定格术）
+    phantomY dd ?                    ; 虚影左上角 y
+    phantomUses dd ?                 ; 虚影剩余次数（0..2）
 TANK ENDS
 
 ; 子弹（全场固定池 bullets[MAX_BULLETS]）

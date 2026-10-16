@@ -57,7 +57,7 @@ WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
     brushP4     dd ?                ; P4 车体：橙
     brushBullet dd ?                ; 子弹：近黑
     brushHud    dd ?                ; 计分条：深灰
-    skillBrush  dd 9 dup (0)        ; [1..8] 技能配色刷（BGR）
+    skillBrush  dd 10 dup (0)       ; [1..9] 技能配色刷（BGR）
     penLaser    dd ?                ; 发射激光：红实线 2px
     penPreview  dd ?                ; 激光预览：灰虚线 1px
     skillNum    db "0", 0           ; 拾取物上的技能序号
@@ -132,6 +132,8 @@ GfxInit proc
     mov skillBrush[28], eax
     invoke CreateSolidBrush, 00E05010h
     mov skillBrush[32], eax
+    invoke CreateSolidBrush, 00906080h       ; 9 定格：深紫
+    mov skillBrush[36], eax
     invoke CreatePen, PS_SOLID, 2, 000000E0h
     mov penLaser, eax
     invoke CreatePen, PS_DASH, 1, 00606060h
@@ -361,7 +363,7 @@ DrawTankBadges proc uses ebx esi edi tk: dword
     .endif
     ; 换位待发：右下青点（与驭水同角但互斥出现概率低，颜色可辨）
     mov eax, (TANK ptr [esi]).swapBul
-    .if eax >= 0
+    .if eax != -1                   ; 有绑定（勿写 >= 0：无符号恒真）
         mov eax, (TANK ptr [esi]).x
         add eax, TANK_SIZE-5
         mov r2.left, eax
@@ -376,6 +378,38 @@ DrawTankBadges proc uses ebx esi edi tk: dword
     .endif
     ret
 DrawTankBadges endp
+
+; ------------------------------------------------------------
+; DrawPhantom -- 定格术虚影：空心坦克轮廓（车体+炮塔描边）
+; ------------------------------------------------------------
+DrawPhantom proc hdc: dword, px: dword, py: dword
+    local rc2:RECT
+    local oldPen:dword
+    invoke SelectObject, hdc, penDark
+    mov oldPen, eax
+    mov eax, px
+    mov rc2.left, eax
+    add eax, 25
+    mov rc2.right, eax
+    mov eax, py
+    mov rc2.top, eax
+    add eax, 25
+    mov rc2.bottom, eax
+    invoke RoundRect, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom, 9, 9
+    mov eax, px
+    add eax, 4
+    mov rc2.left, eax
+    add eax, 17
+    mov rc2.right, eax
+    mov eax, py
+    add eax, 4
+    mov rc2.top, eax
+    add eax, 17
+    mov rc2.bottom, eax
+    invoke Ellipse, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
+    invoke SelectObject, hdc, oldPen
+    ret
+DrawPhantom endp
 
 ; ------------------------------------------------------------
 ; GfxRender —— 绘制一帧：计分条 -> 地图 -> 坦克 -> 子弹 -> 上屏
@@ -647,6 +681,19 @@ TankLoop:
         mov eax, (TANK ptr [esi]).dir
         invoke DrawTank, hdcBack, ecx, edx, eax
         invoke DrawTankBadges, esi      ; 技能徽标
+        ; 定格虚影：画在虚影位置（空心轮廓）
+        mov eax, (TANK ptr [esi]).effOn
+        test eax, EFF_PHANTOM
+        jz TP_NoPh
+        push ebx
+        push esi
+        mov eax, (TANK ptr [esi]).phantomX
+        mov ecx, (TANK ptr [esi]).phantomY
+        add ecx, HUD_H
+        invoke DrawPhantom, hdcBack, eax, ecx
+        pop esi
+        pop ebx
+TP_NoPh:
     .endif
     add esi, SIZEOF TANK
     inc ebx

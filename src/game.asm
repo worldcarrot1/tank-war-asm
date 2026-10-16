@@ -24,6 +24,8 @@ TileAtPx  PROTO :DWORD,:DWORD      ; 同模块前向声明
 IsWallCell   PROTO :DWORD,:DWORD   ; 同模块前向声明
 WallRects    PROTO :DWORD,:DWORD,:DWORD
 FindOpenNeighbor PROTO :DWORD
+DamageTankRaw PROTO :DWORD
+EndPhantom   PROTO :DWORD
 WallRectsHit PROTO :DWORD,:DWORD,:DWORD,:DWORD
 TankBlocked  PROTO :DWORD,:DWORD
 SpawnBullet  PROTO :DWORD
@@ -588,6 +590,12 @@ arenaTable dd ARENA1,
     stT21b db "T21_IN_WATER(expect1)="     ; 23 字符
     stT21c db "T21_HOLD(expect1)="        ; 18 字符
     stT21d db "T21_OFF(expect0)="          ; 17 字符
+    stT22a db "T22_PHANTOM_SET(expect1)="  ; 24 字符
+    stT22b db "T22_SPLIT(expect1)="        ; 19 字符
+    stT22c db "T22_IMMUNE(expect1)="       ; 20 字符
+    stT22d db "T22_HIT_PH(expect1)="       ; 20 字符
+    stT22e db "T22_2ND(expect1)="          ; 17 字符
+    stT22f db "T22_CLEAR(expect1)="        ; 19 字符
 
 .code
 
@@ -697,6 +705,9 @@ RTLoop:
     mov (TANK ptr [esi]).aimT, 0
     mov (TANK ptr [esi]).aimSkill, SKILL_NONE
     mov (TANK ptr [esi]).lastCell, -1
+    mov (TANK ptr [esi]).phantomX, 0
+    mov (TANK ptr [esi]).phantomY, 0
+    mov (TANK ptr [esi]).phantomUses, 0
     add esi, SIZEOF TANK
     inc ebx
     .if ebx < MAX_PLAYERS
@@ -1698,6 +1709,126 @@ T20Done:
     invoke LogNum, logVal                ; expect 0（已失效）
     mov mapData[13*COLS+5], TILE_EMPTY   ; 还原走廊
     mov mapData[13*COLS+6], TILE_EMPTY
+T21Done:
+    ; T22: 定格术 —— 虚影免伤 / 虚影被打=受伤+消失 / 2 次 / 收回清技能
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].skill, SK_PHANTOM
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 放虚影 #1
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_PHANTOM
+    .if eax != 0
+    mov eax, tanks[0*SIZEOF TANK].phantomX
+    .if eax == 96
+        mov eax, 1
+        jmp T22aOk
+    .endif
+    .endif
+    mov eax, 0
+T22aOk:
+    mov logVal, eax
+    invoke LogStr, offset stT22a, 25
+    invoke LogNum, logVal                ; expect 1（虚影就位在原地）
+    ; b) 实像自由移动 -> 与虚影分离
+    mov inputTable[12], 1
+    invoke AdvanceTicks, 15
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    .if eax > 110
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT22b, 19
+    invoke LogNum, logVal                ; expect 1（实像远离虚影）
+    ; c) 敌弹打实像位置 -> 虚影期间免疫
+    mov edi, offset bullets
+    xor ecx, ecx
+ST22Clr:
+    mov (BULLET ptr [edi]).active, 0
+    add edi, SIZEOF BULLET
+    inc ecx
+    .if ecx < MAX_BULLETS
+        jmp ST22Clr
+    .endif
+    mov bullets[0].active, 1
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov bullets[0].x, eax
+    mov bullets[0].y, 420
+    mov bullets[0].vx, 0
+    mov bullets[0].vy, 0
+    invoke AdvanceTicks, 2
+    mov eax, tanks[0*SIZEOF TANK].hp
+    .if eax == TANK_HP
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT22c, 20
+    invoke LogNum, logVal                ; expect 1（实像免伤）
+    ; d) 弹移到虚影位置 -> 视为被击中（掉血）+ 虚影消失
+    mov bullets[0].x, 104
+    invoke AdvanceTicks, 2
+    mov eax, tanks[0*SIZEOF TANK].hp
+    .if eax == TANK_HP - 1
+        mov eax, tanks[0*SIZEOF TANK].effOn
+        and eax, EFF_PHANTOM
+        .if eax == 0
+            mov eax, 1
+            jmp T22dOk
+        .endif
+    .endif
+    mov eax, 0
+T22dOk:
+    mov logVal, eax
+    invoke LogStr, offset stT22d, 20
+    invoke LogNum, logVal                ; expect 1（虚影被打=受伤+消失）
+    ; e) 再按 = 第二只虚影（uses 2->1->0）
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_PHANTOM
+    .if eax != 0
+    mov eax, tanks[0*SIZEOF TANK].phantomUses
+    .if eax == 0
+        mov eax, 1
+        jmp T22eOk
+    .endif
+    .endif
+    mov eax, 0
+T22eOk:
+    mov logVal, eax
+    invoke LogStr, offset stT22e, 17
+    invoke LogNum, logVal                ; expect 1（第二只虚影，次数用尽）
+    ; f) 再按收回 -> 虚影消失且技能用尽清空
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_PHANTOM
+    .if eax == 0
+    mov eax, tanks[0*SIZEOF TANK].skill
+    .if eax == SKILL_NONE
+        mov eax, 1
+        jmp T22fOk
+    .endif
+    .endif
+    mov eax, 0
+T22fOk:
+    mov logVal, eax
+    invoke LogStr, offset stT22f, 19
+    invoke LogNum, logVal                ; expect 1（收回+清空）
+T22Done:
     call CloseLog
     ret
 SelfTestRun endp
@@ -2092,13 +2223,34 @@ TankBlocked endp
 ; ============================================================
 
 ; ------------------------------------------------------------
-; DamageTank —— 统一受伤入口：冰盾优先抵挡一次
-; 入参：slotIdx；返回 eax = 1 实际扣血 / 0 被冰盾挡下
+; DamageTankRaw -- 真实扣血（无任何免疫；虚影被击中时用）
+; ------------------------------------------------------------
+DamageTankRaw proc uses ebx slotIdx: dword
+    mov ebx, slotIdx
+    imul ebx, ebx, SIZEOF TANK
+    add ebx, offset tanks
+    dec (TANK ptr [ebx]).hp
+    mov eax, (TANK ptr [ebx]).hp
+    .if eax <= 0
+        mov (TANK ptr [ebx]).alive, 0
+    .endif
+    mov eax, 1
+    ret
+DamageTankRaw endp
+
+; ------------------------------------------------------------
+; DamageTank —— 统一受伤入口：定格虚影免疫 > 冰盾抵挡 > 扣血
+; 入参：slotIdx；返回 eax = 1 实际扣血 / 0 被冰盾挡下 / 2 虚影免疫
 ; ------------------------------------------------------------
 DamageTank proc uses ebx slotIdx: dword
     mov ebx, slotIdx
     imul ebx, ebx, SIZEOF TANK
     add ebx, offset tanks
+    mov eax, (TANK ptr [ebx]).effOn
+    .if eax & EFF_PHANTOM
+        mov eax, 2                   ; 定格虚影期间本体免疫一切伤害
+        ret
+    .endif
     mov eax, (TANK ptr [ebx]).effOn
     .if eax & EFF_SHIELD
         ; 冰盾抵挡：消耗护盾 + 坦克周围生成 2x2 冰面
@@ -2107,14 +2259,26 @@ DamageTank proc uses ebx slotIdx: dword
         mov eax, 0
         ret
     .endif
-    dec (TANK ptr [ebx]).hp
-    mov eax, (TANK ptr [ebx]).hp
-    .if eax <= 0
-        mov (TANK ptr [ebx]).alive, 0
-    .endif
-    mov eax, 1
+    invoke DamageTankRaw, slotIdx
     ret
 DamageTank endp
+
+; ------------------------------------------------------------
+; EndPhantom -- 结束虚影（手动/超时/被击中共用）
+; 虚影次数用尽时同时清空持有技能
+; ------------------------------------------------------------
+EndPhantom proc uses ebx slotIdx: dword
+    mov ebx, slotIdx
+    imul ebx, ebx, SIZEOF TANK
+    add ebx, offset tanks
+    and (TANK ptr [ebx]).effOn, not EFF_PHANTOM
+    mov (TANK ptr [ebx]).effT, 0
+    mov eax, (TANK ptr [ebx]).phantomUses
+    .if eax == 0
+        mov (TANK ptr [ebx]).skill, SKILL_NONE
+    .endif
+    ret
+EndPhantom endp
 
 ; ------------------------------------------------------------
 ; SpawnIce2x2 —— 以坦克中心格为左上角生成 2x2 冰面
@@ -2776,6 +2940,12 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         invoke DoSwap, slotIdx
         ret
     .endif
+    ; 定格虚影激活中：再按 = 收回虚影（skill 保留给第二只）
+    mov eax, (TANK ptr [ecx]).effOn
+    .if eax & EFF_PHANTOM
+        invoke EndPhantom, slotIdx
+        ret
+    .endif
     mov eax, (TANK ptr [ecx]).skill
     .if eax == SKILL_NONE
         ret
@@ -2822,6 +2992,24 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         or edx, EFF_WATER
         mov (TANK ptr [ecx]).effOn, edx
         mov (TANK ptr [ecx]).effT, WATER_TICKS
+    .elseif eax == SK_PHANTOM
+        ; 定格术：原地放虚影（2 次）；skill 保留供收回/第二只
+        mov ecx, ptank
+        mov eax, (TANK ptr [ecx]).phantomUses
+        .if eax <= 0
+            ; 拾取后首次发动：初始化 2 次（回合重置为 0）
+            mov (TANK ptr [ecx]).phantomUses, PHANTOM_USES
+        .endif
+        dec (TANK ptr [ecx]).phantomUses
+        mov eax, (TANK ptr [ecx]).x
+        mov (TANK ptr [ecx]).phantomX, eax
+        mov eax, (TANK ptr [ecx]).y
+        mov (TANK ptr [ecx]).phantomY, eax
+        mov edx, (TANK ptr [ecx]).effOn
+        or edx, EFF_PHANTOM
+        mov (TANK ptr [ecx]).effOn, edx
+        mov (TANK ptr [ecx]).effT, PHANTOM_TICKS
+        ret                          ; 不走通用消耗（虚影期间 skill 保留）
     .endif
     ; 消耗技能
     mov ecx, ptank
@@ -2884,6 +3072,14 @@ EffTick proc uses ebx slotIdx: dword
         mov eax, (TANK ptr [ebx]).effT
         .if eax == 0
             and (TANK ptr [ebx]).effOn, not EFF_NITRO
+        .endif
+    .endif
+    ; 定格虚影 6s 到：自动收回（坦克本就在实像位置）
+    mov eax, (TANK ptr [ebx]).effOn
+    .if eax & EFF_PHANTOM
+        mov eax, (TANK ptr [ebx]).effT
+        .if eax == 0
+            invoke EndPhantom, slotIdx
         .endif
     .endif
     ret
@@ -3371,6 +3567,9 @@ GU_Slot:
         .if edx == 0
         mov edx, (TANK ptr [eax]).swapBul
         .if edx == -1                ; 无换位绑定（勿写 < 0：无符号恒假）
+        mov edx, (TANK ptr [eax]).effOn
+        test edx, EFF_PHANTOM
+        .if ZERO?                    ; 定格虚影中不拾取（防覆盖进行中的技能）
             mov edx, (TANK ptr [eax]).x
             add edx, TANK_SIZE/2
             shr edx, 5
@@ -3395,6 +3594,7 @@ GU_Slot:
                 mov eax, PICKUP_PERIOD
                 mov pickupTimer, eax
             .endif
+        .endif
         .endif
         .endif
         .endif
@@ -3567,34 +3767,72 @@ TankHitLoop:
             jmp TankNext2
         .endif
         ; AABB：弹体 8x8 (x,y,+8,+8) vs 坦克 TANK_SIZE 见方
+        ; 定格虚影激活 -> 判定矩形 = 虚影位置（实像免伤，虚像可被打中）
+        mov eax, (TANK ptr [edx]).effOn
+        test eax, EFF_PHANTOM
+        jz THR_B1
+        mov eax, (TANK ptr [edx]).phantomX
+        jmp THR_G1
+THR_B1:
         mov eax, (TANK ptr [edx]).x
+THR_G1:
         add eax, TANK_SIZE
         mov ecx, (BULLET ptr [edi]).x
         .if ecx >= eax
             jmp TankNext2
         .endif
+        mov eax, (TANK ptr [edx]).effOn
+        test eax, EFF_PHANTOM
+        jz THR_B2
+        mov eax, (TANK ptr [edx]).phantomX
+        jmp THR_G2
+THR_B2:
         mov eax, (TANK ptr [edx]).x
+THR_G2:
         mov ecx, (BULLET ptr [edi]).x
         add ecx, BULLET_SIZE_PX
         .if ecx <= eax
             jmp TankNext2
         .endif
+        mov eax, (TANK ptr [edx]).effOn
+        test eax, EFF_PHANTOM
+        jz THR_B3
+        mov eax, (TANK ptr [edx]).phantomY
+        jmp THR_G3
+THR_B3:
         mov eax, (TANK ptr [edx]).y
+THR_G3:
         add eax, TANK_SIZE
         mov ecx, (BULLET ptr [edi]).y
         .if ecx >= eax
             jmp TankNext2
         .endif
+        mov eax, (TANK ptr [edx]).effOn
+        test eax, EFF_PHANTOM
+        jz THR_B4
+        mov eax, (TANK ptr [edx]).phantomY
+        jmp THR_G4
+THR_B4:
         mov eax, (TANK ptr [edx]).y
+THR_G4:
         mov ecx, (BULLET ptr [edi]).y
         add ecx, BULLET_SIZE_PX
         .if ecx <= eax
             jmp TankNext2
         .endif
-        ; 命中：统一伤害入口（冰盾可抵挡一次）、销毁子弹
+        ; 命中：虚影激活 -> 打中虚影（真实扣血 + 虚影消失）；
+        ; 否则统一伤害入口（冰盾可抵挡一次）；销毁子弹
         push edi
         push esi
+        mov eax, (TANK ptr [edx]).effOn
+        test eax, EFF_PHANTOM
+        jz THR_Normal
+        invoke DamageTankRaw, esi
+        invoke EndPhantom, esi
+        jmp THR_HitDone
+THR_Normal:
         invoke DamageTank, esi
+THR_HitDone:
         pop esi
         pop edi
         mov (BULLET ptr [edi]).active, 0

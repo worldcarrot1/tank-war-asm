@@ -158,6 +158,16 @@ DeleteDC                PROTO stdcall :DWORD
 CreateSolidBrush        PROTO stdcall :DWORD
 FillRect                PROTO stdcall :DWORD,:DWORD,:DWORD
 BitBlt                  PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+Rectangle               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+RoundRect               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+Ellipse                 PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+CreatePen               PROTO stdcall :DWORD,:DWORD,:DWORD
+SetTextColor            PROTO stdcall :DWORD,:DWORD
+SetBkMode               PROTO stdcall :DWORD,:DWORD
+TextOutA                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+
+PS_SOLID    equ 0
+TRANSPARENT equ 1
 
 ; ws2_32（htons 实际参数是 16 位，这里按 32 位压栈，栈平衡不受影响）
 WSAStartup      PROTO stdcall :DWORD,:DWORD

@@ -67,6 +67,9 @@ public SelfTestRun
     input2Left   dd 0
     input2Right  dd 0
     input2Fire   dd 0
+    roundOver   dd 0                 ; 回合结束定格中
+    roundTimer  dd 0                 ; 定格剩余 tick
+    roundScored dd 0                 ; 本回合已判分
     seqSelf     dw 0                 ; 本端发包序号
     fireHappened dd 0                ; 本 tick P1 是否开火（发包 flag 用）
     rngState    dd 0                 ; xorshift32 状态
@@ -171,6 +174,7 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
     stT9a db "T9_P2_DEAD_AT_TICK="
     stT9b db "T9_P2_ALIVE(expect0)="
     stT9c db "T9_P2_HP(expect0)="
+    stT10 db "T10_P1_SCORE(expect1)="
 
 .code
 
@@ -304,6 +308,9 @@ RTClearB:
     mov [edi], eax
     add edi, 4
     loop RTClearB
+    mov roundOver, 0
+    mov roundTimer, 0
+    mov roundScored, 0
     mov seqSelf, 0
     mov fireHappened, 0
     ret
@@ -542,6 +549,9 @@ T9Done:
     invoke LogNum, tanks[1*SIZEOF TANK].alive      ; expect 0
     invoke LogStr, offset stT9c, 18
     invoke LogNum, tanks[1*SIZEOF TANK].hp         ; expect 0
+    invoke AdvanceTicks, 100                       ; 等定格结束（90 tick）开新一轮
+    invoke LogStr, offset stT10, 23
+    invoke LogNum, tanks[0*SIZEOF TANK].score      ; expect 1
 
     call CloseLog
     ret
@@ -564,6 +574,8 @@ GameInit proc uses ebx esi edi
     mov ecx, arenaTable[eax*4]
     invoke ParseArena, ecx
     call ResetTanks
+    mov tanks[0*SIZEOF TANK].score, 0
+    mov tanks[1*SIZEOF TANK].score, 0
     ret
 GameInit endp
 
@@ -1048,8 +1060,8 @@ BulletTick:
                 mov (BULLET ptr [edi]).x, 0
                 neg (BULLET ptr [edi]).vx
                 invoke BounceOne, edi
-            .elseif eax > WND_W - BULLET_SIZE_PX
-                mov (BULLET ptr [edi]).x, WND_W - BULLET_SIZE_PX
+            .elseif eax > MAP_W - BULLET_SIZE_PX
+                mov (BULLET ptr [edi]).x, MAP_W - BULLET_SIZE_PX
                 neg (BULLET ptr [edi]).vx
                 invoke BounceOne, edi
             .else
@@ -1075,8 +1087,8 @@ BulletTick:
                 mov (BULLET ptr [edi]).y, 0
                 neg (BULLET ptr [edi]).vy
                 invoke BounceOne, edi
-            .elseif eax > WND_H - BULLET_SIZE_PX
-                mov (BULLET ptr [edi]).y, WND_H - BULLET_SIZE_PX
+            .elseif eax > MAP_H - BULLET_SIZE_PX
+                mov (BULLET ptr [edi]).y, MAP_H - BULLET_SIZE_PX
                 neg (BULLET ptr [edi]).vy
                 invoke BounceOne, edi
             .else
@@ -1156,6 +1168,71 @@ BulletNext:
     .if ebx < MAX_BULLETS
         jmp BulletTick
     .endif
+
+    ; ---- 回合计分：只剩 1 辆存活 且 已毁坦克的子弹全部消失 ----
+    ; 满足 -> 存活者 +1 分并定格 ROUND_PAUSE_TICKS；全灭 -> 不加分只定格
+    .if roundOver != 0
+        dec roundTimer
+        .if roundTimer == 0
+            call ResetTanks             ; 开新一轮（不清比分）
+        .endif
+        jmp GU_Done
+    .endif
+    ; 存活统计（slot 0..3 顺序固定）
+    xor eax, eax                        ; eax = 存活数
+    xor esi, esi                        ; esi = 幸存者槽位
+    xor ebx, ebx
+SC_Alive:
+    .if ebx >= MAX_PLAYERS
+        jmp SC_AliveDone
+    .endif
+    mov edx, ebx
+    imul edx, edx, SIZEOF TANK
+    add edx, offset tanks
+    mov ecx, (TANK ptr [edx]).alive
+    .if ecx != 0
+        inc eax
+        mov esi, ebx
+    .endif
+    inc ebx
+    jmp SC_Alive
+SC_AliveDone:
+    .if eax > 1
+        jmp GU_Done                     ; 多车存活：不判分
+    .endif
+    ; 已毁坦克的子弹是否全部消失（弹序固定）
+    xor ebx, ebx
+SC_Bul:
+    .if ebx >= MAX_BULLETS
+        jmp SC_BulDone
+    .endif
+    mov edx, ebx
+    shl edx, 5                          ; * SIZEOF BULLET(32)
+    add edx, offset bullets
+    mov ecx, (BULLET ptr [edx]).active
+    .if ecx != 0
+        mov ecx, (BULLET ptr [edx]).owner
+        imul ecx, ecx, SIZEOF TANK
+        add ecx, offset tanks
+        mov edx, (TANK ptr [ecx]).alive
+        .if edx == 0
+            jmp GU_Done                 ; 亡者的弹还在飞：不判分
+        .endif
+    .endif
+    inc ebx
+    jmp SC_Bul
+SC_BulDone:
+    ; 条件成立：幸存者加分（同归于尽不加）
+    .if eax == 1 && roundScored == 0
+        mov edx, esi
+        imul edx, edx, SIZEOF TANK
+        add edx, offset tanks
+        inc (TANK ptr [edx]).score
+    .endif
+    mov roundScored, 1
+    mov roundOver, 1
+    mov roundTimer, ROUND_PAUSE_TICKS
+GU_Done:
     ret
 GameUpdate endp
 

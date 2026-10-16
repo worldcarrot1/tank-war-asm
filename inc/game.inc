@@ -7,12 +7,18 @@
 ; ============================================================
 
 ; ---- 窗口与渲染 ----
-WND_W       equ 640                 ; 窗口客户区宽度（像素）
-WND_H       equ 480                 ; 窗口客户区高度（像素）
+HUD_H       equ 32                  ; 顶部计分条高度（像素）
+MAP_W       equ 640                 ; 地图宽度（像素）
+MAP_H       equ 480                 ; 地图高度（像素）
+WND_W       equ MAP_W               ; 窗口客户区宽度
+WND_H       equ MAP_H + HUD_H       ; 窗口客户区高度（地图 + 计分条）
 CELL        equ 32                  ; 地图格子边长（像素）
 SUBPX       equ 16                  ; 砖墙子块边长（CELL/2，2x2 子块）
-COLS        equ WND_W / CELL        ; 20 列
-ROWS        equ WND_H / CELL        ; 15 行
+COLS        equ MAP_W / CELL        ; 20 列
+ROWS        equ MAP_H / CELL        ; 15 行
+
+; ---- 回合节奏 ----
+ROUND_PAUSE_TICKS equ 90            ; 得分后定格 1.5 秒再开新一轮
 
 ; ---- 游戏节奏 ----
 TICK_MS     equ 16                  ; 约 60 tick/秒
@@ -88,6 +94,7 @@ TANK STRUCT
     fireCd  dd ?                     ; 开火冷却剩余 tick
     slide   dd ?                     ; 冰面滑行剩余 tick（0=无）
     sdir    dd ?                     ; 滑行方向
+    score   dd ?                     ; 本场得分（回合制积分）
 TANK ENDS
 
 ; 子弹（全场固定池 bullets[MAX_BULLETS]）

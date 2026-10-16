@@ -25,6 +25,7 @@ public numPlayers
 public netMode
 public menuFont
 public fontSmall
+public fontBig
 public langFlag
 public playerName
 public pauseMode
@@ -119,6 +120,7 @@ RST_H      equ 30
     menuBrush   dd ?
     menuFont    dd ?
     fontSmall   dd ?                   ; 键位容器用小字体（18px）
+    fontBig     dd ?                   ; 倒计时大数字（72px）
     boxBrush    dd ?                   ; 容器边框画刷（深灰）
     brushNight  dd ?                   ; 深夜模式背景刷（近黑）
     boxBrushN   dd ?                   ; 深夜模式容器边框（浅灰）
@@ -239,6 +241,10 @@ UiInit proc
            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
            DEFAULT_QUALITY, DEFAULT_PITCH, offset szFont
     mov fontSmall, eax
+    invoke CreateFontA, 72, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+           DEFAULT_QUALITY, DEFAULT_PITCH, offset szFont
+    mov fontBig, eax
     ; 键位默认值只在启动时设一次（GameInit 不再重置，
     ; 否则人数页改的自定义键位每局开局都会被洗掉）
     invoke InitKeyDefaults
@@ -605,41 +611,38 @@ UiTick proc uses ebx esi edi
             .endif
             jmp UT_Done
         .endif
-        ; 暂停菜单（pauseMode==1）
+        ; 暂停菜单（pauseMode==1）—— 直接用已采样的边沿变量
         .if eax == 1
-            invoke KeyEdge, VK_UP, addr prevUp
-            .if eax != 0
+            .if upE != 0
                 dec pauseSel
-                .if pauseSel < 0
-                    mov pauseSel, 3
-                .endif
+                cmp pauseSel, 0
+                jge PS_UpOk
+                mov pauseSel, 3            ; 环绕（勿写 < 0：无符号恒假）
+PS_UpOk:
             .endif
-            invoke KeyEdge, VK_DOWN, addr prevDown
-            .if eax != 0
+            .if dnE != 0
                 inc pauseSel
                 .if pauseSel > 3
                     mov pauseSel, 0
                 .endif
             .endif
             ; 音量：暂停中 ←→ 直接调节
-            invoke KeyEdge, VK_LEFT, addr prevLeft
-            .if eax != 0
+            .if ltE != 0
                 sub volumeLvl, 5
-                .if volumeLvl < 0
-                    mov volumeLvl, 0
-                .endif
+                cmp volumeLvl, 0
+                jge PS_VlOk
+                mov volumeLvl, 0
+PS_VlOk:
                 invoke SndVolume, volumeLvl
             .endif
-            invoke KeyEdge, VK_RIGHT, addr prevRight
-            .if eax != 0
+            .if rtE != 0
                 add volumeLvl, 5
                 .if volumeLvl > 100
                     mov volumeLvl, 100
                 .endif
                 invoke SndVolume, volumeLvl
             .endif
-            invoke KeyEdge, VK_RETURN, addr prevEnter
-            .if eax != 0
+            .if enE != 0
                 .if pauseSel == 0
                     mov pauseMode, 2           ; 继续 -> 3s 倒计时
                     mov countT, 180
@@ -678,21 +681,17 @@ UiTick proc uses ebx esi edi
             .endif
             jmp UT_Done
         .endif
-        ; 打满局数：Enter/Esc 回主菜单
+        ; 打满局数：Enter/Esc 回主菜单（用采样变量）
         mov eax, matchOver
         .if eax != 0
-            invoke KeyEdge, VK_RETURN, addr prevEnter
-            mov ecx, eax
-            invoke KeyEdge, VK_ESCAPE, addr prevEsc
-            .if ecx != 0 || eax != 0
+            .if enE != 0 || esE != 0
                 mov matchOver, 0
                 mov gameState, ST_MENU
             .endif
             jmp UT_Done
         .endif
         ; Esc -> 暂停
-        invoke KeyEdge, VK_ESCAPE, addr prevEsc
-        .if eax != 0
+        .if esE != 0
             mov pauseMode, 1
             mov pauseSel, 0
         .endif
@@ -950,9 +949,10 @@ UT_Scan2Done:
         ; ---- 音量（←→）/ 音效 / 深夜模式 快捷设置 ----
         .if ltE != 0
             sub volumeLvl, 5
-            .if volumeLvl < 0
-                mov volumeLvl, 0
-            .endif
+            cmp volumeLvl, 0
+            jge SS_Vl1
+            mov volumeLvl, 0
+SS_Vl1:
             invoke SndVolume, volumeLvl
         .endif
         .if rtE != 0
@@ -966,9 +966,10 @@ UT_Scan2Done:
             mov eax, mouseX
             .if eax >= 330 && eax < 400
                 sub volumeLvl, 10
-                .if volumeLvl < 0
-                    mov volumeLvl, 0
-                .endif
+                cmp volumeLvl, 0
+                jge SS_Vl2
+                mov volumeLvl, 0
+SS_Vl2:
                 invoke SndVolume, volumeLvl
             .elseif eax >= 402 && eax < 472
                 add volumeLvl, 10

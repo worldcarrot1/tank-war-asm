@@ -35,6 +35,7 @@ extern matchOver   :dword          ; 比赛结束标志（game.asm）
 extern langFlag    :dword          ; 0=英 1=中（ui.asm）
 extern menuFont    :dword          ; 菜单大字体（ui.asm）
 extern fontSmall   :dword          ; 小字体（ui.asm）
+extern fontBig     :dword          ; 倒计时大数字（ui.asm）
 extern playerName  :byte           ; 玩家名（ui.asm，每人 16 字节）
 extern pauseMode   :dword          ; 0=无 1=暂停 2=倒计时（ui.asm）
 extern pauseSel    :dword          ; 暂停菜单选中项
@@ -1028,7 +1029,7 @@ GP_Item:
         .endif
     .elseif eax == 2
         ; 倒计时大数字（3/2/1）居中
-        invoke SelectObject, hdcBack, menuFont
+        invoke SelectObject, hdcBack, fontBig
         mov eax, countT
         add eax, 59
         xor edx, edx
@@ -1038,7 +1039,7 @@ GP_Item:
         lea edi, scoreBuf
         mov [edi], al
         mov word ptr [edi+1], 0
-        invoke UiTextZ, hdcBack, 480, 300, offset scoreBuf, 0000E0E0h
+        invoke UiTextZ, hdcBack, 470, 260, offset scoreBuf, 0000E0E0h
     .endif
 
     ; 4) 比赛结束覆盖层：胜者大字 + 提示

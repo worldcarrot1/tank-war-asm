@@ -16,7 +16,6 @@ include game.inc
 
 extern hWnd        :dword          ; main.asm 里的主窗口句柄
 extern mapData     :byte           ; game.asm 里的地图数组
-extern brickMask   :byte           ; game.asm 里的砖格子块占用位
 extern tanks       :TANK           ; game.asm 里的坦克状态
 extern bullets     :BULLET         ; game.asm 里的子弹池
 
@@ -216,7 +215,6 @@ DrawTank endp
 GfxRender proc
     local rc:RECT
     local r2:RECT
-    local msk:dword
 
     ; 0) 背景与计分条
     mov rc.left, 0
@@ -348,63 +346,6 @@ ColLoop:
         add eax, 2
         mov r2.right, eax
         invoke FillRect, hdcBack, addr r2, brushMortar
-        ; 被清掉的子块画回背景色（浅灰 = 弹洞）
-        movzx eax, brickMask[esi]
-        mov msk, eax
-        .if msk != BRICK_FULL
-            .if msk & 1
-            .else
-                mov eax, rc.left
-                mov r2.left, eax
-                add eax, SUBPX
-                mov r2.right, eax
-                mov eax, rc.top
-                mov r2.top, eax
-                add eax, SUBPX
-                mov r2.bottom, eax
-                invoke FillRect, hdcBack, addr r2, brushBg
-            .endif
-            .if msk & 2
-            .else
-                mov eax, rc.left
-                add eax, SUBPX
-                mov r2.left, eax
-                mov eax, rc.right
-                mov r2.right, eax
-                mov eax, rc.top
-                mov r2.top, eax
-                add eax, SUBPX
-                mov r2.bottom, eax
-                invoke FillRect, hdcBack, addr r2, brushBg
-            .endif
-            .if msk & 4
-            .else
-                mov eax, rc.left
-                mov r2.left, eax
-                add eax, SUBPX
-                mov r2.right, eax
-                mov eax, rc.top
-                add eax, SUBPX
-                mov r2.top, eax
-                mov eax, rc.bottom
-                mov r2.bottom, eax
-                invoke FillRect, hdcBack, addr r2, brushBg
-            .endif
-            .if msk & 8
-            .else
-                mov eax, rc.left
-                add eax, SUBPX
-                mov r2.left, eax
-                mov eax, rc.right
-                mov r2.right, eax
-                mov eax, rc.top
-                add eax, SUBPX
-                mov r2.top, eax
-                mov eax, rc.bottom
-                mov r2.bottom, eax
-                invoke FillRect, hdcBack, addr r2, brushBg
-            .endif
-        .endif
     .endif
     inc esi
     inc ebx

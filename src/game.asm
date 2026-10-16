@@ -20,6 +20,7 @@ include win32.inc
 include game.inc
 
 GameUpdate PROTO                   ; 同模块前向声明（自测助手先用后定义）
+TileAtPx  PROTO :DWORD,:DWORD      ; 同模块前向声明
 
 ; ---- 输入快照（本模块定义，input.asm 写入）----
 public inputUp
@@ -38,7 +39,6 @@ public input2Fire
 public tanks
 public bullets
 public mapData
-public brickMask
 public mapIndex
 public SpawnBullet
 public GameInit
@@ -51,7 +51,6 @@ public SelfTestRun
     tanks       TANK MAX_PLAYERS dup (<>)
     bullets     BULLET MAX_BULLETS dup (<>)
     mapData     db COLS*ROWS dup(TILE_EMPTY)
-    brickMask   db COLS*ROWS dup(0)  ; 砖格子块占用位（每格 4 bit）
     spawnX      dd 4 dup (0)         ; 出生点像素坐标（字符画 'S'）
     spawnY      dd 4 dup (0)
     spawnCount  dd 0
@@ -77,79 +76,79 @@ public SelfTestRun
 ; ---- 字符画对战地图（20x15 字符/张，编译期嵌入）----
 ; 字符表：. 空地  # 钢墙  b 砖墙  ~ 水  - 冰  S 出生点
 ARENA1 db "####################"
-       db "#S.b............b.S#"
+       db "#S#...#..--..#...#S#"
+       db "#.b.#.#.#..#.#.#.b.#"
+       db "#.#.....#..#.....#.#"
+       db "#.#b#~###..###~#b#.#"
+       db "#.#.....-..-.....#.#"
+       db "#.#.#####..#####.#.#"
        db "#..................#"
-       db "#..##..........##..#"
-       db "#..#............#..#"
-       db "#.....b--##--b.....#"
-       db "#......~.##.~......#"
-       db "#.##............##.#"
-       db "#.##...b....b...##.#"
-       db "#......#....#......#"
-       db "#..b............b..#"
-       db "#......-....-......#"
-       db "#..................#"
-       db "#S.b............b.S#"
+       db "#.#.#.###~~###.#.#.#"
+       db "#~..#..-....-..#..~#"
+       db "###.##bbb..bbb##.###"
+       db "#..-#...#..#...#-..#"
+       db "#.b##.#.#..#.#.##b.#"
+       db "#S................S#"
        db "####################"
 ARENA2 db "####################"
-       db "#S..-..........-..S#"
-       db "#....#........#....#"
-       db "#..b.#..~~~~..#.b..#"
-       db "#....#........#....#"
-       db "#.##............##.#"
-       db "#.........--.......#"
-       db "#..~~...b##b...~~..#"
-       db "#.........--.......#"
-       db "#.##............##.#"
-       db "#....#........#....#"
-       db "#..b.#..~~~~..#.b..#"
-       db "#....#........#....#"
-       db "#S..-..........-..S#"
+       db "#S#...#-....-#...#S#"
+       db "#.#.#.#bb..bb#.#.#.#"
+       db "#....~........~....#"
+       db "#.####b.#..#.b####.#"
+       db "#.......#..#.......#"
+       db "#.#######..#######.#"
+       db "#...-..........-...#"
+       db "#########..#########"
+       db "#~......#..#......~#"
+       db "#.#.####b..b####.#.#"
+       db "#....~..#--#..~....#"
+       db "#.#b##b.#..#.b##b#.#"
+       db "#S....-......-....S#"
        db "####################"
 ARENA3 db "####################"
-       db "#S.b............b.S#"
-       db "#..................#"
-       db "#...##........##...#"
-       db "#...#..........#...#"
-       db "#...#...-..-...#...#"
-       db "#.......~~~~.......#"
-       db "#..b...~.##.~...b..#"
-       db "#.......~~~~.......#"
-       db "#...#...-..-...#...#"
-       db "#...#..........#...#"
-       db "#...##........##...#"
-       db "#..................#"
-       db "#S.b............b.S#"
+       db "#S#......--......#S#"
+       db "#.#######..#######.#"
+       db "#....~.-#..#-.~....#"
+       db "#b#.###.#..#.###.#b#"
+       db "#.#.....b..b.....#.#"
+       db "#.#.#####..#####.#.#"
+       db "#...b..-....-..b...#"
+       db "#.#####.####.#####.#"
+       db "#.....#......#.....#"
+       db "#.#b#.#b#..#b#.#b#.#"
+       db "#...~.#..--..#.~...#"
+       db "#.#b###.#..#.###b#.#"
+       db "#S......~..~......S#"
        db "####################"
 ARENA4 db "####################"
-       db "#S.b..--....--..b.S#"
-       db "#..................#"
-       db "#.bb..#.~~~~.#..bb.#"
-       db "#.....#......#.....#"
-       db "#..#..#.-bb-.#..#..#"
-       db "#..#.....##.....#..#"
-       db "#..#............#..#"
-       db "#..#.....##.....#..#"
-       db "#..#..#.-bb-.#..#..#"
-       db "#.....#......#.....#"
-       db "#.bb..#.~~~~.#..bb.#"
-       db "#..................#"
-       db "#S.b..--....--..b.S#"
+       db "#S#..............#S#"
+       db "#.#.#-#.b##b.#-#.#.#"
+       db "#-b.#..........#.b-#"
+       db "#.###b#-b..b-#b###.#"
+       db "#.....#~#..#~#.....#"
+       db "#.###.##b..b##.###.#"
+       db "#...#.#......#.#...#"
+       db "#~#~#.#.####.#.#~#~#"
+       db "#.#.#.#......#.#.#.#"
+       db "#.#.#.###..###.#.#.#"
+       db "#.b.-.#......#.-.b.#"
+       db "#.#.#.#.#..#.#.#.#.#"
+       db "#S......#..#......S#"
        db "####################"
 ARENA5 db "####################"
-       db "#S.b......#.....b.S#"
-       db "#..b............b..#"
-       db "#.....b......b.....#"
-       db "#.##............##.#"
-       db "#.##...######...##.#"
-       db "#......#....#......#"
-       db "#......#.--.#......#"
-       db "#......#....#......#"
-       db "#.##...######...##.#"
-       db "#.##............##.#"
-       db "#.....b......b.....#"
-       db "#..b............b..#"
-       db "#S.b......#.....b.S#"
+       db "#S#..............#S#"
+       db "#.#.b.########.b.#.#"
+       db "#.b.#..........#.b.#"
+       db "#.#.#b###..###b#.#.#"
+       db "#..-..#.-..-.#..-..#"
+       db "#.###~#.#..#.#~###.#"
+       db "#.....#.#..#.#.....#"
+       db "#.###.#-#..#-#.###.#"
+       db "#...#.#......#.#...#"
+       db "#bb.#.#~####~#.#.bb#"
+       db "#..-b..........b-..#"
+       db "#.#######~~#######.#"
+       db "#S................S#"
        db "####################"
 
 arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
@@ -160,16 +159,18 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
     written     dd 0
     logVal      dd 0
     logBuf      db 64 dup (0)
-    stT1  db "T1_P1_X="
+    saveMap     db COLS*ROWS dup (0)
+    nbRow       dd ?
+    nbCol       dd ?
+    nbIdx       dd ?
+    nbDir       dd ?
+    stT1  db "T1_P1_X_ROW13(expect112)="
     stT2  db "T2_ACTIVE_AFTER_FIRE="
     stT3  db "T3_ACTIVE_AFTER_620TICKS="
-    stT4a db "T4_BRICK36_EMPTY_AT_TICK="
-    stT4b db "T4_BRICK36_TILE="
-    stT4c db "T4_BRICK36_MASK="
-    stT4d db "T4_ACTIVE_AFTER_DRAIN="
-    stT5  db "T5_TANK_BOTTOM_ABOVE_WATER(expect<192)="
-    stT6  db "T6_SLIDE_DX_5TICKS(expect>0)="
-    stT7  db "T7_P2_Y(expect<416)="
+    stT4  db "T4_MAP_UNCHANGED(expect1)="
+    stT5  db "T5_NOT_ON_WATER(expect1)="
+    stT6  db "T6_SLIDE_ENGAGED(expect6-10)="
+    stT7  db "T7_P2_X(expect120)="
     stT8  db "T8_BULLETS_AFTER_15FIRE(expect<=10)="
     stT9a db "T9_P2_DEAD_AT_TICK="
     stT9b db "T9_P2_ALIVE(expect0)="
@@ -234,11 +235,6 @@ ColLoop2:
         mov dl, TILE_ICE
     .endif                       ; '.' 与 'S' 均落为空地
     mov mapData[ebx], dl
-    .if dl == TILE_BRICK
-        mov byte ptr brickMask[ebx], BRICK_FULL
-    .else
-        mov byte ptr brickMask[ebx], 0
-    .endif
     ; 出生点记录（最多 4 个，顺序 = 图中 S 出现顺序）
     .if al == 'S'
         mov eax, spawnCount
@@ -377,6 +373,105 @@ ATLoop:
 AdvanceTicks endp
 
 ; ------------------------------------------------------------
+; FindOpenNeighbor -- 找某格四邻中第一个可通行格（空地/冰）
+; 入参：cellIdx；返回 eax = 方向码 0上 1右 2下 3左，nbIdx = 邻居格索引
+; ------------------------------------------------------------
+FindOpenNeighbor proc uses ebx ecx edx cellIdx: dword
+    mov eax, cellIdx
+    xor edx, edx
+    mov ebx, COLS
+    div ebx
+    mov nbRow, eax
+    mov nbCol, edx
+    mov nbDir, 99
+    mov nbIdx, 99
+    ; 上
+    mov eax, nbRow
+    .if eax > 0
+        dec eax
+        imul eax, eax, COLS
+        add eax, nbCol
+        mov ecx, eax
+        movzx eax, mapData[ecx]
+        .if eax == TILE_EMPTY || eax == TILE_ICE
+            mov nbDir, 0
+            mov nbIdx, ecx
+        .endif
+    .endif
+    ; 右
+    .if nbDir == 99
+        mov eax, nbCol
+        .if eax < COLS-1
+            mov eax, nbRow
+            imul eax, eax, COLS
+            add eax, nbCol
+            inc eax
+            mov ecx, eax
+            movzx eax, mapData[ecx]
+            .if eax == TILE_EMPTY || eax == TILE_ICE
+                mov nbDir, 1
+                mov nbIdx, ecx
+            .endif
+        .endif
+    .endif
+    ; 下
+    .if nbDir == 99
+        mov eax, nbRow
+        .if eax < ROWS-1
+            mov eax, nbRow
+            inc eax
+            imul eax, eax, COLS
+            add eax, nbCol
+            mov ecx, eax
+            movzx eax, mapData[ecx]
+            .if eax == TILE_EMPTY || eax == TILE_ICE
+                mov nbDir, 2
+                mov nbIdx, ecx
+            .endif
+        .endif
+    .endif
+    ; 左
+    .if nbDir == 99
+        mov eax, nbCol
+        .if eax > 0
+            mov eax, nbRow
+            imul eax, eax, COLS
+            add eax, nbCol
+            dec eax
+            mov ecx, eax
+            movzx eax, mapData[ecx]
+            .if eax == TILE_EMPTY || eax == TILE_ICE
+                mov nbDir, 3
+                mov nbIdx, ecx
+            .endif
+        .endif
+    .endif
+    mov eax, nbDir
+    ret
+FindOpenNeighbor endp
+
+; ------------------------------------------------------------
+; SetDirInput -- 按方向码设置 P1 输入（99 = 全部清零）
+; ------------------------------------------------------------
+SetDirInput proc dir: dword
+    mov inputUp, 0
+    mov inputDown, 0
+    mov inputLeft, 0
+    mov inputRight, 0
+    mov eax, dir
+    .if eax == 0
+        mov inputUp, 1
+    .elseif eax == 1
+        mov inputRight, 1
+    .elseif eax == 2
+        mov inputDown, 1
+    .elseif eax == 3
+        mov inputLeft, 1
+    .endif
+    ret
+SetDirInput endp
+
+; ------------------------------------------------------------
 ; CountOwnBullets -- number of active bullets owned by ownerIdx
 ; ------------------------------------------------------------
 CountOwnBullets proc uses ebx esi ownerIdx: dword
@@ -406,105 +501,146 @@ CountOwnBullets endp
 ; Deterministic: fixed ARENA1, simulated inputs, results -> selftest.log
 ; ------------------------------------------------------------
 SelfTestRun proc uses ebx esi edi
-    ; fixed map for determinism
+    ; 固定 ARENA1 保证确定性
     mov rngState, 1
     mov spawnCount, 0
     invoke ParseArena, offset ARENA1
     call ResetTanks
+    ; 地图快照（验证墙体不可摧毁）
+    cld
+    mov esi, offset mapData
+    mov edi, offset saveMap
+    mov ecx, COLS*ROWS
+    rep movsb
     call OpenLog
 
-    ; T1: P1 movement (simulated inputRight, 40 ticks)
+    ; T1: P1 沿第 13 行走廊右移 40 tick（32 -> 112）
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
     mov inputRight, 1
     invoke AdvanceTicks, 40
     mov inputRight, 0
-    invoke LogStr, offset stT1, 8
+    invoke LogStr, offset stT1, 25
     invoke LogNum, tanks[0*SIZEOF TANK].x          ; expect 112
 
-    ; T2: P1 fire -> one bullet in flight
+    ; T2: 开火 -> 一颗弹在飞
     mov inputFire, 1
     invoke GameUpdate
     mov inputFire, 0
     invoke CountOwnBullets, 0
     mov logVal, eax
     invoke LogStr, offset stT2, 21
-    invoke LogNum, logVal                             ; expect 1
+    invoke LogNum, logVal                          ; expect 1
 
-    ; T3: bullet lifetime -- 620 ticks later none active
+    ; T3: 620 tick 后弹全部消亡（反弹耗尽或超时）
     invoke AdvanceTicks, 620
     invoke CountOwnBullets, 0
     mov logVal, eax
     invoke LogStr, offset stT3, 25
-    invoke LogNum, logVal                             ; expect 0
+    invoke LogNum, logVal                          ; expect 0
 
-    ; T4: brick eat-through (ARENA1 cell 36 = row1 col16)
-    mov tanks[0*SIZEOF TANK].x, 512
-    mov tanks[0*SIZEOF TANK].y, 64
-    mov tanks[0*SIZEOF TANK].dir, DIR_UP
+    ; T4: 墙体不可摧毁 —— 轰一炮再跑 900 tick，地图逐字节不变
     mov inputFire, 1
     invoke GameUpdate
     mov inputFire, 0
-    xor esi, esi
-T4Loop:
-    .if esi >= 400
-        jmp T4Done
+    invoke AdvanceTicks, 900
+    cld
+    mov esi, offset mapData
+    mov edi, offset saveMap
+    mov ecx, COLS*ROWS
+    repe cmpsb
+    mov logVal, 0
+    .if ZERO?
+        mov logVal, 1
     .endif
-    invoke GameUpdate
+    invoke LogStr, offset stT4, 26
+    invoke LogNum, logVal                          ; expect 1
+
+    ; T5: 水域挡坦克 —— 找第一个 '~'，从开放邻居向水推进 30 tick，
+    ;     坦克中心格必须不是水
+    xor esi, esi
+T5Find:
+    .if esi >= COLS*ROWS
+        mov logVal, 99
+        invoke LogStr, offset stT5, 25
+        invoke LogNum, logVal
+        ; 直接落入 T6 段
+    .endif
+    cmp mapData[esi], TILE_WATER
+    je T5Found
     inc esi
-    cmp mapData[36], TILE_EMPTY
-    jne T4Loop
-T4Done:
-    invoke LogStr, offset stT4a, 25
-    invoke LogNum, esi                             ; ticks until hole
-    movzx eax, mapData[36]
-    mov logVal, eax
-    invoke LogStr, offset stT4b, 16
-    invoke LogNum, logVal                             ; expect 0 (empty)
-    movzx eax, brickMask[36]
-    mov logVal, eax
-    invoke LogStr, offset stT4c, 16
-    invoke LogNum, logVal                             ; expect 0 (4 bits gone)
-    invoke AdvanceTicks, 640
-    invoke CountOwnBullets, 0
-    mov logVal, eax
-    invoke LogStr, offset stT4d, 22
-    invoke LogNum, logVal                             ; expect 0
-
-    ; T5: water blocks tank (tank bottom must stay < 192)
-    mov tanks[0*SIZEOF TANK].x, 224
-    mov tanks[0*SIZEOF TANK].y, 128
-    mov inputDown, 1
+    jmp T5Find
+T5Found:
+    invoke FindOpenNeighbor, esi
+    mov ebx, eax                                   ; dirCode（邻居相对水格的方向）
+    mov eax, nbIdx
+    xor edx, edx
+    mov ecx, COLS
+    div ecx
+    mov ecx, edx
+    imul ecx, ecx, CELL
+    mov tanks[0*SIZEOF TANK].x, ecx
+    imul eax, eax, CELL
+    mov tanks[0*SIZEOF TANK].y, eax
+    invoke SetDirInput, ebx                        ; 朝水推进
     invoke AdvanceTicks, 30
-    mov inputDown, 0
-    mov eax, tanks[0*SIZEOF TANK].y
-    add eax, CELL
-    mov logVal, eax
-    invoke LogStr, offset stT5, 39
-    invoke LogNum, logVal                             ; expect 158 (<192)
-
-    ; T6: ice slide (1 input tick then coast 5 ticks, dx>0)
-    mov tanks[0*SIZEOF TANK].x, 224
-    mov tanks[0*SIZEOF TANK].y, 352
-    mov inputRight, 1
-    invoke GameUpdate
-    mov inputRight, 0
+    invoke SetDirInput, 99                         ; 清输入
     mov eax, tanks[0*SIZEOF TANK].x
+    add eax, CELL/2
+    mov ecx, tanks[0*SIZEOF TANK].y
+    add ecx, CELL/2
+    invoke TileAtPx, eax, ecx
+    mov logVal, 1
+    .if eax == TILE_WATER
+        mov logVal, 0                              ; 坦克中心在水上 = 失败
+    .endif
+    invoke LogStr, offset stT5, 25
+    invoke LogNum, logVal                          ; expect 1
+
+    ; T6: 冰面滑行 —— 站上第一个 '-'，向开放邻居方向走 1 tick，
+    ;     slide 应被置为 6..10
+    xor esi, esi
+T6Find:
+    .if esi >= COLS*ROWS
+        mov logVal, 99
+        invoke LogStr, offset stT6, 29
+        invoke LogNum, logVal
+        jmp T7Start
+    .endif
+    cmp mapData[esi], TILE_ICE
+    je T6Found
+    inc esi
+    jmp T6Find
+T6Found:
+    invoke FindOpenNeighbor, esi
     mov ebx, eax
-    invoke AdvanceTicks, 5
-    mov eax, tanks[0*SIZEOF TANK].x
-    sub eax, ebx
-    mov logVal, eax
+    mov eax, nbIdx
+    xor edx, edx
+    mov ecx, COLS
+    div ecx
+    mov ecx, edx
+    imul ecx, ecx, CELL
+    mov tanks[0*SIZEOF TANK].x, ecx
+    imul eax, eax, CELL
+    mov tanks[0*SIZEOF TANK].y, eax
+    invoke SetDirInput, ebx
+    invoke GameUpdate
+    invoke SetDirInput, 99
     invoke LogStr, offset stT6, 29
-    invoke LogNum, logVal                             ; expect 8..20
+    invoke LogNum, tanks[0*SIZEOF TANK].slide      ; expect 6..10
 
-    ; T7: P2 movement (arrow keys drive tank1)
+    ; T7: P2 方向键 —— 第 13 行走廊左移 20 tick（160 -> 120）
+T7Start:
     call ResetTanks
-    mov input2Up, 1
+    mov tanks[1*SIZEOF TANK].x, 160
+    mov tanks[1*SIZEOF TANK].y, 416
+    mov input2Left, 1
     invoke AdvanceTicks, 20
-    mov input2Up, 0
-    invoke LogStr, offset stT7, 20
-    invoke LogNum, tanks[1*SIZEOF TANK].y          ; expect 416-40=376
+    mov input2Left, 0
+    invoke LogStr, offset stT7, 19
+    invoke LogNum, tanks[1*SIZEOF TANK].x          ; expect 120
 
-    ; T8: per-tank 10-bullet cap (15 rapid fires -> 10 alive)
+    ; T8: 每坦同屏 <=10 发（15 次快速开火 -> 场上 10 颗）
     call ResetTanks
     mov ebx, 15
 T8Loop:
@@ -519,15 +655,15 @@ T8Loop:
     invoke CountOwnBullets, 0
     mov logVal, eax
     invoke LogStr, offset stT8, 36
-    invoke LogNum, logVal                             ; expect 10
+    invoke LogNum, logVal                          ; expect 10
 
-    ; T9: kill via fire (3 hits needed) -- both on empty row2
+    ; T9: 反弹/直射击杀 —— 第 13 行同走廊，3 发命中判负
     call ResetTanks
-    mov tanks[0*SIZEOF TANK].x, 64
-    mov tanks[0*SIZEOF TANK].y, 64
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
     mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
-    mov tanks[1*SIZEOF TANK].x, 288
-    mov tanks[1*SIZEOF TANK].y, 64
+    mov tanks[1*SIZEOF TANK].x, 160
+    mov tanks[1*SIZEOF TANK].y, 416
     mov tanks[1*SIZEOF TANK].hp, TANK_HP
     mov tanks[1*SIZEOF TANK].alive, 1
     mov inputFire, 1
@@ -703,37 +839,14 @@ BounceOne proc pb: dword
 BounceOne endp
 
 ; ------------------------------------------------------------
-; ClearBrickBit -- clear sub-block bitIdx of cell cellIdx;
-; when all 4 bits empty the tile becomes empty (bullet passes next time)
-; ------------------------------------------------------------
-ClearBrickBit proc cellIdx: dword, bitIdx: dword
-    mov eax, 1
-    mov ecx, bitIdx
-    shl eax, cl                     ; eax = sub-block bitmask
-    mov edx, cellIdx
-    mov cl, brickMask[edx]
-    not al
-    and cl, al                      ; clear the bit
-    mov brickMask[edx], cl
-    .if cl == 0
-        mov mapData[edx], TILE_EMPTY
-    .endif
-    ret
-ClearBrickBit endp
-
-; ------------------------------------------------------------
 ; BulletWallHit -- 8x8 bullet vs terrain, 4-corner sampling
-; in: pb = bullet ptr, axis = 0(X move) / 1(Y move)
-; ret eax: 0=pass; 1=steel bounce; 2=brick hit (sub-blocks cleared, bounce)
-; brick rules:
-;   - a corner whose own sub-block is already shot open passes through
-;   - on hit: clear the sub-blocks swept by the leading edge (<=2 bits)
-;   - whole cell empty -> tile becomes empty
+; in: pb = bullet ptr
+; ret eax: 0=pass(water/ice/empty); 1=wall bounce (steel OR brick:
+;          walls are INDESTRUCTIBLE per design change 2026-10-16)
 ; corner order fixed: TL, TR, BR, BL (deterministic for netplay)
 ; ------------------------------------------------------------
-BulletWallHit proc uses ebx esi edi pb: dword, axis: dword
-    local bx0:dword, by0:dword, cxL:dword, cyL:dword
-    local cellIdx:dword, fx:dword, fy:dword
+BulletWallHit proc uses ebx esi edi pb: dword
+    local bx0:dword, by0:dword
     mov ebx, pb
     mov eax, (BULLET ptr [ebx]).x
     mov bx0, eax
@@ -742,7 +855,6 @@ BulletWallHit proc uses ebx esi edi pb: dword, axis: dword
 
     xor esi, esi                     ; corner: 0=TL 1=TR 2=BR 3=BL
 CornerLoop:
-    ; corner pixel coords -> cxL / cyL
     mov eax, bx0
     mov edx, by0
     .if esi == 1 || esi == 2
@@ -751,111 +863,11 @@ CornerLoop:
     .if esi == 2 || esi == 3
         add edx, BULLET_SIZE_PX - 1
     .endif
-    mov cxL, eax
-    mov cyL, edx
     invoke TileAtPx, eax, edx
-    .if eax == TILE_STEEL
+    .if eax == TILE_STEEL || eax == TILE_BRICK
         mov eax, 1
         jmp WHDone
-    .elseif eax == TILE_BRICK
-        ; corner cell index
-        mov eax, cxL
-        shr eax, 5                   ; /CELL(32) -> col
-        mov ecx, eax
-        mov eax, cyL
-        shr eax, 5                   ; row
-        imul eax, eax, COLS
-        add eax, ecx
-        mov cellIdx, eax
-        ; corner's own sub-block bit = row2*2 + col2
-        mov eax, cyL
-        and eax, CELL-1
-        shr eax, 4
-        lea eax, [eax+eax]
-        mov ecx, eax
-        mov eax, cxL
-        and eax, CELL-1
-        shr eax, 4
-        add eax, ecx                 ; bit
-        mov edx, cellIdx
-        mov dh, brickMask[edx]       ; dh = mask byte
-        mov cl, al
-        mov al, 1
-        shl al, cl                   ; corner bit mask
-        and al, dh
-        .if al == 0
-            jmp WHPass               ; this sub-block already open -> pass
-        .endif
-        ; leading-edge coordinate
-        .if axis == 0
-            mov eax, (BULLET ptr [ebx]).vx
-            .if eax > 0
-                mov eax, bx0
-                add eax, BULLET_SIZE_PX - 1
-            .else
-                mov eax, bx0
-            .endif
-            mov fx, eax              ; leading x -> sub-col
-        .else
-            mov eax, (BULLET ptr [ebx]).vy
-            .if eax > 0
-                mov eax, by0
-                add eax, BULLET_SIZE_PX - 1
-            .else
-                mov eax, by0
-            .endif
-            mov fy, eax              ; leading y -> sub-row
-        .endif
-        ; clear sub-blocks swept by the leading edge (2 ends, <=2 bits)
-        .if axis == 0
-            mov eax, fx
-            and eax, CELL-1
-            shr eax, 4
-            mov ecx, eax             ; col2
-            mov eax, by0
-            and eax, CELL-1
-            shr eax, 4
-            lea eax, [eax+eax]
-            add eax, ecx             ; bit1 = rowA*2+col2
-            invoke ClearBrickBit, cellIdx, eax
-            mov eax, fx
-            and eax, CELL-1
-            shr eax, 4
-            mov ecx, eax
-            mov eax, by0
-            add eax, BULLET_SIZE_PX - 1
-            and eax, CELL-1
-            shr eax, 4
-            lea eax, [eax+eax]
-            add eax, ecx             ; bit2 = rowB*2+col2
-            invoke ClearBrickBit, cellIdx, eax
-        .else
-            mov eax, fy
-            and eax, CELL-1
-            shr eax, 4
-            lea eax, [eax+eax]
-            mov ecx, eax             ; row2*2
-            mov eax, bx0
-            and eax, CELL-1
-            shr eax, 4
-            add eax, ecx             ; bit1 = row2*2+colA
-            invoke ClearBrickBit, cellIdx, eax
-            mov eax, fy
-            and eax, CELL-1
-            shr eax, 4
-            lea eax, [eax+eax]
-            mov ecx, eax
-            mov eax, bx0
-            add eax, BULLET_SIZE_PX - 1
-            and eax, CELL-1
-            shr eax, 4
-            add eax, ecx             ; bit2 = row2*2+colB
-            invoke ClearBrickBit, cellIdx, eax
-        .endif
-        mov eax, 2
-        jmp WHDone
     .endif                           ; water/ice/empty: pass through
-WHPass:
     inc esi
     .if esi < 4
         jmp CornerLoop
@@ -1065,7 +1077,7 @@ BulletTick:
                 neg (BULLET ptr [edi]).vx
                 invoke BounceOne, edi
             .else
-                invoke BulletWallHit, edi, 0
+                invoke BulletWallHit, edi
                 .if eax != 0            ; 1=钢 2=砖(已清子块)
                     mov eax, (BULLET ptr [edi]).vx
                     sub (BULLET ptr [edi]).x, eax   ; 回退
@@ -1092,7 +1104,7 @@ BulletTick:
                 neg (BULLET ptr [edi]).vy
                 invoke BounceOne, edi
             .else
-                invoke BulletWallHit, edi, 1
+                invoke BulletWallHit, edi
                 .if eax != 0
                     mov eax, (BULLET ptr [edi]).vy
                     sub (BULLET ptr [edi]).y, eax

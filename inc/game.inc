@@ -13,7 +13,7 @@ MAP_H       equ 480                 ; 地图高度（像素）
 WND_W       equ MAP_W               ; 窗口客户区宽度
 WND_H       equ MAP_H + HUD_H       ; 窗口客户区高度（地图 + 计分条）
 CELL        equ 32                  ; 地图格子边长（像素）
-SUBPX       equ 16                  ; 砖墙子块边长（CELL/2，2x2 子块）
+
 COLS        equ MAP_W / CELL        ; 20 列
 ROWS        equ MAP_H / CELL        ; 15 行
 
@@ -30,9 +30,6 @@ TILE_BRICK  equ 2                   ; 'b'  清子块后反弹，整格空后穿�
 TILE_WATER  equ 3                   ; '~'  挡坦克，子弹穿过
 TILE_ICE    equ 4                   ; '-'  坦克滑行，子弹穿过
 ARENA_COUNT equ 5                   ; 内置对战图 ARENA1..5
-
-; ---- 砖墙子块（每格 4 bit）----
-BRICK_FULL  equ 00Fh                ; bit0 左上 bit1 右上 bit2 左下 bit3 右下
 
 ; ---- 方向 ----
 DIR_UP      equ 0

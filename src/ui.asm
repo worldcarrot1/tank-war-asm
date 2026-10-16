@@ -38,6 +38,7 @@ extern hSock     :dword
 
 .data
     gameState   dd ST_MENU
+    langFlag    dd 0                   ; 0=英文 1=中文
     numPlayers  dd 2
     netMode     dd 0                   ; 1 = 联机对局（主循环调用 NetFlush）
     menuSel     dd 0
@@ -94,6 +95,28 @@ extern hSock     :dword
     szLanF      db "PEER FOUND:", 0
     szLanS      db "ENTER: START MATCH   ESC: BACK", 0
     szFont      db "Arial", 0
+    wBuf        dd 64 dup (0)           ; 设置行宽字符缓冲
+    szLangEN    db "LANGUAGE: ENGLISH", 0
+    cnActW      dw 4E0Ah, 0             ; 上
+                dw 4E0Bh, 0             ; 下
+                dw 5DE6h, 0             ; 左
+                dw 53F3h, 0             ; 右
+                dw 5F00h, 706Bh, 0      ; 开火
+    CN_START dw 5f00h,59cbh,6e38h,620fh, 0
+    CN_SET dw 8bbeh,7f6eh, 0
+    CN_LAN dw 8054h,673ah,5bf9h,6218h, 0
+    CN_EXIT dw 9000h,51fah, 0
+    CN_LANG dw 8bedh,8a00h,0ff1ah,4e2dh,6587h, 0
+    CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
+    CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
+    CN_SETT dw 6309h,952eh,8bbeh,7f6eh, 0
+    CN_SETH dw 56deh,8f66h,0ff1ah,6539h,952eh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
+    CN_REBIND dw 0020h,003ch,002dh,0020h,8bf7h,6309h,4efbh,610fh,952eh, 0
+    CN_LANT dw 8054h,673ah,5bf9h,6218h,0ff08h,5c40h,57dfh,7f51h,0ff09h, 0
+    CN_LANB dw 6b63h,5728h,901ah,8fc7h,0020h,0055h,0044h,0050h,0020h,7aefh,53e3h,0020h,0032h,0038h,0038h,0038h,0038h,0020h,5e7fh,64adh,0020h,002eh,002eh,002eh, 0
+    CN_LANN dw 6b63h,5728h,641ch,7d22h,5bf9h,624bh,0020h,002eh,002eh,002eh, 0
+    CN_LANF dw 5df2h,53d1h,73b0h,5bf9h,624bh,003ah, 0
+    CN_LANS dw 56deh,8f66h,0ff1ah,5f00h,59cbh,6bd4h,8d5bh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
     colDark     dd 00232323h
     colGray     dd 00606060h
     colHi       dd 0000C06000h
@@ -132,6 +155,43 @@ UTZ_Out:
     invoke TextOutA, hdc, x, y, pStr, ecx
     ret
 UiTextZ endp
+
+; ------------------------------------------------------------
+; UiTextW -- 输出 UTF-16 字符串（自动求长）
+; ------------------------------------------------------------
+UiTextW proc uses esi ecx hdc: dword, x: dword, y: dword, pStr: dword, color: dword
+    invoke SetBkMode, hdc, TRANSPARENT
+    invoke SetTextColor, hdc, color
+    mov esi, pStr
+    xor ecx, ecx
+UTW_Len:
+    cmp word ptr [esi+ecx*2], 0
+    je UTW_Out
+    inc ecx
+    jmp UTW_Len
+UTW_Out:
+    invoke TextOutW, hdc, x, y, pStr, ecx
+    ret
+UiTextW endp
+
+; PickLang -- 按语言返回字符串指针：eax = pEn 或 pCn
+PickLang proc pEn: dword, pCn: dword
+    mov eax, pEn
+    .if langFlag != 0
+        mov eax, pCn
+    .endif
+    ret
+PickLang endp
+
+; UiTextL -- 语言感知文本输出（EN=UiTextZ / CN=UiTextW）
+UiTextL proc hdc: dword, x: dword, y: dword, pEn: dword, pCn: dword, color: dword
+    .if langFlag == 0
+        invoke UiTextZ, hdc, x, y, pEn, color
+    .else
+        invoke UiTextW, hdc, x, y, pCn, color
+    .endif
+    ret
+UiTextL endp
 
 ; ------------------------------------------------------------
 ; KeyEdge -- 按键边沿检测
@@ -305,13 +365,13 @@ UiTick proc uses ebx esi edi
     .if gameState == ST_MENU
         .if dnE != 0
             inc menuSel
-            .if menuSel > 3
+            .if menuSel > 4
                 mov menuSel, 0
             .endif
         .endif
         .if upE != 0
             .if menuSel == 0
-                mov menuSel, 3
+                mov menuSel, 4
             .else
                 dec menuSel
             .endif
@@ -331,8 +391,10 @@ UiTick proc uses ebx esi edi
                 mov discTimer, 0
                 invoke setsockopt, hSock, SOL_SOCKET, SO_BROADCAST,
                        addr oneVal, 4
-            .else
+            .elseif menuSel == 3
                 invoke PostQuitMessage, NULL
+            .else
+                xor langFlag, 1          ; 语言切换
             .endif
         .endif
 
@@ -460,6 +522,7 @@ UiRender proc uses ebx esi edi
     local rc:RECT
     local rowY:dword
     local txtLen:dword
+    local klen:dword
 
     mov rc.left, 0
     mov rc.top, 0
@@ -489,24 +552,27 @@ UM_Items:
         add eax, 250
         mov rowY, eax
         push ebx
-        .if ebx == 0
-            invoke UiTextZ, hdcBack, 440, rowY, offset szItem1, edx
-        .elseif ebx == 1
-            invoke UiTextZ, hdcBack, 440, rowY, offset szItem2, edx
-        .elseif ebx == 2
-            invoke UiTextZ, hdcBack, 440, rowY, offset szItem3, edx
+        mov eax, ebx
+        .if eax == 0
+            invoke UiTextL, hdcBack, 440, rowY, offset szItem1, offset CN_START, edx
+        .elseif eax == 1
+            invoke UiTextL, hdcBack, 440, rowY, offset szItem2, offset CN_SET, edx
+        .elseif eax == 2
+            invoke UiTextL, hdcBack, 440, rowY, offset szItem3, offset CN_LAN, edx
+        .elseif eax == 3
+            invoke UiTextL, hdcBack, 440, rowY, offset szItem4, offset CN_EXIT, edx
         .else
-            invoke UiTextZ, hdcBack, 440, rowY, offset szItem4, edx
+            invoke UiTextL, hdcBack, 440, rowY, offset szLangEN, offset CN_LANG, edx
         .endif
         pop ebx
         inc ebx
-        .if ebx < 4
+        .if ebx < 5
             jmp UM_Items
         .endif
 
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
-        invoke UiTextZ, hdcBack, 420, 150, offset szNumT, colDark
+        invoke UiTextL, hdcBack, 420, 150, offset szNumT, offset CN_NUMT, colDark
         invoke UiTextZ, hdcBack, 410, 280, offset szNumL, colDark
         invoke UiTextZ, hdcBack, 545, 280, offset szNumR, colDark
         lea edi, uiBuf
@@ -515,57 +581,94 @@ UM_Items:
         mov [edi], al
         mov byte ptr [edi+1], 0
         invoke UiTextZ, hdcBack, 485, 272, offset uiBuf, 000000D0h
-        invoke UiTextZ, hdcBack, 400, 400, offset szHint, colGray
+        invoke UiTextL, hdcBack, 400, 400, offset szHint, offset CN_HINT, colGray
 
     ; ---------- 按键设置 ----------
     .elseif gameState == ST_SET
-        invoke UiTextZ, hdcBack, 420, 36, offset szSetT, colDark
-        invoke UiTextZ, hdcBack, 380, 74, offset szSetH, colGray
+        invoke UiTextL, hdcBack, 420, 36, offset szSetT, offset CN_SETT, colDark
+        invoke UiTextL, hdcBack, 380, 74, offset szSetH, offset CN_SETH, colGray
 
         xor ebx, ebx
 SS_Rows:
         .if ebx >= 20
             jmp SS_Done
         .endif
-        ; 行文本: "P<p+1> <ACTION> : <KEY>"
-        lea edi, uiBuf
-        mov byte ptr [edi], 'P'
+        ; 行文本（宽字符）: "P<p+1> <ACTION> : <KEY>"
+        lea edi, wBuf
+        mov word ptr [edi], 'P'
         mov eax, ebx
         xor edx, edx
         mov ecx, 5
         div ecx
         add al, '1'
-        mov [edi+1], al
-        mov byte ptr [edi+2], ' '
-        add edi, 3
-        mov esi, aTab[edx*4]            ; 动作名首址
-        mov ecx, 8                      ; 上限 8 字节（名字均带 0 结尾）
+        mov [edi+2], ax                 ; '1'..'4'（宽）
+        mov word ptr [edi+4], ' '
+        add edi, 6
+        .if langFlag == 0
+            mov esi, aTab[edx*4]        ; 英文动作名（ASCII -> 宽）
 SS_CopyAct:
-        mov al, [esi]
-        .if al == 0
-            jmp SS_CopyDone
-        .endif
-        mov [edi], al
-        inc esi
-        inc edi
-        dec ecx
-        .if ecx != 0
+            mov al, [esi]
+            .if al == 0
+                jmp SS_CopyDone
+            .endif
+            movzx eax, al
+            mov [edi], ax
+            inc esi
+            add edi, 2
             jmp SS_CopyAct
-        .endif
 SS_CopyDone:
-        mov byte ptr [edi], ' '
-        mov byte ptr [edi+1], ':'
-        mov byte ptr [edi+2], ' '
-        add edi, 3
+        .else
+            mov esi, offset cnActW      ; 中文动作名（宽字符）
+            mov ecx, edx
+            imul ecx, ecx, 3            ; 每项最多 2 字 + 终止
+CN_CopyAct:
+            mov ax, [esi]
+            .if ax == 0
+                jmp SS_CopyDone2
+            .endif
+            mov [edi], ax
+            add esi, 2
+            add edi, 2
+            dec ecx
+            .if ecx != 0
+                jmp CN_CopyAct
+            .endif
+SS_CopyDone2:
+        .endif
+        mov word ptr [edi], ' '
+        mov word ptr [edi+2], ':'
+        mov word ptr [edi+4], ' '
+        add edi, 6
+        ; 键名：VkName 生成 ASCII 到 uiBuf，再转宽
         mov eax, ebx
         mov eax, keyTable[eax*4]
-        invoke VkName, eax, edi
-        add edi, eax
-        .if rebindWait != 0 && ebx == setSel
-            invoke StrCopy, offset szRebind, edi, 17
-            add edi, 17
+        invoke VkName, eax, offset uiBuf
+        mov klen, eax
+        xor ecx, ecx
+KN_Loop:
+        .if ecx >= klen
+            jmp KN_Done
         .endif
-        mov byte ptr [edi], 0
+        movzx eax, byte ptr uiBuf[ecx]
+        mov [edi], ax
+        inc ecx
+        add edi, 2
+        jmp KN_Loop
+KN_Done:
+        ; 重绑提示（仅选中行）
+        .if rebindWait != 0 && ebx == setSel
+            .if langFlag == 0
+                invoke StrCopy, offset szRebind, edi, 17
+                mov word ptr [edi+17], 0
+                add edi, 18
+            .else
+                invoke StrCopy, offset CN_REBIND, edi, 18
+                mov word ptr [edi+18], 0
+                add edi, 20
+            .endif
+        .endif
+        mov word ptr [edi], 0
+        ; 颜色与行坐标
         mov eax, ebx
         .if eax == setSel
             mov edx, colHi
@@ -576,22 +679,22 @@ SS_CopyDone:
         imul eax, eax, 28
         add eax, 110
         mov rowY, eax
-        invoke UiTextZ, hdcBack, 380, rowY, offset uiBuf, edx
+        invoke UiTextW, hdcBack, 380, rowY, offset wBuf, edx
         inc ebx
         jmp SS_Rows
 SS_Done:
 
     ; ---------- 联机大厅 ----------
     .elseif gameState == ST_LAN
-        invoke UiTextZ, hdcBack, 440, 130, offset szLanT, colDark
-        invoke UiTextZ, hdcBack, 350, 220, offset szLanB, colGray
+        invoke UiTextL, hdcBack, 440, 130, offset szLanT, offset CN_LANT, colDark
+        invoke UiTextL, hdcBack, 350, 220, offset szLanB, offset CN_LANB, colGray
         .if peerKnown != 0
-            invoke UiTextZ, hdcBack, 350, 280, offset szLanF, colFound
-            invoke UiTextZ, hdcBack, 470, 280, offset peerIpBuf, colFound
+            invoke UiTextL, hdcBack, 350, 280, offset szLanF, offset CN_LANF, colFound
+            invoke UiTextZ, hdcBack, 530, 280, offset peerIpBuf, colFound
         .else
-            invoke UiTextZ, hdcBack, 350, 280, offset szLanN, colGray
+            invoke UiTextL, hdcBack, 350, 280, offset szLanN, offset CN_LANN, colGray
         .endif
-        invoke UiTextZ, hdcBack, 350, 360, offset szLanS, colDark
+        invoke UiTextL, hdcBack, 350, 360, offset szLanS, offset CN_LANS, colDark
     .endif
 
 UR_Done:

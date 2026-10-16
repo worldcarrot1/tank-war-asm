@@ -175,6 +175,7 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
     logVal      dd 0
     logBuf      db 64 dup (0)
     saveMap     db COLS*ROWS dup (0)
+
     nbRow       dd ?
     nbCol       dd ?
     nbIdx       dd ?
@@ -867,13 +868,37 @@ SlotFound:
     .endif
     mov (BULLET ptr [esi]).vx, edx
     mov (BULLET ptr [esi]).vy, ecx
-    ; 位置：坦克中心，弹体 8x8
-    mov eax, (TANK ptr [ebx]).x
-    add eax, (CELL - BULLET_SIZE_PX)/2
-    mov (BULLET ptr [esi]).x, eax
-    mov eax, (TANK ptr [ebx]).y
-    add eax, (CELL - BULLET_SIZE_PX)/2
-    mov (BULLET ptr [esi]).y, eax
+    ; 位置：炮口（坦克边缘之外）—— 否则开启自伤后子弹出膛即命中自己
+    mov eax, (TANK ptr [ebx]).dir
+    .if eax == DIR_UP
+        mov eax, (TANK ptr [ebx]).x
+        add eax, (CELL - BULLET_SIZE_PX)/2
+        mov (BULLET ptr [esi]).x, eax
+        mov eax, (TANK ptr [ebx]).y
+        sub eax, BULLET_SIZE_PX
+        mov (BULLET ptr [esi]).y, eax
+    .elseif eax == DIR_DOWN
+        mov eax, (TANK ptr [ebx]).x
+        add eax, (CELL - BULLET_SIZE_PX)/2
+        mov (BULLET ptr [esi]).x, eax
+        mov eax, (TANK ptr [ebx]).y
+        add eax, CELL
+        mov (BULLET ptr [esi]).y, eax
+    .elseif eax == DIR_LEFT
+        mov eax, (TANK ptr [ebx]).x
+        sub eax, BULLET_SIZE_PX
+        mov (BULLET ptr [esi]).x, eax
+        mov eax, (TANK ptr [ebx]).y
+        add eax, (CELL - BULLET_SIZE_PX)/2
+        mov (BULLET ptr [esi]).y, eax
+    .else
+        mov eax, (TANK ptr [ebx]).x
+        add eax, CELL
+        mov (BULLET ptr [esi]).x, eax
+        mov eax, (TANK ptr [ebx]).y
+        add eax, (CELL - BULLET_SIZE_PX)/2
+        mov (BULLET ptr [esi]).y, eax
+    .endif
     mov (BULLET ptr [esi]).owner, edi
     mov (BULLET ptr [esi]).active, 1
     mov (BULLET ptr [esi]).bounces, 0
@@ -1208,16 +1233,12 @@ BulletTick:
                 jmp BulletNext
             .endif
         .endif
-        ; 3) 命中坦克：跳过 owner 与死者，slot 0..3 顺序固定
-        ;    自己的弹打自己不结算（FFA：其他任何人的弹都伤你）
+        ; 3) 命中坦克：任何坦克（含发射者自己——反弹弹自伤）
+        ;    slot 0..3 顺序固定（确定性）
         xor esi, esi
 TankHitLoop:
         .if esi >= MAX_PLAYERS
             jmp TankHitDone
-        .endif
-        mov eax, (BULLET ptr [edi]).owner
-        .if eax == esi
-            jmp TankNext2
         .endif
         mov eax, esi
         imul eax, SIZEOF TANK

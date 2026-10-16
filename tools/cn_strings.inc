@@ -1,0 +1,15 @@
+    CN_START dw 5f00h,59cbh,6e38h,620fh, 0
+    CN_SET dw 8bbeh,7f6eh, 0
+    CN_LAN dw 8054h,673ah,5bf9h,6218h, 0
+    CN_EXIT dw 9000h,51fah, 0
+    CN_LANG dw 8bedh,8a00h,0ff1ah,4e2dh,6587h, 0
+    CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
+    CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
+    CN_SETT dw 6309h,952eh,8bbeh,7f6eh, 0
+    CN_SETH dw 56deh,8f66h,0ff1ah,6539h,952eh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
+    CN_REBIND dw 0020h,003ch,002dh,0020h,8bf7h,6309h,4efbh,610fh,952eh, 0
+    CN_LANT dw 8054h,673ah,5bf9h,6218h,0ff08h,5c40h,57dfh,7f51h,0ff09h, 0
+    CN_LANB dw 6b63h,5728h,901ah,8fc7h,0020h,0055h,0044h,0050h,0020h,7aefh,53e3h,0020h,0032h,0038h,0038h,0038h,0038h,0020h,5e7fh,64adh,0020h,002eh,002eh,002eh, 0
+    CN_LANN dw 6b63h,5728h,641ch,7d22h,5bf9h,624bh,0020h,002eh,002eh,002eh, 0
+    CN_LANF dw 5df2h,53d1h,73b0h,5bf9h,624bh,003ah, 0
+    CN_LANS dw 56deh,8f66h,0ff1ah,5f00h,59cbh,6bd4h,8d5bh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0

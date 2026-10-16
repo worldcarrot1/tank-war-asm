@@ -178,6 +178,7 @@ GetStockObject          PROTO stdcall :DWORD
 SetTextColor            PROTO stdcall :DWORD,:DWORD
 SetBkMode               PROTO stdcall :DWORD,:DWORD
 TextOutA                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+TextOutW                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 
 PS_SOLID    equ 0
 TRANSPARENT equ 1

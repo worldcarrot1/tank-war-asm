@@ -565,6 +565,8 @@ arenaTable dd ARENA1,
     stT13c db "T13_USED(expect1)="         ; 18 字符
     stT14a db "T14_SHIELD_HP(expect3)="    ; 23 字符
     stT14b db "T14_ICE_CELLS(expect2)="    ; 23 字符
+    stT15a db "T15_LASER_HP(expect2)="     ; 22 字符
+    stT15b db "T15_LASER_PTS(expect2)="    ; 23 字符
 
 .code
 
@@ -1312,6 +1314,34 @@ T13cDone:
     mov logVal, eax
     invoke LogStr, offset stT14b, 23
     invoke LogNum, logVal                ; expect 2
+T14Done:
+    ; T15: 激光炮 —— 0.7s 后穿墙直线激光，路径上坦克（墙后也）受伤
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].alive, 1
+    ; 墙后目标：col10(x320..351) 放一堵钢墙，tank1 在 x=400
+    mov mapData[13*COLS+10], TILE_STEEL
+    mov tanks[1*SIZEOF TANK].x, 400
+    mov tanks[1*SIZEOF TANK].y, 416
+    mov tanks[1*SIZEOF TANK].alive, 1
+    mov tanks[1*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].skill, SK_LASER
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 进入瞄准
+    mov inputTable[20], 0
+    invoke AdvanceTicks, 41              ; 0.7s 到 -> 发射
+    mov eax, tanks[1*SIZEOF TANK].hp
+    mov logVal, eax
+    invoke LogStr, offset stT15a, 22
+    invoke LogNum, logVal                ; expect 2（穿墙击中）
+    mov eax, laserN
+    mov logVal, eax
+    invoke LogStr, offset stT15b, 23
+    invoke LogNum, logVal                ; expect 2（两点直线路径）
+    mov mapData[13*COLS+10], TILE_EMPTY  ; 还原走廊
     call CloseLog
     ret
 SelfTestRun endp

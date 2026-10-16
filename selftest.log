@@ -17,3 +17,5 @@ T13_PICKUP(expect3)=3
 T13_USED(expect1)=1
 T14_SHIELD_HP(expect3)=3
 T14_ICE_CELLS(expect2)=2
+T15_LASER_HP(expect2)=2
+T15_LASER_PTS(expect2)=2

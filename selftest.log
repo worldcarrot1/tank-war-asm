@@ -21,3 +21,6 @@ T15_LASER_HP(expect2)=2
 T15_LASER_PTS(expect2)=2
 T16_REFL_HP(expect2)=2
 T16_REFL_PTS(expect>=3)=10
+T17_BLOCKED(expect1)=1
+T17_PASSED(expect1)=1
+T17_USES_LEFT(expect2)=2

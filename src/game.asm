@@ -567,8 +567,11 @@ arenaTable dd ARENA1,
     stT14b db "T14_ICE_CELLS(expect2)="    ; 23 字符
     stT15a db "T15_LASER_HP(expect2)="     ; 22 字符
     stT15b db "T15_LASER_PTS(expect2)="    ; 23 字符
-    stT16a db "T16_REFL_HP(expect2)="      ; 22 字符
-    stT16b db "T16_REFL_PTS(expect>=3)="   ; 22 字符
+    stT16a db "T16_REFL_HP(expect2)="      ; 21 字符
+    stT16b db "T16_REFL_PTS(expect>=3)="   ; 24 字符
+    stT17a db "T17_BLOCKED(expect1)="      ; 21 字符
+    stT17b db "T17_PASSED(expect1)="       ; 20 字符
+    stT17c db "T17_USES_LEFT(expect2)="    ; 23 字符
 
 .code
 
@@ -1372,6 +1375,49 @@ T15Done:
     mov logVal, eax
     invoke LogStr, offset stT16b, 24
     invoke LogNum, logVal                ; expect >=3（起点+反弹点+终点）
+T16Done:
+    ; T17: 穿墙术 —— 无技能被墙挡；发动后穿过并计一次
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov mapData[13*COLS+6], TILE_STEEL   ; col6 挡路（x192..223）
+    ; a) 无技能：右移被挡
+    mov inputTable[12], 1
+    invoke AdvanceTicks, 40
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    .if eax > 180
+        mov eax, 0                       ; 穿过去了 = 失败
+    .else
+        mov eax, 1                       ; 被挡在墙前
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT17a, 21
+    invoke LogNum, logVal                ; expect 1（被挡）
+    ; b) 发动穿墙术 -> 穿过墙且剩余次数 3-1=2
+    mov tanks[0*SIZEOF TANK].skill, SK_GHOST
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate
+    mov inputTable[20], 0
+    mov inputTable[12], 1
+    invoke AdvanceTicks, 30
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    .if eax > 200
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT17b, 20
+    invoke LogNum, logVal                ; expect 1（已穿过）
+    mov eax, tanks[0*SIZEOF TANK].wallPass
+    mov logVal, eax
+    invoke LogStr, offset stT17c, 23
+    invoke LogNum, logVal                ; expect 2（用掉 1 次）
+    mov mapData[13*COLS+6], TILE_EMPTY
     call CloseLog
     ret
 SelfTestRun endp

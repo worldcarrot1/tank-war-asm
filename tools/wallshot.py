@@ -19,7 +19,10 @@ class POINT(ctypes.Structure):
     _fields_ = [("X", ctypes.c_long), ("Y", ctypes.c_long)]
 
 def grab(hwnd, use_screen):
-    """Capture window into a 24bpp top-down buffer.
+    """Capture window into a 24bpp top-down buffer, CROPPED to the client
+    area (the VM's PrintWindow sometimes renders content only in the
+    top-left of the window rect, rest black -- crop + repaint check below
+    handles both that and the all-white flake).
     use_screen=False -> PrintWindow (flaky in this VM, sometimes all-white)
     use_screen=True  -> BitBlt from screen DC (needs window foreground)"""
     r = T.RECT()
@@ -60,39 +63,63 @@ def grab(hwnd, use_screen):
     gdi32.DeleteObject(bmp)
     gdi32.DeleteDC(mdc)
     user32.ReleaseDC(0, hdc)
-    return raw_info(buf.raw, row_size, w, h, cl, ct, cw, ch)
+    # crop to client area
+    crow = (cw * 3 + 3) & ~3
+    parts = []
+    for y in range(ct, ct + ch):
+        base = y * row_size + cl * 3
+        parts.append(buf.raw[base:base + cw * 3])
+    return raw_info(b"".join(parts), crow, cw, ch)
 
-def raw_info(raw, row_size, w, h, cl, ct, cw, ch):
-    """Check paint state by sampling the client area; return (ok, raw...)."""
+def raw_info(raw, row_size, w, h):
+    """Check paint state by sampling the client area; return (ok, raw...).
+    Menu screens have few colors (bg + text + highlight), so the bar is
+    >= 3 distinct colors (all-white flake = 1, all-black flake = 1)."""
     cols = set()
-    step = max(1, row_size // 97)
-    y0 = ct + ch // 6
-    y1 = ct + (ch * 5) // 6
-    for y in range(y0, y1, max(1, (y1 - y0) // 12)):
+    for y in range(h // 8, h - h // 8, max(1, h // 16)):
         base = y * row_size
-        for i in range(cl * 3 + 3, (cl + cw - 2) * 3, step * 3):
-            cols.add(raw[base + i:i + 3])
-    return len(cols) >= 4, raw, row_size, w, h
+        for x in range(w // 8, w - w // 8, max(1, w // 16)):
+            i = base + x * 3
+            cols.add(raw[i:i + 3])
+    return len(cols) >= 3, raw, row_size, w, h
 
 def save_png(path, raw, row_size, w, h):
+    # auto-trim pure-black padding (VM PrintWindow sometimes renders the
+    # content only in the top-left of the buffer). A row/col is padding only
+    # if EVERY pixel is exactly black -- real content (steel 0x404040, black
+    # bullets) always has at least one non-black pixel on its row/col.
+    def row_black(y):
+        base = y * row_size
+        return all(raw[base + i:base + i + 3] == b"\x00\x00\x00"
+                   for i in range(0, w * 3, 12))
+    def col_black(x):
+        return all(raw[y * row_size + x * 3:y * row_size + x * 3 + 3]
+                   == b"\x00\x00\x00" for y in range(0, h, 8))
+    r_end, c_end = h, w
+    while r_end > 8 and row_black(r_end - 1):
+        r_end -= 1
+    while c_end > 8 and col_black(c_end - 1):
+        c_end -= 1
+    h2 = max(8, r_end)
+    w2 = max(8, c_end)
     rows = []
-    for y in range(h):
+    for y in range(h2):
         row = raw[y * row_size:(y + 1) * row_size]
-        px = bytearray(row)
-        for x in range(w):
+        px = bytearray(row[:w2 * 3])
+        for x in range(w2):
             i = x * 3
             px[i], px[i + 2] = px[i + 2], px[i]
         rows.append(bytes(px))
     def chunk(typ, data):
         c = struct.pack(">I", len(data)) + typ + data
         return c + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
-    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    ihdr = struct.pack(">IIBBBBB", w2, h2, 8, 2, 0, 0, 0)
     body = b"".join(b"\x00" + rr for rr in rows)
     png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
            + chunk(b"IDAT", zlib.compress(body, 6)) + chunk(b"IEND", b""))
     with open(path, "wb") as f:
         f.write(png)
-    print("saved", path)
+    print("saved", path, f"({w2}x{h2})")
 
 def make_topmost(hwnd):
     """Put the game window above the user's windows WITHOUT stealing focus.
@@ -115,12 +142,12 @@ def capture_good(path, timeout=40):
         n += 1
         if proc.poll() is not None:          # closed (e.g. by the user)
             print("game closed (proc=", proc.poll(), ") -> relaunch")
-            proc = subprocess.Popen([EXE, "play2"], cwd=ROOT)
+            launch()
             topmost_done = False
             time.sleep(1.5)
         hwnd = T.find_hwnd()
         wait = 0
-        while not hwnd and wait < 6:
+        while not hwnd and wait < 12:
             time.sleep(0.5)
             wait += 0.5
             hwnd = T.find_hwnd()
@@ -134,39 +161,56 @@ def capture_good(path, timeout=40):
             make_topmost(hwnd)
             topmost_done = True
             time.sleep(0.3)
-        for use_screen in (False, True):
-            ok, raw, rs, w, h = grab(hwnd, use_screen)
+        # Prefer PrintWindow with patience: the screen-BitBlt fallback grabs
+        # whatever window covers the game (user's apps), so only use it after
+        # many PrintWindow failures.
+        pw_tries = 0
+        while pw_tries < 30:
+            ok, raw, rs, w, h = grab(hwnd, False)
             if ok:
                 save_png(path, raw, rs, w, h)
                 return True
+            pw_tries += 1
+            time.sleep(0.4)
+        ok, raw, rs, w, h = grab(hwnd, True)
+        if ok:
+            save_png(path, raw, rs, w, h)
+            return True
         time.sleep(0.5)
     print("STILL BLANK after", n, "tries:", path)
     return False
+
+def launch():
+    global proc
+    proc = subprocess.Popen([EXE] + ARGS, cwd=ROOT)
+    time.sleep(1.5)
 
 def snap(name):
     time.sleep(0.3)
     capture_good(os.path.join(OUT, name))
     print(name, "game_alive=", T.find_hwnd() is not None)
 
-proc = subprocess.Popen([EXE, "play2"], cwd=ROOT)
-time.sleep(1.5)
+ARGS = ["play2"]                     # relaunch/default args (override before use)
 
-snap("w1_play_thinwall.png")
+if __name__ == "__main__":
+    launch()
 
-# P1 move right
-time.sleep(0.2)
-T.hold(0x44, 0.6)
-snap("w2_p1_moved.png")
+    snap("w1_play_thinwall.png")
 
-# P1 fire
-T.tap(0x20)
-time.sleep(0.35)
-snap("w3_p1_fired.png")
+    # P1 move right
+    time.sleep(0.2)
+    T.hold(0x44, 0.6)
+    snap("w2_p1_moved.png")
 
-# P2 move left
-time.sleep(0.2)
-T.hold(0x25, 0.6)
-snap("w4_p2_moved.png")
+    # P1 fire
+    T.tap(0x20)
+    time.sleep(0.35)
+    snap("w3_p1_fired.png")
 
-proc.kill()
-print("done")
+    # P2 move left
+    time.sleep(0.2)
+    T.hold(0x25, 0.6)
+    snap("w4_p2_moved.png")
+
+    proc.kill()
+    print("done")

@@ -144,7 +144,7 @@ FormatScore endp
 ; ------------------------------------------------------------
 DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
     local rc2:RECT
-    ; 炮管（先画，压在车体下层，伸出车体 2px）
+    ; 炮管（先画，压在车体下层，伸出车体 8px = 子弹出膛位置）
     mov eax, px
     mov edx, py
     .if dirV == DIR_UP
@@ -153,35 +153,35 @@ DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
         add eax, 6
         mov rc2.right, eax
         mov eax, py
-        sub eax, 2
+        sub eax, 8
         mov rc2.top, eax
-        add eax, 22
+        add eax, 30
         mov rc2.bottom, eax
     .elseif dirV == DIR_DOWN
         add eax, 13
         mov rc2.left, eax
         add eax, 6
         mov rc2.right, eax
-        add edx, 12
+        add edx, 2
         mov rc2.top, edx
         mov eax, py
-        add eax, 34
+        add eax, 40
         mov rc2.bottom, eax
     .elseif dirV == DIR_LEFT
-        sub eax, 2
+        sub eax, 8
         mov rc2.left, eax
         mov eax, px
-        add eax, 20
+        add eax, 22
         mov rc2.right, eax
         add edx, 13
         mov rc2.top, edx
         add edx, 6
         mov rc2.bottom, edx
     .else                                   ; DIR_RIGHT
-        add eax, 12
+        add eax, 10
         mov rc2.left, eax
         mov eax, px
-        add eax, 34
+        add eax, 40
         mov rc2.right, eax
         add edx, 13
         mov rc2.top, edx

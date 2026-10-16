@@ -867,31 +867,8 @@ WallRects proc uses ebx ecx edx esi edi colX: dword, rowX: dword, pRects: dword
     mov eax, rowX
     imul eax, eax, CELL
     mov y0, eax
-    ; 孤立墙柱（四邻无墙）：保持整格，否则 8px 点之间留 24px 缝，
-    ; 子弹会从缝里穿墙。成线的墙才细化为挡板。
-    mov eax, wL
-    .if eax == 0
-        mov eax, wR
-        .if eax == 0
-            mov eax, wU
-            .if eax == 0
-                mov eax, wD
-                .if eax == 0
-                    mov edi, pRects
-                    mov eax, x0
-                    mov (RECT ptr [edi]).left, eax
-                    add eax, CELL
-                    mov (RECT ptr [edi]).right, eax
-                    mov eax, y0
-                    mov (RECT ptr [edi]).top, eax
-                    add eax, CELL
-                    mov (RECT ptr [edi]).bottom, eax
-                    mov eax, 1
-                    ret
-                .endif
-            .endif
-        .endif
-    .endif
+    ; 注：孤立墙柱（四邻无墙）不再保持整格 —— 用户要求全部细墙。
+    ; 此时只有 [0] 中心点，1 个矩形返回（细点间隙可穿弹，所见即所撞）。
     mov edi, pRects
     mov esi, 1                        ; 个数计数
     ; [0] 中心点（格内居中，WALL_THICK 见方）

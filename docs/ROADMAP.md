@@ -143,3 +143,16 @@
       键盘态，注入按键无需 SetForegroundWindow（反复 AttachThreadInput
       反而干扰）；桌面被其他应用遮挡时改用窗口置顶 + 屏幕BitBlt 兜底
       —— tools/wallshot.py 已内置全部兜底逻辑
+
+### 2026-10-16 会话 6：全细墙 + 加长炮管（用户反馈）
+
+- [x] 孤立墙柱（四邻无墙）不再保持整格：WallRects 删除整格特例，
+      无邻墙时只返回格中心 8×8 细点 —— 用户要求"全部都是很薄的墙"。
+      细点间隙可穿弹，渲染与碰撞仍共用同一几何（所见即所撞）
+- [x] 炮管加长：伸出车体 2px -> 8px（= 子弹出膛位置，炮口即出弹点），
+      DrawTank 四方向炮管矩形同步更新
+- [x] 双语菜单验收：主菜单 EN/CN 截图确认（LANGUAGE 项 Enter 切换，
+      中文：开始游戏/设置/联机对战/退出/语言：中文）
+- [x] selftest 12 项全过；tools/wallshot.py 改进：客户区裁剪 +
+      纯黑边自动 trim + PrintWindow 优先重试 30 次（屏幕 BitBlt 会截到
+      遮挡窗口，仅作最后手段）；tools/shot_menu.py 菜单验收脚本

@@ -578,6 +578,10 @@ arenaTable dd ARENA1,
     stT19a db "T19_NORM_DX(expect2)="      ; 21 字符
     stT19b db "T19_BOOST_DX(expect3)="     ; 22 字符
     stT19c db "T19_MUD_BOOST(expect2)="    ; 23 字符
+    stT20a db "T20_SWAPPED(expect1)="      ; 21 字符
+    stT20b db "T20_BUL_BACK(expect1)="     ; 22 字符
+    stT20c db "T20_DIR(expect1)="          ; 17 字符
+    stT20d db "T20_UNBOUND(expect1)="      ; 21 字符
 
 .code
 
@@ -1498,6 +1502,58 @@ T18Done:
     invoke LogStr, offset stT19c, 23
     invoke LogNum, logVal                ; expect 2（泥1 + 加速叠加）
     mov mapData[13*COLS+3], TILE_EMPTY
+T19Done:
+    ; T20: 换位术 —— 发射子弹 -> 再按使用键与之换位（方向继承）
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].fireCd, 0
+    mov tanks[0*SIZEOF TANK].skill, SK_SWAP
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 发射换位弹（占配额）
+    mov inputTable[20], 0
+    invoke AdvanceTicks, 20              ; 弹飞 ~126px
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 换位
+    mov inputTable[20], 0
+    ; a) 坦克已瞬移到子弹处
+    mov eax, tanks[0*SIZEOF TANK].x
+    .if eax > 200
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT20a, 21
+    invoke LogNum, logVal                ; expect 1
+    ; b) 子弹回到坦克原位附近（原位 96+6=102，本 tick 又飞 6px）
+    mov eax, bullets[0].x
+    .if eax >= 100 && eax <= 140
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT20b, 22
+    invoke LogNum, logVal                ; expect 1
+    ; c) 坦克朝向 = 子弹方向（右 = 1）
+    mov eax, tanks[0*SIZEOF TANK].dir
+    mov logVal, eax
+    invoke LogStr, offset stT20c, 21
+    invoke LogNum, logVal                ; expect 1
+    ; d) 换位后绑定解除
+    mov eax, tanks[0*SIZEOF TANK].swapBul
+    .if eax == -1
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT20d, 21
+    invoke LogNum, logVal                ; expect 1
     call CloseLog
     ret
 SelfTestRun endp

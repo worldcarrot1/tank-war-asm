@@ -76,6 +76,12 @@ UiTextL   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD ; ui.asm：双语文�
     skillNum    db "0", 0           ; 拾取物上的技能序号
     scoreBuf    db 48 dup (0)       ; 比分/临时文本缓冲
     itemCol     dd 0                ; 暂停菜单当前项颜色
+    brushPickBg dd ?                ; 拾取物深色底（蓝黑）
+    brushIcon   dd ?                ; 图标白色填充
+    penIcon     dd ?                ; 图标白色 2px 笔
+    penOld2     dd ?
+    gfxX        dd ?                ; 图标绘制原点（宏用）
+    gfxY        dd ?
     szWinsEn    db "WINS THE MATCH!", 0
     szBackEn    db "PRESS ENTER FOR MENU", 0
     szPaused    db "PAUSED", 0
@@ -170,6 +176,12 @@ GfxInit proc
     mov penLaser, eax
     invoke CreatePen, PS_DASH, 1, 00606060h
     mov penPreview, eax
+    invoke CreateSolidBrush, 00202030h       ; 拾取物深蓝黑底
+    mov brushPickBg, eax
+    invoke CreateSolidBrush, 00F0F0F0h       ; 图标白
+    mov brushIcon, eax
+    invoke CreatePen, PS_SOLID, 2, 00F0F0F0h
+    mov penIcon, eax
     ret
 GfxInit endp
 
@@ -299,6 +311,103 @@ FormatScore endp
 ; 入参：hdc, px, py(已含 HUD 偏移), dirV
 ; 坦克边长 TANK_SIZE=21（原 32 的 2/3）；炮管伸出车体 8px = 出弹点
 ; ------------------------------------------------------------
+; ------------------------------------------------------------
+; PickLine -- 白色笔画线段（x1,y1 -> x2,y2）
+; ------------------------------------------------------------
+PickLine proc hdc: dword, x1: dword, y1: dword, x2: dword, y2: dword
+    invoke MoveToEx, hdc, x1, y1, 0
+    invoke LineTo, hdc, x2, y2
+    ret
+PickLine endp
+
+; 坐标先算进寄存器再 invoke（px+const 在参数里会被当内存寻址！）
+PK_LINE MACRO hx, x1, y1, x2, y2
+    mov eax, gfxX
+    add eax, x1
+    mov ecx, gfxY
+    add ecx, y1
+    mov edx, gfxX
+    add edx, x2
+    mov ebx, gfxY
+    add ebx, y2
+    invoke PickLine, hx, eax, ecx, edx, ebx
+ENDM
+PK_FILL MACRO hx, what, x1, y1, x2, y2
+    mov eax, gfxX
+    add eax, x1
+    mov ecx, gfxY
+    add ecx, y1
+    mov edx, gfxX
+    add edx, x2
+    mov ebx, gfxY
+    add ebx, y2
+    invoke what, hx, eax, ecx, edx, ebx
+ENDM
+DrawPickupIcon proc uses ebx edi hdc: dword, px: dword, py: dword, tp: dword
+    mov eax, px
+    mov gfxX, eax
+    mov eax, py
+    mov gfxY, eax
+    mov eax, tp
+    .if eax == SK_ICE_SHIELD
+        invoke SelectObject, hdcBack, brushIcon
+        PK_FILL hdc, Ellipse, 5, 3, 13, 11
+        PK_FILL hdc, Rectangle, 7, 9, 11, 15
+    .elseif eax == SK_LASER
+        PK_LINE hdc, 2, 9, 16, 9
+        PK_LINE hdc, 4, 5, 4, 13
+        PK_LINE hdc, 14, 5, 14, 13
+    .elseif eax == SK_REFLASER
+        PK_LINE hdc, 3, 14, 8, 14
+        PK_LINE hdc, 8, 14, 8, 4
+        PK_LINE hdc, 8, 4, 13, 4
+        PK_LINE hdc, 13, 4, 13, 14
+    .elseif eax == SK_GHOST
+        PK_LINE hdc, 4, 4, 8, 4
+        PK_LINE hdc, 11, 4, 14, 4
+        PK_LINE hdc, 4, 14, 8, 14
+        PK_LINE hdc, 11, 14, 14, 14
+        PK_LINE hdc, 4, 4, 4, 8
+        PK_LINE hdc, 4, 11, 4, 14
+        PK_LINE hdc, 14, 4, 14, 8
+        PK_LINE hdc, 14, 11, 14, 14
+    .elseif eax == SK_MINE
+        invoke SelectObject, hdcBack, brushIcon
+        PK_FILL hdc, Ellipse, 6, 6, 12, 12
+        PK_LINE hdc, 9, 3, 9, 6
+        PK_LINE hdc, 9, 12, 9, 15
+        PK_LINE hdc, 3, 9, 6, 9
+        PK_LINE hdc, 12, 9, 15, 9
+    .elseif eax == SK_NITRO
+        PK_LINE hdc, 3, 4, 7, 9
+        PK_LINE hdc, 7, 9, 3, 14
+        PK_LINE hdc, 9, 4, 13, 9
+        PK_LINE hdc, 13, 9, 9, 14
+    .elseif eax == SK_SWAP
+        PK_LINE hdc, 4, 6, 14, 6
+        PK_LINE hdc, 11, 3, 14, 6
+        PK_LINE hdc, 14, 6, 11, 9
+        PK_LINE hdc, 14, 12, 4, 12
+        PK_LINE hdc, 7, 9, 4, 12
+        PK_LINE hdc, 4, 12, 7, 15
+    .elseif eax == SK_WATER
+        PK_LINE hdc, 2, 11, 5, 7
+        PK_LINE hdc, 5, 7, 9, 11
+        PK_LINE hdc, 9, 11, 13, 7
+        PK_LINE hdc, 13, 7, 16, 11
+    .else
+        PK_LINE hdc, 3, 3, 15, 3
+        PK_LINE hdc, 15, 3, 15, 15
+        PK_LINE hdc, 15, 15, 3, 15
+        PK_LINE hdc, 3, 15, 3, 3
+        PK_LINE hdc, 7, 7, 11, 7
+        PK_LINE hdc, 11, 7, 11, 11
+        PK_LINE hdc, 11, 11, 7, 11
+        PK_LINE hdc, 7, 11, 7, 7
+    .endif
+    ret
+DrawPickupIcon endp
+
 DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
     local rc2:RECT
     local oldPen:dword
@@ -734,7 +843,7 @@ BR_Done:
         jmp WallRow
     .endif
 
-    ; 1c) 技能拾取物：彩色块 + 白色序号（1..8）
+    ; 1c) 技能拾取物：深色方块 + 特性图形（白 2px，见 DrawPickupIcon）
     mov eax, pickupType
     .if eax != 0
         mov eax, pickupX
@@ -745,16 +854,15 @@ BR_Done:
         mov rc.top, eax
         add eax, PICKUP_SIZE
         mov rc.bottom, eax
-        mov eax, pickupType
-        invoke FillRect, hdcBack, addr rc, skillBrush[eax*4]
+        invoke FillRect, hdcBack, addr rc, brushPickBg
         invoke FrameRect, hdcBack, addr rc, brushMortar
-        mov al, '0'
-        add al, byte ptr pickupType
-        mov skillNum, al
+        invoke SelectObject, hdcBack, penIcon
+        mov penOld2, eax
         mov eax, pickupX
-        add eax, 6
         mov ecx, pickupY
-        invoke TextOutA, hdcBack, eax, ecx, offset skillNum, 1
+        mov eax, pickupType
+        invoke DrawPickupIcon, hdcBack, pickupX, pickupY, pickupType
+        invoke SelectObject, hdcBack, penOld2
     .endif
 
     ; 2) 画坦克（ebx=槽位号，y 偏移 HUD_H）
@@ -1039,6 +1147,9 @@ GS_SkillBrush:
     .endif
     invoke DeleteObject, penLaser
     invoke DeleteObject, penPreview
+    invoke DeleteObject, brushPickBg
+    invoke DeleteObject, brushIcon
+    invoke DeleteObject, penIcon
     ret
 GfxShutdown endp
 

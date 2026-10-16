@@ -87,7 +87,8 @@ MINE_ARM_TICKS  equ 120             ; 地雷 2s 生效
 NITRO_TICKS     equ 300             ; 燃油加速 5s
 WATER_TICKS     equ 360             ; 驭水 6s
 MAX_MINES       equ 16
-MAX_LASER_PTS   equ 10              ; 反射 <=7 次 -> 最多 9 个折点
+MAX_LASER_PTS   equ 10              ; 起点 + 7 反弹折点 + 终点 = 9（留 1 富余）
+LASER_BOUNCE_MAX equ 7              ; 反射激光最多反射 7 次
 EFF_SHIELD      equ 1
 EFF_NITRO       equ 2
 EFF_GHOST       equ 4

@@ -568,7 +568,7 @@ arenaTable dd ARENA1,
     stT15a db "T15_LASER_HP(expect2)="     ; 22 字符
     stT15b db "T15_LASER_PTS(expect2)="    ; 23 字符
     stT16a db "T16_REFL_HP(expect2)="      ; 21 字符
-    stT16b db "T16_REFL_PTS(expect>=3)="   ; 24 字符
+    stT16b db "T16_REFL_PTS(expect9)="     ; 22 字符
     stT17a db "T17_BLOCKED(expect1)="      ; 21 字符
     stT17b db "T17_PASSED(expect1)="       ; 20 字符
     stT17c db "T17_USES_LEFT(expect2)="    ; 23 字符
@@ -1383,12 +1383,12 @@ T15Done:
     invoke LogStr, offset stT16a, 21
     invoke LogNum, logVal                ; expect 2
     mov eax, laserN
-    .if eax < 3
-        mov eax, 0                       ; 折点不足 = 无反弹路径
+    .if eax != 9                         ; 起点 + 7 反弹 + 终点 = 9
+        mov eax, 0
     .endif
     mov logVal, eax
-    invoke LogStr, offset stT16b, 24
-    invoke LogNum, logVal                ; expect >=3（起点+反弹点+终点）
+    invoke LogStr, offset stT16b, 22
+    invoke LogNum, logVal                ; expect 1（9 折点 = 满 7 次反射）
 T16Done:
     ; T17: 穿墙术 —— 无技能被墙挡；发动后穿过并计一次
     call ResetTanks
@@ -1508,10 +1508,22 @@ T18Done:
     mov mapData[13*COLS+3], TILE_EMPTY
 T19Done:
     ; T20: 换位术 —— 发射子弹 -> 再按使用键与之换位（方向继承）
+    ; 用 UP 发射：旧版 SpawnBullet 把 vy 候选（-6）当弹索引返回的 bug
+    ; 只有 UP/DOWN 才暴露（RIGHT 碰巧返回 0 正确），此场景即回归锁
     call ResetTanks
+    mov ebx, 2                           ; 清 col3 rows 2..16 做向上弹道
+T20Clr:
+    mov eax, ebx
+    imul eax, eax, COLS
+    add eax, 3
+    mov mapData[eax], TILE_EMPTY
+    inc ebx
+    .if ebx <= 16
+        jmp T20Clr
+    .endif
     mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].y, 416
-    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].dir, DIR_UP
     mov tanks[0*SIZEOF TANK].alive, 1
     mov tanks[0*SIZEOF TANK].fireCd, 0
     mov tanks[0*SIZEOF TANK].skill, SK_SWAP
@@ -1519,21 +1531,26 @@ T19Done:
     mov inputTable[20], 1
     invoke GameUpdate                    ; 发射换位弹（占配额）
     mov inputTable[20], 0
-    invoke AdvanceTicks, 20              ; 弹飞 ~126px
+    invoke AdvanceTicks, 20              ; 弹飞 ~120px（y 408 -> 288）
     mov inputTable[20], 1
     invoke GameUpdate                    ; 换位
     mov inputTable[20], 0
-    ; a) 坦克已瞬移到子弹处
-    mov eax, tanks[0*SIZEOF TANK].x
-    .if eax > 200
-        mov eax, 1
+    ; a) 坦克已瞬移到子弹处（x=96, y~282）
+    mov eax, tanks[0*SIZEOF TANK].y
+    .if eax < 350
+        mov eax, tanks[0*SIZEOF TANK].x
+        .if eax == 96
+            mov eax, 1
+        .else
+            mov eax, 0
+        .endif
     .else
         mov eax, 0
     .endif
     mov logVal, eax
     invoke LogStr, offset stT20a, 21
     invoke LogNum, logVal                ; expect 1
-    ; b) 子弹回到坦克原位附近（原位 96+6=102，本 tick 又飞 6px）
+    ; b) 子弹回到坦克原位附近（原位 x=96+6=102，UP 场景 x 不变）
     mov eax, bullets[0].x
     .if eax >= 100 && eax <= 140
         mov eax, 1
@@ -1543,8 +1560,13 @@ T19Done:
     mov logVal, eax
     invoke LogStr, offset stT20b, 22
     invoke LogNum, logVal                ; expect 1
-    ; c) 坦克朝向 = 子弹方向（右 = 1）
+    ; c) 坦克朝向 = 子弹方向（UP = 0）
     mov eax, tanks[0*SIZEOF TANK].dir
+    .if eax == DIR_UP
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
     mov logVal, eax
     invoke LogStr, offset stT20c, 17
     invoke LogNum, logVal                ; expect 1
@@ -1853,6 +1875,10 @@ WRH_PyOk:
     mov r0, eax
     mov eax, r0
     dec eax
+    test eax, eax
+    jns WRH_RrOk
+    xor eax, eax                  ; r0-1 < 0 -> clamp 0（否则无符号比较恒"超界"，
+WRH_RrOk:                         ;  整个 3x3 邻域被跳过 = 左/上边界碰撞失效）
     mov rr, eax
 WRH_Row:
     mov eax, r0
@@ -1863,6 +1889,10 @@ WRH_Row:
     .endif
     mov eax, c0
     dec eax
+    test eax, eax
+    jns WRH_CcOk
+    xor eax, eax                  ; 同上 clamp（c0=0 时 cc 起点 -1）
+WRH_CcOk:
     mov cc, eax
 WRH_Col:
     mov eax, c0
@@ -2260,25 +2290,39 @@ SRP_Step:
     mov eax, steps
     inc eax
     mov steps, eax
-    .if eax > 4000                       ; 7 次反弹约需 3700px 路径
+    .if eax > 9000                       ; 7 次反弹全图横穿约 6600 步
         jmp SRP_Done
     .endif
     ; ---- X 轴 ----
     mov eax, vx
     .if eax != 0
-        .if eax > 0
-            mov sgn, 1
-        .else
-            mov sgn, -1
-        .endif
+        ; sgn = vx 的符号（vx 可为负：勿用 .if > 0，无符号比较恒真）
+        mov sgn, 1
+        test eax, eax
+        js SRP_XNeg
+        jmp SRP_XSgnDone
+SRP_XNeg:
+        mov sgn, -1
+SRP_XSgnDone:
         mov eax, x
         add eax, sgn
         mov x, eax
         invoke WallRectsHit, x, y, BULLET_SIZE_PX, BULLET_SIZE_PX
         .if eax != 0
+            ; 逐像素回退到弹体完全出墙再反弹（出膛嵌墙时与真实弹道一致）
+SRP_XBack:
             mov eax, x
             sub eax, sgn
             mov x, eax
+            test eax, eax
+            js SRP_XBackDone           ; 已贴左界
+            cmp eax, MAP_W - BULLET_SIZE_PX
+            ja SRP_XBackDone           ; 已贴右界
+            invoke WallRectsHit, x, y, BULLET_SIZE_PX, BULLET_SIZE_PX
+            .if eax != 0
+                jmp SRP_XBack
+            .endif
+SRP_XBackDone:
             mov eax, vx
             neg eax
             mov vx, eax
@@ -2298,7 +2342,7 @@ SRP_Step:
             .endif
             ; 反射次数用尽 -> 终止（eax 被记录代码破坏，从 bn 重载）
             mov eax, bn
-            .if eax > GHOST_USES+4        ; bn > 7
+            .if eax >= LASER_BOUNCE_MAX   ; 第 7 次反弹后停止
                 jmp SRP_Done
             .endif
         .endif
@@ -2306,19 +2350,32 @@ SRP_Step:
     ; ---- Y 轴 ----
     mov eax, vy
     .if eax != 0
-        .if eax > 0
-            mov sgn, 1
-        .else
-            mov sgn, -1
-        .endif
+        mov sgn, 1
+        test eax, eax
+        js SRP_YNeg
+        jmp SRP_YSgnDone
+SRP_YNeg:
+        mov sgn, -1
+SRP_YSgnDone:
         mov eax, y
         add eax, sgn
         mov y, eax
         invoke WallRectsHit, x, y, BULLET_SIZE_PX, BULLET_SIZE_PX
         .if eax != 0
+            ; 逐像素回退到弹体完全出墙再反弹（同 X 轴）
+SRP_YBack:
             mov eax, y
             sub eax, sgn
             mov y, eax
+            test eax, eax
+            js SRP_YBackDone           ; 已贴上界
+            cmp eax, MAP_H - BULLET_SIZE_PX
+            ja SRP_YBackDone           ; 已贴下界
+            invoke WallRectsHit, x, y, BULLET_SIZE_PX, BULLET_SIZE_PX
+            .if eax != 0
+                jmp SRP_YBack
+            .endif
+SRP_YBackDone:
             mov eax, vy
             neg eax
             mov vy, eax
@@ -2337,7 +2394,7 @@ SRP_Step:
             .endif
             ; 反射次数用尽 -> 终止（eax 被记录代码破坏，从 bn 重载）
             mov eax, bn
-            .if eax > GHOST_USES+4        ; bn > 7
+            .if eax >= LASER_BOUNCE_MAX   ; 第 7 次反弹后停止
                 jmp SRP_Done
             .endif
         .endif
@@ -2558,7 +2615,7 @@ DoSwap proc uses ebx esi edi slotIdx: dword
     add eax, offset tanks
     mov ptank, eax
     mov eax, (TANK ptr [eax]).swapBul
-    .if eax < 0
+    .if eax == -1                    ; 无绑定（勿写 < 0：MASM 无符号恒假）
         ret
     .endif
     mov edi, eax
@@ -2581,9 +2638,21 @@ DS_Live:
     add eax, BULLET_SIZE_PX/2
     sub eax, TANK_SIZE/2
     mov ny, eax
+    ; 硬边界防御：子弹贴边飞行时换位目标可能越界
+    mov eax, nx
+    test eax, eax
+    js DS_GiveUp
+    cmp eax, MAP_W - TANK_SIZE
+    ja DS_GiveUp
+    mov eax, ny
+    test eax, eax
+    js DS_GiveUp
+    cmp eax, MAP_H - TANK_SIZE
+    ja DS_GiveUp
     invoke TankBlocked, nx, ny
     .if eax != 0
         ; 目标被挡（子弹贴墙缝隙）-> 放弃换位
+DS_GiveUp:
         mov ecx, ptank
         mov (TANK ptr [ecx]).swapBul, -1
         ret
@@ -2602,20 +2671,25 @@ DS_Live:
     mov (TANK ptr [ecx]).x, eax
     mov eax, ny
     mov (TANK ptr [ecx]).y, eax
-    ; 坦克朝向 = 子弹方向
+    ; 坦克朝向 = 子弹方向（vx/vy 可为负：勿用 .if > 0，MASM 无符号恒真）
     mov eax, (BULLET ptr [esi]).vx
-    .if eax > 0
-        mov (TANK ptr [ecx]).dir, DIR_RIGHT
-    .elseif eax < 0
-        mov (TANK ptr [ecx]).dir, DIR_LEFT
-    .else
-        mov eax, (BULLET ptr [esi]).vy
-        .if eax > 0
-            mov (TANK ptr [ecx]).dir, DIR_DOWN
-        .else
-            mov (TANK ptr [ecx]).dir, DIR_UP
-        .endif
-    .endif
+    test eax, eax
+    jz DS_ChkVy
+    js DS_VxNeg
+    mov (TANK ptr [ecx]).dir, DIR_RIGHT
+    jmp DS_DirDone
+DS_VxNeg:
+    mov (TANK ptr [ecx]).dir, DIR_LEFT
+    jmp DS_DirDone
+DS_ChkVy:
+    mov eax, (BULLET ptr [esi]).vy
+    test eax, eax
+    js DS_VyNeg
+    mov (TANK ptr [ecx]).dir, DIR_DOWN
+    jmp DS_DirDone
+DS_VyNeg:
+    mov (TANK ptr [ecx]).dir, DIR_UP
+DS_DirDone:
     ; 子弹回到坦克原位（速度不变 = 方向与原来相同）
     mov eax, oldx
     add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
@@ -2683,8 +2757,8 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         mov (TANK ptr [ecx]).effT, NITRO_TICKS
     .elseif eax == SK_SWAP
         invoke SpawnBullet, slotIdx
-        .if eax < 0
-            ret                      ; 弹池/配额满：不消耗
+        .if eax == -1
+            ret                      ; 弹池/配额满：不消耗（SpawnBullet 失败返回 -1）
         .endif
         mov ecx, ptank
         mov (TANK ptr [ecx]).swapBul, eax
@@ -2799,6 +2873,7 @@ SP_Try:
     .if ebx > 0
         jmp SP_Try
     .endif
+    mov pickupTimer, 60               ; 本轮无可行格：1s 后重试（防永久卡死）
     ret
 SpawnPickup endp
 
@@ -2807,7 +2882,7 @@ SpawnPickup endp
 ; 入参：ownerIdx = 玩家编号；弹池满 / 该坦弹满 / 坦克死亡则忽略
 ; ------------------------------------------------------------
 SpawnBullet proc uses ebx esi edi ownerIdx: dword
-    local ptank:dword
+    local ptank:dword, bulIdx:dword
     mov edi, ownerIdx
 
     ; 统计该坦克同屏弹数（顺序固定遍历）
@@ -2829,7 +2904,8 @@ CountSkip:
     jmp CountLoop
 CountDone:
     .if eax >= MAX_PER_TANK
-        ret                          ; 池满禁射
+        mov eax, -1                  ; 配额满（调用方检查 == -1）
+        ret
     .endif
 
     ; 坦克指针
@@ -2840,6 +2916,7 @@ CountDone:
     mov ptank, ebx
     mov eax, (TANK ptr [ebx]).alive
     .if eax == 0
+        mov eax, -1                  ; 坦克死亡
         ret
     .endif
 
@@ -2854,9 +2931,12 @@ FindSlot:
     .if ecx < MAX_BULLETS
         jmp FindSlot
     .endif
-    ret                              ; 弹池满
+    mov eax, -1                      ; 弹池满
+    ret
 
 SlotFound:
+    mov eax, ecx
+    mov bulIdx, eax                 ; 先存槽索引（ecx 马上被 vy 候选占用）
     ; 速度向量由朝向决定（vx/vy 只取 0 / ±BULLET_SPEED）
     mov eax, (TANK ptr [ebx]).dir
     xor edx, edx                     ; vx 候选
@@ -2908,7 +2988,7 @@ SlotFound:
     mov (BULLET ptr [esi]).active, 1
     mov (BULLET ptr [esi]).bounces, 0
     mov (BULLET ptr [esi]).age, 0
-    mov eax, ecx                     ; 返回子弹池索引（换位术绑定用）
+    mov eax, bulIdx                  ; 返回子弹池索引（换位术绑定用）
     ret
 SpawnBullet endp
 
@@ -3005,10 +3085,28 @@ MoveTank proc ownerIdx: dword, wantDir: dword
         add nx, ecx
     .endif
 
+    ; 硬边界保护：坦克整体必须在地图内。出界目标判为 solid=3
+    ; （任何技能都不放行）——否则 ghost 在边界墙上被 clamp 恒判定命中，
+    ; 会一直放行把坦克送出地图并永久卡死。
+    mov eax, nx
+    test eax, eax
+    js MT_Out
+    cmp eax, MAP_W - TANK_SIZE
+    ja MT_Out
+    mov eax, ny
+    test eax, eax
+    js MT_Out
+    cmp eax, MAP_H - TANK_SIZE
+    jbe MT_InMap
+MT_Out:
+    mov solid, 3                     ; 3=界外：不可放行
+    jmp MT_AfterBlock
+MT_InMap:
     ; 目标位置整体阻挡判定：
     ; 挡板墙 = 矩形级 AABB（与渲染一致）；水 = 覆盖格任一整格阻挡
     invoke TankBlocked, nx, ny
     mov solid, eax
+MT_AfterBlock:
     ; 技能放行：驭水术穿过水(2)；穿墙术穿过墙(1)并计数
     mov ecx, ptank
     .if solid == 2
@@ -3203,12 +3301,17 @@ GU_Slot:
     ; ---- 技能：效果计时 / 拾取 / 使用键（边沿）/ 换位绑定检查 ----
     invoke EffTick, ebx
     ; 拾取：中心格 = 拾取物格 -> 覆盖持有（连续拾取覆盖前一个）
+    ; 瞄准中 / 换位等待中不拾取（防止激光 + 新技能双技能并发）
     .if pickupType != 0
         mov eax, ebx
         imul eax, eax, SIZEOF TANK
         add eax, offset tanks
         mov edx, (TANK ptr [eax]).alive
         .if edx != 0
+        mov edx, (TANK ptr [eax]).aimT
+        .if edx == 0
+        mov edx, (TANK ptr [eax]).swapBul
+        .if edx == -1                ; 无换位绑定（勿写 < 0：无符号恒假）
             mov edx, (TANK ptr [eax]).x
             add edx, TANK_SIZE/2
             shr edx, 5
@@ -3234,6 +3337,8 @@ GU_Slot:
                 mov pickupTimer, eax
             .endif
         .endif
+        .endif
+        .endif
     .endif
     ; 技能键边沿
     mov eax, inputTable[esi+20]
@@ -3247,7 +3352,7 @@ GU_Slot:
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
     mov edx, (TANK ptr [eax]).swapBul
-    .if edx >= 0
+    .if edx != -1                    ; 有绑定（勿写 >= 0：无符号恒真）
         mov ecx, edx
         shl ecx, 5
         add ecx, offset bullets
@@ -3299,8 +3404,10 @@ BT_XPos:
                     ; （旧逻辑只回退一步：出膛/斜射嵌墙时回退后仍在墙里，
                     ;  弹在挡板内抖动耗尽反弹次数消失，或沿墙内滑出另一侧
                     ;  = "子弹穿墙" + "贴墙射弹无法反弹自杀" 的根因）
+                    ; vx 可为负：回退方向手写 test/js（.if > 0 无符号恒真）
                     mov eax, (BULLET ptr [edi]).vx
-                    .if eax > 0
+                    test eax, eax
+                    js BT_XBackL
 BT_XBackR:
                         dec (BULLET ptr [edi]).x
                         invoke BulletWallHit, edi
@@ -3310,7 +3417,7 @@ BT_XBackR:
                                 jmp BT_XBackR
                             .endif
                         .endif
-                    .else
+                        jmp BT_XBackDone
 BT_XBackL:
                         inc (BULLET ptr [edi]).x
                         invoke BulletWallHit, edi
@@ -3320,7 +3427,7 @@ BT_XBackL:
                                 jmp BT_XBackL
                             .endif
                         .endif
-                    .endif
+BT_XBackDone:
                     neg (BULLET ptr [edi]).vx       ; 反弹
                     invoke BounceOne, edi
                 .endif
@@ -3351,9 +3458,10 @@ BT_YPos:
             .else
                 invoke BulletWallHit, edi
                 .if eax != 0
-                    ; 命中：逐像素回退到出墙（同 X 轴，防嵌墙抖动）
+                    ; 命中：逐像素回退到出墙（同 X 轴；vy 可为负：test/js）
                     mov eax, (BULLET ptr [edi]).vy
-                    .if eax > 0
+                    test eax, eax
+                    js BT_YBackU
 BT_YBackD:
                         dec (BULLET ptr [edi]).y
                         invoke BulletWallHit, edi
@@ -3363,7 +3471,7 @@ BT_YBackD:
                                 jmp BT_YBackD
                             .endif
                         .endif
-                    .else
+                        jmp BT_YBackDone
 BT_YBackU:
                         inc (BULLET ptr [edi]).y
                         invoke BulletWallHit, edi
@@ -3373,7 +3481,7 @@ BT_YBackU:
                                 jmp BT_YBackU
                             .endif
                         .endif
-                    .endif
+BT_YBackDone:
                     neg (BULLET ptr [edi]).vy       ; 反弹
                     invoke BounceOne, edi
                 .endif
@@ -3457,6 +3565,15 @@ GU_Aim:
     .if ecx == 0
         jmp GU_ANext
     .endif
+    ; 瞄准期间死亡：取消瞄准（死人不开炮）
+    mov ecx, (TANK ptr [eax]).alive
+    .if ecx == 0
+        mov (TANK ptr [eax]).aimT, 0
+        mov (TANK ptr [eax]).aimSkill, SKILL_NONE
+        mov prevTank, -1
+        mov prevN, 0
+        jmp GU_ANext
+    .endif
     dec (TANK ptr [eax]).aimT
     invoke RefreshLaserPreview, ebx   ; 预览随位置/朝向刷新
     mov eax, ebx
@@ -3478,7 +3595,7 @@ GU_Mine:
         jmp GU_MineDone
     .endif
     mov eax, mineCell[ebx*4]
-    .if eax < 0
+    .if eax == -1                    ; 空槽（勿写 < 0：无符号恒假）
         jmp GU_MineNext
     .endif
     mov eax, mineArm[ebx*4]

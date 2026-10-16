@@ -563,6 +563,8 @@ arenaTable dd ARENA1,
     stT13a db "T13_SPAWN(expect1..8)="     ; 22 字符
     stT13b db "T13_PICKUP(expect3)="       ; 20 字符
     stT13c db "T13_USED(expect1)="         ; 18 字符
+    stT14a db "T14_SHIELD_HP(expect3)="    ; 23 字符
+    stT14b db "T14_ICE_CELLS(expect2)="    ; 23 字符
 
 .code
 
@@ -1271,6 +1273,45 @@ T12Done:
     mov logVal, eax
     invoke LogStr, offset stT13c, 18
     invoke LogNum, logVal                ; expect 1 (EFF_SHIELD)
+T13cDone:
+    ; T14: 冰盾 —— 挡一次伤害 + 坦克周围生成 2x2 冰面
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].skill, SK_ICE_SHIELD
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 发动冰盾
+    mov inputTable[20], 0
+    ; 一颗弹压在 P1 身上（owner=P2）-> 冰盾应抵挡
+    mov bullets[0].active, 1
+    mov bullets[0].owner, 1
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov bullets[0].x, eax
+    mov eax, tanks[0*SIZEOF TANK].y
+    mov bullets[0].y, eax
+    mov bullets[0].vx, 0
+    mov bullets[0].vy, 0
+    mov bullets[0].bounces, 0
+    mov bullets[0].age, 0
+    invoke GameUpdate
+    mov eax, tanks[0*SIZEOF TANK].hp
+    mov logVal, eax
+    invoke LogStr, offset stT14a, 23
+    invoke LogNum, logVal                ; expect 3（被盾挡下）
+    ; 冰面：走廊行 (1,13)(2,13) 空地应变冰；(1,14)(2,14) 是墙不动
+    xor eax, eax
+    .if mapData[13*COLS+1] == TILE_ICE
+        inc eax
+    .endif
+    .if mapData[13*COLS+2] == TILE_ICE
+        inc eax
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT14b, 23
+    invoke LogNum, logVal                ; expect 2
     call CloseLog
     ret
 SelfTestRun endp

@@ -36,6 +36,7 @@ TILE_STEEL  equ 1                   ; '#'  子弹反弹
 TILE_BRICK  equ 2                   ; 'b'  清子块后反弹，整格空后穿过
 TILE_WATER  equ 3                   ; '~'  挡坦克，子弹穿过
 TILE_ICE    equ 4                   ; '-'  坦克滑行，子弹穿过
+TILE_DIRT   equ 5                   ; 'd'  泥土：坦克减速，子弹穿过
 ARENA_COUNT equ 5                   ; 内置对战图 ARENA1..5
 
 ; ---- 细墙挡板 ----
@@ -53,7 +54,9 @@ DIR_LEFT    equ 3
 
 ; ---- 坦克 ----
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
+TANK_SIZE   equ 21                  ; 坦克碰撞/绘制边长（32 的 2/3）
 TANK_SPEED  equ 2                   ; 每 tick 移动像素
+DIRT_SPEED  equ 1                   ; 泥土上每 tick 移动像素（减速）
 TANK_HP     equ 3
 FIRE_CD     equ 20                  ; 开火冷却 tick（§3）
 PLAYER_SELF equ 0

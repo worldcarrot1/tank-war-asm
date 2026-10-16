@@ -38,6 +38,8 @@ WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
     brushWave   dd ?                ; 水波纹：浅蓝
     brushIce    dd ?                ; 冰：淡青白
     brushStreak dd ?                ; 冰高光：白
+    brushDirt   dd ?                ; 泥土：棕褐
+    brushDirtDark dd ?              ; 泥土纹理：深棕褐
     brushP1     dd ?                ; P1 车体：绿
     brushP2     dd ?                ; P2 车体：蓝
     brushP3     dd ?                ; P3 车体：红
@@ -81,6 +83,10 @@ GfxInit proc
     mov brushIce, eax
     invoke CreateSolidBrush, 00FFFFFFh
     mov brushStreak, eax
+    invoke CreateSolidBrush, 008CB4D2h       ; 泥土：棕褐 RGB(210,180,140)
+    mov brushDirt, eax
+    invoke CreateSolidBrush, 006E96B4h       ; 泥土纹理：深棕褐 RGB(180,150,110)
+    mov brushDirtDark, eax
     invoke CreateSolidBrush, 0055C85Fh
     mov brushP1, eax
     invoke CreateSolidBrush, 00E66E46h
@@ -141,76 +147,77 @@ FormatScore endp
 ; ------------------------------------------------------------
 ; DrawTank —— 圆角车体 + 中心炮塔 + 伸出炮管（笔/刷已就位）
 ; 入参：hdc, px, py(已含 HUD 偏移), dirV
+; 坦克边长 TANK_SIZE=21（原 32 的 2/3）；炮管伸出车体 8px = 出弹点
 ; ------------------------------------------------------------
 DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
     local rc2:RECT
-    ; 炮管（先画，压在车体下层，伸出车体 8px = 子弹出膛位置）
+    ; 炮管（先画，压在车体下层）
     mov eax, px
     mov edx, py
     .if dirV == DIR_UP
-        add eax, 13
+        add eax, 9
         mov rc2.left, eax
-        add eax, 6
+        add eax, 4
         mov rc2.right, eax
         mov eax, py
         sub eax, 8
         mov rc2.top, eax
-        add eax, 30
+        add eax, 21
         mov rc2.bottom, eax
     .elseif dirV == DIR_DOWN
-        add eax, 13
+        add eax, 9
         mov rc2.left, eax
-        add eax, 6
+        add eax, 4
         mov rc2.right, eax
-        add edx, 2
+        add edx, 8
         mov rc2.top, edx
         mov eax, py
-        add eax, 40
+        add eax, 29
         mov rc2.bottom, eax
     .elseif dirV == DIR_LEFT
         sub eax, 8
         mov rc2.left, eax
         mov eax, px
-        add eax, 22
+        add eax, 13
         mov rc2.right, eax
-        add edx, 13
+        add edx, 9
         mov rc2.top, edx
-        add edx, 6
+        add edx, 4
         mov rc2.bottom, edx
     .else                                   ; DIR_RIGHT
-        add eax, 10
+        add eax, 8
         mov rc2.left, eax
         mov eax, px
-        add eax, 40
+        add eax, 29
         mov rc2.right, eax
-        add edx, 13
+        add edx, 9
         mov rc2.top, edx
-        add edx, 6
+        add edx, 4
         mov rc2.bottom, edx
     .endif
     invoke Rectangle, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
     ; 车体（圆角方块）
     mov eax, px
-    add eax, 2
+    add eax, 1
     mov rc2.left, eax
-    add eax, 28
+    add eax, 19
     mov rc2.right, eax
     mov eax, py
-    add eax, 2
+    add eax, 1
     mov rc2.top, eax
-    add eax, 28
+    add eax, 19
     mov rc2.bottom, eax
-    invoke RoundRect, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom, 10, 10
+    invoke RoundRect, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom, 7, 7
     ; 炮塔（中心圆）
     mov eax, px
-    add eax, 9
+    add eax, 6
     mov rc2.left, eax
-    add eax, 14
+    add eax, 9
     mov rc2.right, eax
     mov eax, py
-    add eax, 9
+    add eax, 6
     mov rc2.top, eax
-    add eax, 14
+    add eax, 9
     mov rc2.bottom, eax
     invoke Ellipse, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
     ret
@@ -249,14 +256,12 @@ GfxRender proc
     sar ecx, 1
     invoke TextOutA, hdcBack, ecx, 9, offset scoreBuf, txtLen
 
-    ; 1) 描边笔就位；逐格画地图（y 偏移 HUD_H）
-    invoke SelectObject, hdcBack, penDark
-    mov penOld, eax
+    ; 1a) 地面层（先画，位于墙/坦克下面）：水/冰/泥 整格铺满
     xor esi, esi
     xor edi, edi
-RowLoop:
+GroundRow:
     xor ebx, ebx
-ColLoop:
+GroundCol:
     mov eax, ebx
     imul eax, CELL
     mov rc.left, eax
@@ -318,7 +323,54 @@ ColLoop:
         add eax, 2
         mov r2.bottom, eax
         invoke FillRect, hdcBack, addr r2, brushStreak
-    .elseif eax == TILE_STEEL || eax == TILE_BRICK
+    .elseif eax == TILE_DIRT
+        ; 泥土：棕褐整格 + 两道深棕褐土纹
+        invoke FillRect, hdcBack, addr rc, brushDirt
+        mov eax, rc.left
+        add eax, 4
+        mov r2.left, eax
+        mov eax, rc.right
+        sub eax, 10
+        mov r2.right, eax
+        mov eax, rc.top
+        add eax, 7
+        mov r2.top, eax
+        add eax, 2
+        mov r2.bottom, eax
+        invoke FillRect, hdcBack, addr r2, brushDirtDark
+        mov eax, rc.left
+        add eax, 10
+        mov r2.left, eax
+        mov eax, rc.right
+        sub eax, 4
+        mov r2.right, eax
+        mov eax, rc.top
+        add eax, 19
+        mov r2.top, eax
+        add eax, 2
+        mov r2.bottom, eax
+        invoke FillRect, hdcBack, addr r2, brushDirtDark
+    .endif
+    inc esi
+    inc ebx
+    .if ebx < COLS
+        jmp GroundCol
+    .endif
+    inc edi
+    .if edi < ROWS
+        jmp GroundRow
+    .endif
+
+    ; 1b) 墙层（画在地面之上、坦克之下）：细挡板钢/砖
+    invoke SelectObject, hdcBack, penDark
+    mov penOld, eax
+    xor esi, esi
+    xor edi, edi
+WallRow:
+    xor ebx, ebx
+WallCol:
+    movzx eax, mapData[esi]
+    .if eax == TILE_STEEL || eax == TILE_BRICK
         ; 细挡板墙：中心点 + 朝邻墙的连接条（几何来自 game.asm
         ; WallRects，与碰撞完全一致，所见即所撞）
         mov tType, eax
@@ -383,11 +435,11 @@ BR_Done:
     inc esi
     inc ebx
     .if ebx < COLS
-        jmp ColLoop
+        jmp WallCol
     .endif
     inc edi
     .if edi < ROWS
-        jmp RowLoop
+        jmp WallRow
     .endif
 
     ; 2) 画坦克（ebx=槽位号，y 偏移 HUD_H）
@@ -472,6 +524,8 @@ GfxShutdown proc
     invoke DeleteObject, brushWave
     invoke DeleteObject, brushIce
     invoke DeleteObject, brushStreak
+    invoke DeleteObject, brushDirt
+    invoke DeleteObject, brushDirtDark
     invoke DeleteObject, brushP1
     invoke DeleteObject, brushP2
     invoke DeleteObject, brushP3

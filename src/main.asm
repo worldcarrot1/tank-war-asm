@@ -25,6 +25,7 @@ NetInit     PROTO                   ; net.asm  Winsock 初始化 + 绑定端口
 NetFlush    PROTO                   ; net.asm  发送状态包 + 收包应用
 NetShutdown PROTO                   ; net.asm  关闭 socket
 SelfTestRun PROTO                   ; game.asm 无头自测（tankwar selftest）
+UiForcePlay2 PROTO                  ; ui.asm 直入 2P 对局（tankwar play2）
 UiInit    PROTO                     ; ui.asm 界面
 UiTick    PROTO
 UiRender  PROTO
@@ -36,6 +37,8 @@ extern netMode   :dword
     className   db "TankWarAsmWnd", 0
     appName     db "Tank War ASM M1 - P1: WASD+SPACE | P2: Arrows+ENTER | R restart", 0
     selftestArg db "selftest"
+    play2Arg    db "play2"
+    play2Mode   dd 0
     hInstance   dd ?
     hWnd        dd ?
     msg         MSG <?>
@@ -108,6 +111,10 @@ WinMain proc
     invoke UiInit
     invoke GameInit
     invoke NetInit
+    ; "tankwar play2"：跳过菜单直接开 2P 本地对局
+    .if play2Mode != 0
+        invoke UiForcePlay2
+    .endif
 
     ; ---- 主循环：固定步长逻辑 + 每帧渲染 ----
     invoke GetTickCount
@@ -179,5 +186,32 @@ ArgNext:
     inc esi
     jmp ArgScan
 NoSelfTest:
+    ; 再扫 "play2" -> 置直入对局标志
+    invoke GetCommandLineA
+    mov esi, eax
+ArgScan2:
+    movzx eax, byte ptr [esi]
+    .if eax == 0
+        jmp NoPlay2
+    .endif
+    mov ebx, esi
+    mov edi, offset play2Arg
+    mov ecx, 5
+ArgCmp2:
+    mov al, [ebx]
+    cmp al, [edi]
+    jne ArgNext2
+    inc ebx
+    inc edi
+    dec ecx
+    .if ecx != 0
+        jmp ArgCmp2
+    .endif
+    mov play2Mode, 1
+    jmp NoPlay2
+ArgNext2:
+    inc esi
+    jmp ArgScan2
+NoPlay2:
     invoke WinMain
 end start

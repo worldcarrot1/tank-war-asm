@@ -38,6 +38,13 @@ TILE_WATER  equ 3                   ; '~'  挡坦克，子弹穿过
 TILE_ICE    equ 4                   ; '-'  坦克滑行，子弹穿过
 ARENA_COUNT equ 5                   ; 内置对战图 ARENA1..5
 
+; ---- 细墙挡板 ----
+; 墙的视觉与碰撞都不再是整格：每个墙格渲染/判定为
+; 「中心 WALL_THICK x WALL_THICK 点 + 朝相邻墙格的连接条」，
+; 相邻墙格连成一条细挡板线（Tank Trouble 风格）。
+; 渲染（gfx.asm）与碰撞（game.asm WallRects/WallRectsHit）共用同一几何。
+WALL_THICK  equ 8                   ; 挡板厚度（像素），格内居中
+
 ; ---- 方向 ----
 DIR_UP      equ 0
 DIR_RIGHT   equ 1

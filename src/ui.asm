@@ -23,6 +23,7 @@ public netMode
 public UiInit
 public UiTick
 public UiRender
+public UiForcePlay2
 
 extern hWnd      :dword
 extern hdcBack   :dword
@@ -137,6 +138,18 @@ UiInit proc
     mov menuFont, eax
     ret
 UiInit endp
+
+; ------------------------------------------------------------
+; UiForcePlay2 -- 命令行 "tankwar play2"：跳过菜单直接 2P 对局
+; （自动化截图验收用，避免菜单按键注入受启动期环境停顿影响）
+; ------------------------------------------------------------
+UiForcePlay2 proc
+    mov numPlayers, 2
+    invoke GameInit
+    mov netMode, 0
+    mov gameState, ST_PLAY
+    ret
+UiForcePlay2 endp
 
 ; ------------------------------------------------------------
 ; UiTextZ -- 输出 0 结尾字符串

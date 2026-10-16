@@ -21,6 +21,10 @@ include game.inc
 
 GameUpdate PROTO                   ; 同模块前向声明（自测助手先用后定义）
 TileAtPx  PROTO :DWORD,:DWORD      ; 同模块前向声明
+IsWallCell   PROTO :DWORD,:DWORD   ; 同模块前向声明
+WallRects    PROTO :DWORD,:DWORD,:DWORD
+WallRectsHit PROTO :DWORD,:DWORD,:DWORD,:DWORD
+TankBlocked  PROTO :DWORD,:DWORD
 
 ; ---- 输入快照（本模块定义，input.asm / ui.asm 写入）----
 public keyTable
@@ -36,6 +40,7 @@ public mapIndex
 public SpawnBullet
 public GameInit
 public GameUpdate
+public WallRects                   ; gfx.asm 渲染细挡板共用
 public fireHappened
 public seqSelf
 public SelfTestRun
@@ -799,6 +804,339 @@ TileAtPx proc uses ebx px: dword, py: dword
 TileAtPx endp
 
 ; ------------------------------------------------------------
+; IsWallCell —— 格子是否为实体墙（钢/砖）
+; 越界返回 0（地图四周自带整圈边界墙，无需虚拟延伸）
+; ------------------------------------------------------------
+IsWallCell proc colX: dword, rowX: dword
+    mov eax, colX
+    .if eax < 0 || eax >= COLS
+        xor eax, eax
+        ret
+    .endif
+    mov eax, rowX
+    .if eax < 0 || eax >= ROWS
+        xor eax, eax
+        ret
+    .endif
+    mov eax, rowX
+    imul eax, eax, COLS
+    add eax, colX
+    movzx eax, mapData[eax]
+    .if eax == TILE_STEEL || eax == TILE_BRICK
+        mov eax, 1
+    .else
+        xor eax, eax
+    .endif
+    ret
+IsWallCell endp
+
+; ------------------------------------------------------------
+; WallRects —— 枚举墙格 (colX,rowX) 的挡板矩形（最多 5 个）：
+;   [0] 格中心 WALL_THICK x WALL_THICK 点
+;   [1..4] 朝相邻墙格(左/右/上/下)的连接条（相邻墙连成细线的关键）
+; 入参：pRects = 5 个 RECT 的缓冲；返回 eax = 实际个数 1..5
+; gfx.asm 的渲染与本模块碰撞共用此几何 -> 所见即所撞
+; ------------------------------------------------------------
+WallRects proc uses ebx ecx edx esi edi colX: dword, rowX: dword, pRects: dword
+    local x0:dword, y0:dword, wL:dword, wR:dword, wU:dword, wD:dword
+    ; 四邻是否墙（决定连接条）
+    mov eax, colX
+    dec eax
+    mov ecx, rowX
+    invoke IsWallCell, eax, ecx
+    mov wL, eax
+    mov eax, colX
+    inc eax
+    mov ecx, rowX
+    invoke IsWallCell, eax, ecx
+    mov wR, eax
+    mov eax, rowX
+    dec eax
+    mov ecx, colX
+    invoke IsWallCell, ecx, eax
+    mov wU, eax
+    mov eax, rowX
+    inc eax
+    mov ecx, colX
+    invoke IsWallCell, ecx, eax
+    mov wD, eax
+    ; 格子像素原点
+    mov eax, colX
+    imul eax, eax, CELL
+    mov x0, eax
+    mov eax, rowX
+    imul eax, eax, CELL
+    mov y0, eax
+    ; 孤立墙柱（四邻无墙）：保持整格，否则 8px 点之间留 24px 缝，
+    ; 子弹会从缝里穿墙。成线的墙才细化为挡板。
+    mov eax, wL
+    .if eax == 0
+        mov eax, wR
+        .if eax == 0
+            mov eax, wU
+            .if eax == 0
+                mov eax, wD
+                .if eax == 0
+                    mov edi, pRects
+                    mov eax, x0
+                    mov (RECT ptr [edi]).left, eax
+                    add eax, CELL
+                    mov (RECT ptr [edi]).right, eax
+                    mov eax, y0
+                    mov (RECT ptr [edi]).top, eax
+                    add eax, CELL
+                    mov (RECT ptr [edi]).bottom, eax
+                    mov eax, 1
+                    ret
+                .endif
+            .endif
+        .endif
+    .endif
+    mov edi, pRects
+    mov esi, 1                        ; 个数计数
+    ; [0] 中心点（格内居中，WALL_THICK 见方）
+    mov eax, x0
+    add eax, (CELL - WALL_THICK)/2
+    mov (RECT ptr [edi]).left, eax
+    add eax, WALL_THICK
+    mov (RECT ptr [edi]).right, eax
+    mov eax, y0
+    add eax, (CELL - WALL_THICK)/2
+    mov (RECT ptr [edi]).top, eax
+    add eax, WALL_THICK
+    mov (RECT ptr [edi]).bottom, eax
+    add edi, SIZEOF RECT
+    ; [1] 左连接条：x∈[x0, x0+CELL/2)
+    .if wL != 0
+        mov eax, x0
+        mov (RECT ptr [edi]).left, eax
+        add eax, CELL/2
+        mov (RECT ptr [edi]).right, eax
+        mov eax, y0
+        add eax, (CELL - WALL_THICK)/2
+        mov (RECT ptr [edi]).top, eax
+        add eax, WALL_THICK
+        mov (RECT ptr [edi]).bottom, eax
+        add edi, SIZEOF RECT
+        inc esi
+    .endif
+    ; [2] 右连接条：x∈[x0+CELL/2, x0+CELL)
+    .if wR != 0
+        mov eax, x0
+        add eax, CELL/2
+        mov (RECT ptr [edi]).left, eax
+        add eax, CELL/2
+        mov (RECT ptr [edi]).right, eax
+        mov eax, y0
+        add eax, (CELL - WALL_THICK)/2
+        mov (RECT ptr [edi]).top, eax
+        add eax, WALL_THICK
+        mov (RECT ptr [edi]).bottom, eax
+        add edi, SIZEOF RECT
+        inc esi
+    .endif
+    ; [3] 上连接条：y∈[y0, y0+CELL/2)
+    .if wU != 0
+        mov eax, x0
+        add eax, (CELL - WALL_THICK)/2
+        mov (RECT ptr [edi]).left, eax
+        add eax, WALL_THICK
+        mov (RECT ptr [edi]).right, eax
+        mov eax, y0
+        mov (RECT ptr [edi]).top, eax
+        add eax, CELL/2
+        mov (RECT ptr [edi]).bottom, eax
+        add edi, SIZEOF RECT
+        inc esi
+    .endif
+    ; [4] 下连接条：y∈[y0+CELL/2, y0+CELL)
+    .if wD != 0
+        mov eax, x0
+        add eax, (CELL - WALL_THICK)/2
+        mov (RECT ptr [edi]).left, eax
+        add eax, WALL_THICK
+        mov (RECT ptr [edi]).right, eax
+        mov eax, y0
+        add eax, CELL/2
+        mov (RECT ptr [edi]).top, eax
+        add eax, CELL/2
+        mov (RECT ptr [edi]).bottom, eax
+        add edi, SIZEOF RECT
+        inc esi
+    .endif
+    mov eax, esi
+    ret
+WallRects endp
+
+; ------------------------------------------------------------
+; WallRectsHit —— 矩形 (px0,py0,w0,h0) 是否与任一挡板矩形相交
+; 只需检查矩形所覆盖格子的 3x3 邻域（挡板矩形不会伸出本格）
+; 返回 eax = 1 命中 / 0 未命中
+; ------------------------------------------------------------
+WallRectsHit proc uses ebx esi edi px0: dword, py0: dword, w0: dword, h0: dword
+    local c0:dword, r0:dword, cc:dword, rr:dword, cnt:dword, i:dword
+    local rbuf[5]:RECT
+    ; 防御性 clamp 后取所在格
+    mov eax, px0
+    .if eax < 0
+        mov eax, 0
+    .endif
+    xor edx, edx
+    mov ebx, CELL
+    div ebx
+    mov c0, eax
+    mov eax, py0
+    .if eax < 0
+        mov eax, 0
+    .endif
+    xor edx, edx
+    div ebx                           ; ebx 仍是 CELL（中间无 invoke）
+    mov r0, eax
+    mov eax, r0
+    dec eax
+    mov rr, eax
+WRH_Row:
+    mov eax, r0
+    inc eax
+    .if rr > eax
+        xor eax, eax
+        ret
+    .endif
+    mov eax, c0
+    dec eax
+    mov cc, eax
+WRH_Col:
+    mov eax, c0
+    inc eax
+    .if cc > eax
+        inc rr
+        jmp WRH_Row
+    .endif
+    mov eax, cc
+    .if eax < 0 || eax >= COLS
+        jmp WRH_CNext
+    .endif
+    mov eax, rr
+    .if eax < 0 || eax >= ROWS
+        jmp WRH_CNext
+    .endif
+    mov eax, rr
+    imul eax, eax, COLS
+    add eax, cc
+    movzx eax, mapData[eax]
+    .if eax == TILE_STEEL || eax == TILE_BRICK
+        invoke WallRects, cc, rr, addr rbuf
+        mov cnt, eax
+        mov i, 0
+WRH_R:
+        mov eax, cnt
+        .if i >= eax
+            jmp WRH_CNext
+        .endif
+        mov eax, i
+        shl eax, 4                    ; SIZEOF RECT = 16
+        lea esi, rbuf
+        add esi, eax
+        ; AABB 相交：left < px0+w0 && right > px0 && top < py0+h0 && bottom > py0
+        mov eax, px0
+        add eax, w0
+        mov ecx, (RECT ptr [esi]).left
+        .if eax <= ecx
+            jmp WRH_RN
+        .endif
+        mov eax, (RECT ptr [esi]).right
+        .if eax <= px0
+            jmp WRH_RN
+        .endif
+        mov eax, py0
+        add eax, h0
+        mov ecx, (RECT ptr [esi]).top
+        .if eax <= ecx
+            jmp WRH_RN
+        .endif
+        mov eax, (RECT ptr [esi]).bottom
+        .if eax <= py0
+            jmp WRH_RN
+        .endif
+        mov eax, 1                    ; 命中
+        ret
+WRH_RN:
+        inc i
+        jmp WRH_R
+    .endif
+WRH_CNext:
+    inc cc
+    jmp WRH_Col
+WallRectsHit endp
+
+; ------------------------------------------------------------
+; TankBlocked —— 坦克 32x32 目标矩形是否被地形挡住
+; 挡板墙：矩形级 AABB（与视觉一致）；水域：整格阻挡
+; ------------------------------------------------------------
+TankBlocked proc uses ebx nx0: dword, ny0: dword
+    local c0:dword, c1:dword, r0:dword, r1:dword, cc:dword, rr:dword
+    invoke WallRectsHit, nx0, ny0, CELL, CELL
+    .if eax != 0
+        ret                           ; eax=1
+    .endif
+    ; 水域整格：坦克矩形覆盖到的所有格子
+    mov eax, nx0
+    xor edx, edx
+    mov ebx, CELL
+    div ebx
+    mov c0, eax
+    mov eax, nx0
+    add eax, CELL-1
+    xor edx, edx
+    div ebx
+    mov c1, eax
+    mov eax, ny0
+    xor edx, edx
+    div ebx
+    mov r0, eax
+    mov eax, ny0
+    add eax, CELL-1
+    xor edx, edx
+    div ebx
+    mov r1, eax
+    mov eax, r0
+    mov rr, eax
+TB_Row:
+    mov eax, r1
+    .if rr > eax
+        xor eax, eax
+        ret
+    .endif
+    mov eax, c0
+    mov cc, eax
+TB_Col:
+    mov eax, c1
+    .if cc > eax
+        inc rr
+        jmp TB_Row
+    .endif
+    mov eax, cc
+    .if eax < 0 || eax >= COLS
+        jmp TB_CNext
+    .endif
+    mov eax, rr
+    .if eax < 0 || eax >= ROWS
+        jmp TB_CNext
+    .endif
+    mov eax, rr
+    imul eax, eax, COLS
+    add eax, cc
+    movzx eax, mapData[eax]
+    .if eax == TILE_WATER
+        mov eax, 1
+        ret
+    .endif
+TB_CNext:
+    inc cc
+    jmp TB_Col
+TankBlocked endp
+
+; ------------------------------------------------------------
 ; SpawnBullet —— 按坦克朝向生成一颗子弹（§3：同屏每坦 <=10 发）
 ; 入参：ownerIdx = 玩家编号；弹池满 / 该坦弹满 / 坦克死亡则忽略
 ; ------------------------------------------------------------
@@ -922,41 +1260,17 @@ BounceOne proc pb: dword
 BounceOne endp
 
 ; ------------------------------------------------------------
-; BulletWallHit -- 8x8 bullet vs terrain, 4-corner sampling
+; BulletWallHit -- 8x8 bullet vs terrain, rect-level AABB
 ; in: pb = bullet ptr
 ; ret eax: 0=pass(water/ice/empty); 1=wall bounce (steel OR brick:
 ;          walls are INDESTRUCTIBLE per design change 2026-10-16)
-; corner order fixed: TL, TR, BR, BL (deterministic for netplay)
+; 挡板墙按矩形精确判定（与渲染几何共用），无采样空档
 ; ------------------------------------------------------------
-BulletWallHit proc uses ebx esi edi pb: dword
-    local bx0:dword, by0:dword
+BulletWallHit proc uses ebx pb: dword
     mov ebx, pb
     mov eax, (BULLET ptr [ebx]).x
-    mov bx0, eax
-    mov eax, (BULLET ptr [ebx]).y
-    mov by0, eax
-
-    xor esi, esi                     ; corner: 0=TL 1=TR 2=BR 3=BL
-CornerLoop:
-    mov eax, bx0
-    mov edx, by0
-    .if esi == 1 || esi == 2
-        add eax, BULLET_SIZE_PX - 1
-    .endif
-    .if esi == 2 || esi == 3
-        add edx, BULLET_SIZE_PX - 1
-    .endif
-    invoke TileAtPx, eax, edx
-    .if eax == TILE_STEEL || eax == TILE_BRICK
-        mov eax, 1
-        jmp WHDone
-    .endif                           ; water/ice/empty: pass through
-    inc esi
-    .if esi < 4
-        jmp CornerLoop
-    .endif
-    xor eax, eax
-WHDone:
+    mov ecx, (BULLET ptr [ebx]).y
+    invoke WallRectsHit, eax, ecx, BULLET_SIZE_PX, BULLET_SIZE_PX
     ret
 BulletWallHit endp
 
@@ -995,38 +1309,10 @@ MoveTank proc ownerIdx: dword, wantDir: dword
         add nx, TANK_SPEED
     .endif
 
-    ; 迎风面中心点外 1px 采样
-    mov solid, 0
-    mov eax, dirL
-    .if eax == DIR_UP
-        mov eax, nx
-        add eax, CELL/2
-        mov ecx, ny
-        dec ecx
-        invoke TileAtPx, eax, ecx
-    .elseif eax == DIR_DOWN
-        mov eax, nx
-        add eax, CELL/2
-        mov ecx, ny
-        add ecx, CELL
-        invoke TileAtPx, eax, ecx
-    .elseif eax == DIR_LEFT
-        mov eax, nx
-        dec eax
-        mov ecx, ny
-        add ecx, CELL/2
-        invoke TileAtPx, eax, ecx
-    .else
-        mov eax, nx
-        add eax, CELL
-        mov ecx, ny
-        add ecx, CELL/2
-        invoke TileAtPx, eax, ecx
-    .endif
-    ; 钢/砖/水 实心；冰/空地可通行
-    .if eax == TILE_STEEL || eax == TILE_BRICK || eax == TILE_WATER
-        mov solid, 1
-    .endif
+    ; 目标位置整体阻挡判定：
+    ; 挡板墙 = 矩形级 AABB（与渲染一致）；水 = 覆盖格任一整格阻挡
+    invoke TankBlocked, nx, ny
+    mov solid, eax
 
     mov ecx, ptank
     .if solid == 0

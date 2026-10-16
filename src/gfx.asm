@@ -21,6 +21,8 @@ extern mapData     :byte           ; game.asm 里的地图数组
 extern tanks       :TANK           ; game.asm 里的坦克状态
 extern bullets     :BULLET         ; game.asm 里的子弹池
 
+WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
+
 .data
     hdcWin      dd ?                ; 窗口 DC（临时缓存）
     hdcBack     dd ?                ; 后台内存 DC
@@ -221,6 +223,12 @@ GfxRender proc
     local rc:RECT
     local r2:RECT
     local txtLen:dword
+    local rbuf[5]:RECT               ; 墙格挡板矩形（与碰撞共用几何）
+    local pR:dword
+    local cntR:dword
+    local iR:dword
+    local tType:dword
+    local curBrush:dword
 
     ; 0) 背景与计分条
     mov rc.left, 0
@@ -262,9 +270,7 @@ ColLoop:
     mov rc.bottom, eax
 
     movzx eax, mapData[esi]
-    .if eax == TILE_STEEL
-        invoke FillRect, hdcBack, addr rc, brushSteel
-    .elseif eax == TILE_WATER
+    .if eax == TILE_WATER
         invoke FillRect, hdcBack, addr rc, brushWater
         ; 两道浅色波纹
         mov eax, rc.left
@@ -312,52 +318,67 @@ ColLoop:
         add eax, 2
         mov r2.bottom, eax
         invoke FillRect, hdcBack, addr r2, brushStreak
-    .elseif eax == TILE_BRICK
-        ; 砖基座 + 深色砖缝（两横 + 上半中缝 + 下半两条错缝）
-        invoke FillRect, hdcBack, addr rc, brushBrick
-        mov eax, rc.left
-        mov r2.left, eax
-        mov eax, rc.right
-        mov r2.right, eax
-        mov eax, rc.top
-        add eax, 10
-        mov r2.top, eax
-        add eax, 2
-        mov r2.bottom, eax
-        invoke FillRect, hdcBack, addr r2, brushMortar
-        mov eax, rc.top
-        add eax, 21
-        mov r2.top, eax
-        add eax, 2
-        mov r2.bottom, eax
-        invoke FillRect, hdcBack, addr r2, brushMortar
-        mov eax, rc.left
-        add eax, 15
-        mov r2.left, eax
-        add eax, 2
-        mov r2.right, eax
-        mov eax, rc.top
-        mov r2.top, eax
-        add eax, 10
-        mov r2.bottom, eax
-        invoke FillRect, hdcBack, addr r2, brushMortar
-        mov eax, rc.left
-        add eax, 7
-        mov r2.left, eax
-        add eax, 2
-        mov r2.right, eax
-        mov eax, rc.top
-        add eax, 23
-        mov r2.top, eax
-        mov eax, rc.bottom
-        mov r2.bottom, eax
-        invoke FillRect, hdcBack, addr r2, brushMortar
-        mov eax, rc.left
-        add eax, 23
-        mov r2.left, eax
-        add eax, 2
-        mov r2.right, eax
-        invoke FillRect, hdcBack, addr r2, brushMortar
+    .elseif eax == TILE_STEEL || eax == TILE_BRICK
+        ; 细挡板墙：中心点 + 朝邻墙的连接条（几何来自 game.asm
+        ; WallRects，与碰撞完全一致，所见即所撞）
+        mov tType, eax
+        invoke WallRects, ebx, edi, addr rbuf
+        mov cntR, eax
+        .if tType == TILE_STEEL
+            mov eax, brushSteel
+        .else
+            mov eax, brushBrick
+        .endif
+        mov curBrush, eax
+        lea eax, rbuf
+        mov pR, eax
+        mov iR, 0
+BR_Loop:
+        mov eax, cntR
+        .if iR >= eax
+            jmp BR_Done
+        .endif
+        invoke FillRect, hdcBack, pR, curBrush
+        ; 砖墙加砖缝：横条画竖缝、竖条/点画横缝（2px 居中）
+        .if tType == TILE_BRICK
+            mov edx, pR
+            mov eax, (RECT ptr [edx]).right
+            sub eax, (RECT ptr [edx]).left
+            mov ecx, (RECT ptr [edx]).bottom
+            sub ecx, (RECT ptr [edx]).top
+            .if eax > ecx
+                ; 横向条 -> 中缝竖 tick
+                mov eax, (RECT ptr [edx]).left
+                add eax, (RECT ptr [edx]).right
+                sar eax, 1
+                dec eax
+                mov r2.left, eax
+                add eax, 2
+                mov r2.right, eax
+                mov eax, (RECT ptr [edx]).top
+                mov r2.top, eax
+                mov eax, (RECT ptr [edx]).bottom
+                mov r2.bottom, eax
+            .else
+                ; 竖条/点 -> 中缝横 tick
+                mov eax, (RECT ptr [edx]).left
+                mov r2.left, eax
+                mov eax, (RECT ptr [edx]).right
+                mov r2.right, eax
+                mov eax, (RECT ptr [edx]).top
+                add eax, (RECT ptr [edx]).bottom
+                sar eax, 1
+                dec eax
+                mov r2.top, eax
+                add eax, 2
+                mov r2.bottom, eax
+            .endif
+            invoke FillRect, hdcBack, addr r2, brushMortar
+        .endif
+        add pR, SIZEOF RECT
+        inc iR
+        jmp BR_Loop
+BR_Done:
     .endif
     inc esi
     inc ebx

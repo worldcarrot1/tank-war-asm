@@ -188,19 +188,24 @@ def gen(seed, braid=0.15, n_plazas=8):
     return rows
 
 maps = []
+seen_maps = set()
 seed = 1
-while len(maps) < 5 and seed < 8000:
+N_MAPS = 20   # random map pool: a different validated map every game
+while len(maps) < N_MAPS and seed < 60000:
     rows = gen(seed)
     if rows:
-        maps.append((seed, rows))
-        print(f"ARENA{len(maps)} seed={seed} "
-              f"ice={sum(r.count('-') for r in rows)} "
-              f"dirt={sum(r.count('d') for r in rows)} "
-              f"water={sum(r.count('~') for r in rows)} "
-              f"wall={sum(r.count('#')+r.count('b') for r in rows)}")
+        key = tuple(rows)
+        if key not in seen_maps:          # no duplicates in the pool
+            seen_maps.add(key)
+            maps.append((seed, rows))
+            print(f"ARENA{len(maps)} seed={seed} "
+                  f"ice={sum(r.count('-') for r in rows)} "
+                  f"dirt={sum(r.count('d') for r in rows)} "
+                  f"water={sum(r.count('~') for r in rows)} "
+                  f"wall={sum(r.count('#')+r.count('b') for r in rows)}")
     seed += 1
 
-assert len(maps) == 5, f"only {len(maps)} maps generated"
+assert len(maps) == N_MAPS, f"only {len(maps)} maps generated"
 
 out = []
 for i,(seed,rows) in enumerate(maps, 1):

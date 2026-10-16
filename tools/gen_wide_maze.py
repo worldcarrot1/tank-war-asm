@@ -64,26 +64,44 @@ def gen(seed, braid=0.15, n_plazas=8):
                 grid[sr+ddr][sc+ddc] = '.'
         grid[sr][sc] = 'S'
 
-    # ---- plazas: 3 water + ice/dirt alternating, scattered ----
-    targets = ['w','i','d','i','d','w','i','d','w'][:n_plazas]
-    rng.shuffle(targets)
+    # ---- terrain patches: one per region of a 4x3 grid -> scattered ----
+    # each patch = open plaza rect with the terrain block inset by a
+    # 1-cell walkway ring (terrain never touches walls)
+    REG_C, REG_R = 4, 3
+    rw = (MW - 2) // REG_C          # ~7
+    rh = (MH - 3) // REG_R          # ~5 usable rows (rows 1..17)
+    regions = [(rj, ri) for rj in range(REG_R) for ri in range(REG_C)]
+    rng.shuffle(regions)
+    targets = ['w', 'i', 'd'] * 4   # 12 patches: 4 water, 4 ice, 4 dirt
     placed = []
-    for t in targets:
+    used_t = {'w': 0, 'i': 0, 'd': 0}
+    for (rj, ri) in regions:
+        if len(placed) >= 10:
+            break
+        t = targets[len(placed)]
         done = False
-        for attempt in range(300):
+        for attempt in range(120):
             if t == 'w':
                 w, h = 5, 5
             else:
-                w, h = rng.choice([(4,4),(5,4),(4,5),(5,5),(6,4),(4,6)])
-            r0 = rng.randrange(2, MH-1-h)
-            c0 = rng.randrange(2, MW-1-w)
-            cells = rect(r0,c0,w,h)
+                w, h = rng.choice([(4,4),(5,4),(4,5)])
+            reg_r0 = 1 + rj*rh
+            reg_c0 = 1 + ri*rw
+            reg_h = min(rh, 17 - reg_r0 + 1)
+            if reg_h < h or rw < w:
+                # region too small for this size: shrink to 4x4 if possible
+                if reg_h >= 4 and rw >= 4 and t != 'w':
+                    w, h = 4, 4
+                else:
+                    break
+            r0 = reg_r0 + rng.randrange(0, reg_h - h + 1)
+            c0 = reg_c0 + rng.randrange(0, rw - w + 1)
+            cells = rect(r0, c0, w, h)
             if any(grid[r][c] == 'S' for (r,c) in cells):
                 continue
             if any(abs(r-sr) <= 2 and abs(c-sc) <= 2
                    for (r,c) in cells for (sr,sc) in SPAWNS):
                 continue
-            # 1-cell gap to other plazas (expanded overlap test)
             exp = rect(r0-1, c0-1, w+2, h+2)
             bad = False
             for (pr0,pc0,pw,ph,pt) in placed:
@@ -96,8 +114,8 @@ def gen(seed, braid=0.15, n_plazas=8):
             placed.append((r0,c0,w,h,t))
             done = True
             break
-        # if a slot cannot be placed, skip it (map stays valid)
-    if len(placed) < n_plazas - 2:
+        used_t[t] = used_t[t] + (1 if done else 0)
+    if used_t['w'] < 2 or used_t['i'] < 2 or used_t['d'] < 2:
         return None
 
     # ---- terrain: inset by 1-cell walkway ring (never touches walls) ----
@@ -165,8 +183,8 @@ def gen(seed, braid=0.15, n_plazas=8):
     n_d = sum(r.count('d') for r in rows)
     n_w = sum(r.count('~') for r in rows)
     n_wall = sum(r.count('#') + r.count('b') for r in rows)
-    if n_i < 2 or n_d < 2 or n_w < 9: return None
-    if n_wall < 150: return None
+    if n_i < 4 or n_d < 4 or n_w < 9: return None
+    if n_wall < 160: return None
     return rows
 
 maps = []

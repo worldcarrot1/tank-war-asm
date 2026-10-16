@@ -12,8 +12,8 @@
 import random
 from collections import deque
 
-MW, MH = 31, 20
-SCW, SCH = 15, 9    # maze cells: cols 1..29, rows 1..17; rows 18+19 = bottom wall
+MW, MH = 31, 19    # odd height: single wall row at the bottom (row 18)
+SCW, SCH = 15, 9   # maze cells: cols 1..29, rows 1..17; row 18 = bottom wall
 SPAWNS = [(1,1),(1,29),(17,1),(17,29)]
 
 def rect(r0, c0, w, h):

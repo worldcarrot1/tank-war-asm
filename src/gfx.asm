@@ -102,13 +102,13 @@ GfxInit proc
     mov brushDirt, eax
     invoke CreateSolidBrush, 006E96B4h       ; 泥土纹理：深棕褐 RGB(180,150,110)
     mov brushDirtDark, eax
-    invoke CreateSolidBrush, 0055C85Fh
+    invoke CreateSolidBrush, 0028781Ah       ; P1 深绿 RGB(26,120,40)
     mov brushP1, eax
-    invoke CreateSolidBrush, 00E66E46h
+    invoke CreateSolidBrush, 00A0461Eh       ; P2 深蓝 RGB(30,70,160)
     mov brushP2, eax
-    invoke CreateSolidBrush, 002828A0h
+    invoke CreateSolidBrush, 003030C0h       ; P3 深红 RGB(192,48,48)
     mov brushP3, eax
-    invoke CreateSolidBrush, 000080F0h
+    invoke CreateSolidBrush, 00005AB4h       ; P4 深橙 RGB(180,90,0)
     mov brushP4, eax
     invoke CreateSolidBrush, 00191919h
     mov brushBullet, eax
@@ -188,75 +188,91 @@ FormatScore endp
 ; ------------------------------------------------------------
 DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
     local rc2:RECT
-    ; 炮管（先画，压在车体下层）
+    local oldPen:dword
+    ; 25px 参照图样式：粗黑描边 + 圆角车身 + 大圆炮塔 + 粗炮管
+    invoke SelectObject, hdc, penDark
+    mov oldPen, eax
+    ; 炮管（先画，压在车体下层；宽 6，伸出体外 8px = 出弹位）
     mov eax, px
     mov edx, py
     .if dirV == DIR_UP
         add eax, 9
         mov rc2.left, eax
-        add eax, 4
+        add eax, 6
         mov rc2.right, eax
         mov eax, py
         sub eax, 8
         mov rc2.top, eax
-        add eax, 21
+        add eax, 22
         mov rc2.bottom, eax
     .elseif dirV == DIR_DOWN
         add eax, 9
         mov rc2.left, eax
-        add eax, 4
+        add eax, 6
         mov rc2.right, eax
-        add edx, 8
+        add edx, 11
         mov rc2.top, edx
         mov eax, py
-        add eax, 29
+        add eax, 33
         mov rc2.bottom, eax
     .elseif dirV == DIR_LEFT
         sub eax, 8
         mov rc2.left, eax
         mov eax, px
-        add eax, 13
+        add eax, 16
         mov rc2.right, eax
         add edx, 9
         mov rc2.top, edx
-        add edx, 4
+        add edx, 6
         mov rc2.bottom, edx
     .else                                   ; DIR_RIGHT
-        add eax, 8
+        add eax, 9
         mov rc2.left, eax
         mov eax, px
-        add eax, 29
+        add eax, 33
         mov rc2.right, eax
         add edx, 9
         mov rc2.top, edx
-        add edx, 4
+        add edx, 6
         mov rc2.bottom, edx
     .endif
     invoke Rectangle, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
-    ; 车体（圆角方块）
+    ; 车体（圆角方块 25x25）
     mov eax, px
-    add eax, 1
     mov rc2.left, eax
-    add eax, 19
+    add eax, 25
     mov rc2.right, eax
     mov eax, py
-    add eax, 1
     mov rc2.top, eax
-    add eax, 19
+    add eax, 25
     mov rc2.bottom, eax
-    invoke RoundRect, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom, 7, 7
-    ; 炮塔（中心圆）
+    invoke RoundRect, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom, 9, 9
+    ; 炮塔（大圆 直径 17 居中）
     mov eax, px
-    add eax, 6
+    add eax, 4
     mov rc2.left, eax
-    add eax, 9
+    add eax, 17
     mov rc2.right, eax
     mov eax, py
-    add eax, 6
+    add eax, 4
     mov rc2.top, eax
-    add eax, 9
+    add eax, 17
     mov rc2.bottom, eax
     invoke Ellipse, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
+    ; 舱盖（中心小圆 直径 7，近黑）
+    invoke SelectObject, hdc, brushBullet
+    mov eax, px
+    add eax, 9
+    mov rc2.left, eax
+    add eax, 7
+    mov rc2.right, eax
+    mov eax, py
+    add eax, 9
+    mov rc2.top, eax
+    add eax, 7
+    mov rc2.bottom, eax
+    invoke Ellipse, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
+    invoke SelectObject, hdc, oldPen
     ret
 DrawTank endp
 

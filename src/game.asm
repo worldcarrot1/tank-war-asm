@@ -23,6 +23,7 @@ GameUpdate PROTO                   ; 同模块前向声明（自测助手先用�
 TileAtPx  PROTO :DWORD,:DWORD      ; 同模块前向声明
 IsWallCell   PROTO :DWORD,:DWORD   ; 同模块前向声明
 WallRects    PROTO :DWORD,:DWORD,:DWORD
+FindOpenNeighbor PROTO :DWORD
 WallRectsHit PROTO :DWORD,:DWORD,:DWORD,:DWORD
 TankBlocked  PROTO :DWORD,:DWORD
 SpawnBullet  PROTO :DWORD
@@ -71,6 +72,7 @@ public prevTank
     keyTable    dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] VK 码: 0上1下2左3右4开火5技能
     inputTable  dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] 每 tick 快照 0/1
     prevUse     dd MAX_PLAYERS dup (0)  ; 技能键上帧状态（边沿检测）
+    gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
     inputRestart dd 0                      ; R 重开（固定键）
     roundOver   dd 0                 ; 回合结束定格中
     roundTimer  dd 0                 ; 定格剩余 tick
@@ -546,19 +548,19 @@ arenaTable dd ARENA1,
     nbCol       dd ?
     nbIdx       dd ?
     nbDir       dd ?
-    stT1  db "T1_P1_X_ROW13(expect112)="
+    stT1  db "T1_P1_X_ROW13(expect212)="
     stT2  db "T2_ACTIVE_AFTER_FIRE="
     stT3  db "T3_ACTIVE_AFTER_620TICKS="
     stT4  db "T4_MAP_UNCHANGED(expect1)="
     stT5  db "T5_NOT_ON_WATER(expect1)="
-    stT6  db "T6_SLIDE_ENGAGED(expect6-10)="
-    stT7  db "T7_P2_X(expect120)="
+    stT6  db "T6_SLIDE_ENGAGED(expect6-15)="
+    stT7  db "T7_P2_X(expect070)="
     stT8  db "T8_BULLETS_AFTER_15FIRE(expect<=10)="
     stT9a db "T9_P2_DEAD_AT_TICK="
     stT9b db "T9_P2_ALIVE(expect0)="
     stT9c db "T9_P2_HP(expect0)="
     stT10 db "T10_P1_SCORE(expect1)="       ; 22 字符（勿多打 1 字节）
-    stT11 db "T11_DIRT_SLOW_DISP(expect2)="
+    stT11 db "T11_DIRT_SLOW_DISP(expect4)="
     stT12 db "T12_SELFKILL_HP(expect2)="    ; 25 字符
     stT13a db "T13_SPAWN(expect1..8)="     ; 22 字符
     stT13b db "T13_PICKUP(expect3)="       ; 20 字符
@@ -575,9 +577,9 @@ arenaTable dd ARENA1,
     stT18a db "T18_ARM_HP(expect3)="       ; 20 字符
     stT18b db "T18_BOOM_HP(expect2)="      ; 21 字符
     stT18c db "T18_MINE_GONE(expect1)="    ; 23 字符
-    stT19a db "T19_NORM_DX(expect2)="      ; 21 字符
-    stT19b db "T19_BOOST_DX(expect3)="     ; 22 字符
-    stT19c db "T19_MUD_BOOST(expect2)="    ; 23 字符
+    stT19a db "T19_NORM_DX(expect5)="      ; 21 字符
+    stT19b db "T19_BOOST_DX(expect7)="     ; 22 字符
+    stT19c db "T19_MUD_BOOST(expect4)="    ; 23 字符
     stT20a db "T20_SWAPPED(expect1)="      ; 21 字符
     stT20b db "T20_BUL_BACK(expect1)="     ; 22 字符
     stT20c db "T20_DIR(expect1)="          ; 17 字符
@@ -744,6 +746,44 @@ RT_Spawn:
     mov (TANK ptr [edi]).alive, 1
     .if esi >= 2
         mov (TANK ptr [edi]).dir, DIR_UP      ; 下半出生点朝上
+    .endif
+    ; 出生保护：出生位嵌墙/出界 -> 挪到最近开放格（防卡边界）
+    mov eax, ebx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov ecx, (TANK ptr [eax]).x
+    mov edx, (TANK ptr [eax]).y
+    invoke TankBlocked, ecx, edx
+    .if eax != 0
+        mov eax, ebx
+        imul eax, eax, SIZEOF TANK
+        add eax, offset tanks
+        mov ecx, (TANK ptr [eax]).y
+        add ecx, TANK_SIZE/2
+        shr ecx, 5
+        imul ecx, ecx, COLS
+        mov edx, (TANK ptr [eax]).x
+        add edx, TANK_SIZE/2
+        shr edx, 5
+        add ecx, edx
+        invoke FindOpenNeighbor, ecx
+        .if nbIdx != 99
+            mov eax, ebx
+            imul eax, eax, SIZEOF TANK
+            add eax, offset tanks
+            mov edi, eax
+            mov eax, nbIdx
+            xor edx, edx
+            mov ecx, COLS
+            div ecx
+            imul eax, eax, CELL          ; 行 -> y
+            add eax, (CELL-TANK_SIZE)/2
+            mov (TANK ptr [edi]).y, eax
+            mov eax, edx                 ; 列 -> x
+            imul eax, eax, CELL
+            add eax, (CELL-TANK_SIZE)/2
+            mov (TANK ptr [edi]).x, eax
+        .endif
     .endif
     inc ebx
     jmp RT_Spawn
@@ -1238,7 +1278,7 @@ T11dyPos:
 T11Done:
     ; T12: 反弹自伤 —— P1 贴右侧边界墙朝右发射，出膛弹立即撞墙反弹
     ;      回来命中自己 -> hp 3->2（Tank Trouble 核心规则：弹可自杀）
-    mov tanks[0*SIZEOF TANK].x, 951      ; 贴 col30 挡板（972..980）
+    mov tanks[0*SIZEOF TANK].x, 947      ; 贴 col30 挡板（972..980），25px 车身
     mov tanks[0*SIZEOF TANK].y, 416
     mov tanks[0*SIZEOF TANK].alive, 1
     mov tanks[0*SIZEOF TANK].hp, TANK_HP
@@ -1588,30 +1628,44 @@ T20Done:
     mov tanks[0*SIZEOF TANK].x, 96       ; col3
     mov tanks[0*SIZEOF TANK].y, 416      ; row13
     mov tanks[0*SIZEOF TANK].alive, 1
-    ; a) 无技能：右移 25 tick 被水挡在 x=138（col5 水 160..191）
+    ; a) 无技能：右移 25 tick 被水挡在水前（col5 水 160..191，坦克 25px
+    ;    最深 x=135；4/5 交替步进落点不固定，断言区间+中心格非水）
     mov inputTable[12], 1
     invoke AdvanceTicks, 25
     mov inputTable[12], 0
     mov eax, tanks[0*SIZEOF TANK].x
-    .if eax == 138
-        mov eax, 1
-    .else
+    .if eax > 140 || eax < 120
         mov eax, 0
+    .else
+        mov eax, tanks[0*SIZEOF TANK].x
+        add eax, TANK_SIZE/2
+        mov ecx, tanks[0*SIZEOF TANK].y
+        add ecx, TANK_SIZE/2
+        invoke TileAtPx, eax, ecx
+        .if eax == TILE_WATER
+            mov eax, 0                  ; 中心在水里 = 没被挡住
+        .else
+            mov eax, 1
+        .endif
     .endif
     mov logVal, eax
     invoke LogStr, offset stT21a, 25
     invoke LogNum, logVal                ; expect 1（被挡在水边）
-    ; b) 发动驭水 -> 穿过水域继续走（20 tick -> x=178）
+    ; b) 发动驭水 -> 穿进水域（15 tick 约 67px，中心格必须在水上）
     mov tanks[0*SIZEOF TANK].skill, SK_WATER
     mov prevUse[0], 0
     mov inputTable[20], 1
     invoke GameUpdate
     mov inputTable[20], 0
     mov inputTable[12], 1
-    invoke AdvanceTicks, 20
+    invoke AdvanceTicks, 15
     mov inputTable[12], 0
     mov eax, tanks[0*SIZEOF TANK].x
-    .if eax == 178
+    add eax, TANK_SIZE/2
+    mov ecx, tanks[0*SIZEOF TANK].y
+    add ecx, TANK_SIZE/2
+    invoke TileAtPx, eax, ecx
+    .if eax == TILE_WATER
         mov eax, 1
     .else
         mov eax, 0
@@ -1619,7 +1673,7 @@ T20Done:
     mov logVal, eax
     invoke LogStr, offset stT21b, 22
     invoke LogNum, logVal                ; expect 1（水上行走）
-    ; c) 到期保护：中心仍在水上（x=178 -> 中心 188 ∈ col5）-> 延寿不掉效
+    ; c) 到期保护：中心仍在水上 -> 延寿不掉效
     mov tanks[0*SIZEOF TANK].effT, 1
     invoke AdvanceTicks, 1
     mov eax, tanks[0*SIZEOF TANK].effOn
@@ -3052,15 +3106,19 @@ MoveTank proc ownerIdx: dword, wantDir: dword
     .if eax == TILE_DIRT
         mov eax, DIRT_SPEED
     .else
+        ; 4/5 交替（平均 4.5 = 子弹 6 的 75%）：奇数 tick 用 HI
         mov eax, TANK_SPEED
+        mov edx, gTick
+        test edx, 1
+        jz MT_SpdEven
+        mov eax, TANK_SPEED_HI
+MT_SpdEven:
     .endif
-    ; 燃油加速：50%（向上取整：2->3, 1->2），与泥地减速叠加
+    ; 燃油加速：+2（4->6, 5->7 平均 6.5 ≈ +44%），与泥地减速叠加
     mov ecx, ptank
     mov edx, (TANK ptr [ecx]).effOn
     .if edx & EFF_NITRO
-        lea eax, [eax+eax*2]         ; spd*3
-        inc eax
-        shr eax, 1                   ; (spd*3+1)/2
+        add eax, 2
     .endif
     mov spd, eax
 
@@ -3181,6 +3239,7 @@ MoveTank endp
 ; ------------------------------------------------------------
 GameUpdate proc uses ebx esi edi
     local dirWanted:dword
+    inc gTick
 
     ; ---- 任一坦克死亡时按 R 重新开始 ----
     xor ecx, ecx                       ; 存活数

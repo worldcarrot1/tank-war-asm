@@ -55,9 +55,10 @@ DIR_LEFT    equ 3
 ; ---- 坦克 ----
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
 KEY_PER     equ 6                   ; 每玩家键位数：0上1下2左3右4开火5技能
-TANK_SIZE   equ 21                  ; 坦克碰撞/绘制边长（32 的 2/3）
-TANK_SPEED  equ 2                   ; 每 tick 移动像素
-DIRT_SPEED  equ 1                   ; 泥土上每 tick 移动像素（减速）
+TANK_SIZE   equ 25                  ; 坦克碰撞/绘制边长（21 的 1.2 倍）
+TANK_SPEED  equ 4                   ; 每 tick 基础移动像素（偶 tick）
+TANK_SPEED_HI equ 5                 ; 奇 tick（4/5 交替 = 平均 4.5，比子弹慢 25%）
+DIRT_SPEED  equ 2                   ; 泥土上每 tick 移动像素（减速）
 TANK_HP     equ 3
 FIRE_CD     equ 20                  ; 开火冷却 tick（§3）
 PLAYER_SELF equ 0
@@ -95,8 +96,8 @@ EFF_GHOST       equ 4
 EFF_WATER       equ 8
 
 ; ---- 冰面滑行 ----
-ICE_SLIDE_MIN equ 14                ; 滑行 tick 下限（14*2=28px 起步，可感）
-ICE_SLIDE_RNG equ 10                ; 14 + rand%10 -> 14..23 tick（28..46px）
+ICE_SLIDE_MIN equ 6                 ; 滑行 tick 下限（6*4.5=27px 起步，可感）
+ICE_SLIDE_RNG equ 10                ; 6 + rand%10 -> 6..15 tick（27..67px）
 
 ; ---- 子弹（§3）----
 MAX_BULLETS     equ 56              ; 全场弹池

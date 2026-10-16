@@ -31,8 +31,13 @@ extern prevN       :dword          ; 激光预览路径（瞄准中虚线）
 extern prevX       :dword
 extern prevY       :dword
 extern prevTank    :dword
+extern matchOver   :dword          ; 比赛结束标志（game.asm）
+extern langFlag    :dword          ; 0=英 1=中（ui.asm）
+extern menuFont    :dword          ; 菜单大字体（ui.asm）
+extern fontSmall   :dword          ; 小字体（ui.asm）
 
 WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
+UiTextZ   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD   ; ui.asm：ASCII 文本
 
 .data
     hdcWin      dd ?                ; 窗口 DC（临时缓存）
@@ -62,6 +67,10 @@ WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
     penPreview  dd ?                ; 激光预览：灰虚线 1px
     skillNum    db "0", 0           ; 拾取物上的技能序号
     scoreBuf    db 48 dup (0)       ; 比分文本 "P1 nn P2 nn ..."
+    szWinsEn    db "WINS THE MATCH!", 0
+    szBackEn    db "PRESS ENTER FOR MENU", 0
+    CN_WIN      dw 83B7h,5F97h,6BD4h,8D5Bh,80DCh,5229h,0FF01h, 0 ; 获得比赛胜利！
+    CN_BACKMENU dw 6309h,56DEh,8F66h,8FD4h,56DEh,4E3Bh,83DCh,5355h, 0 ; 按回车返回主菜单
 
 .code
 
@@ -768,7 +777,50 @@ GP_Seg:
         .endif
     .endif
 
-    ; 4) 恢复画笔，整幅上屏
+    ; 4) 比赛结束覆盖层：胜者大字 + 提示
+    mov eax, matchOver
+    .if eax != 0
+        ; 最高分槽位
+        xor ebx, ebx
+        xor esi, esi                     ; bestSlot
+        mov edi, -1                      ; bestScore（esi/edi 临时）
+GM_Best:
+        mov eax, ebx
+        imul eax, eax, SIZEOF TANK
+        add eax, offset tanks
+        mov eax, (TANK ptr [eax]).score
+        .if eax > edi
+            mov edi, eax
+            mov esi, ebx
+        .endif
+        inc ebx
+        .if ebx < MAX_PLAYERS
+            jmp GM_Best
+        .endif
+        invoke FillRect, hdcBack, addr rc, brushHud
+        invoke SelectObject, hdcBack, menuFont
+        ; "P? WINS THE MATCH!" / "P? 获胜！"
+        lea edi, scoreBuf
+        mov byte ptr [edi], 'P'
+        mov eax, esi
+        add al, '1'
+        mov [edi+1], al
+        mov word ptr [edi+2], 0
+        invoke UiTextZ, hdcBack, 380, 270, offset scoreBuf, 0000E0E0h
+        .if langFlag != 0
+            invoke TextOutW, hdcBack, 385, 320, offset CN_WIN, 7
+        .else
+            invoke TextOutA, hdcBack, 420, 325, offset szWinsEn, 15
+        .endif
+        invoke SelectObject, hdcBack, fontSmall
+        .if langFlag != 0
+            invoke TextOutW, hdcBack, 420, 400, offset CN_BACKMENU, 8
+        .else
+            invoke TextOutA, hdcBack, 405, 402, offset szBackEn, 20
+        .endif
+    .endif
+
+    ; 5) 恢复画笔，整幅上屏
     invoke SelectObject, hdcBack, penOld
     invoke GetDC, hWnd
     mov hdcWin, eax

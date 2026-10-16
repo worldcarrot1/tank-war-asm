@@ -18,7 +18,9 @@ COLS        equ MAP_W / CELL        ; 31 列
 ROWS        equ MAP_H / CELL        ; 20 行
 
 ; ---- 回合节奏 ----
-ROUND_PAUSE_TICKS equ 90            ; 得分后定格 1.5 秒再开新一轮
+ROUND_JUDGE_TICKS equ 300          ; 剩最后 1 辆后定格 5s 再判分
+ROUNDS_MIN   equ 11                ; 比赛局数下限（奇数）
+ROUNDS_MAX   equ 51                ; 比赛局数上限（奇数）
 
 ; ---- 界面状态（ui.asm）----
 ST_MENU     equ 0                   ; 主菜单

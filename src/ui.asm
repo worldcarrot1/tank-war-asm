@@ -23,15 +23,21 @@ include game.inc
 public gameState
 public numPlayers
 public netMode
+public menuFont
+public fontSmall
+public langFlag
 public UiInit
 public UiTick
 public UiRender
+public UiTextZ
 public UiForcePlay2
 public UiForceNumSel
 
 extern hWnd      :dword
 extern hdcBack   :dword
 extern keyTable  :dword
+extern maxRounds :dword
+extern matchOver :dword
 GameInit  PROTO
 InitKeyDefaults PROTO
 GfxRender PROTO
@@ -67,6 +73,7 @@ RST_H      equ 30
     netMode     dd 0                   ; 1 = 联机对局（主循环调用 NetFlush）
     menuSel     dd 0
     numSel      dd 2
+    roundsSel   dd 11                  ; 人数页可调的比赛局数（11..51 奇数）
     setSel      dd 0
     rebindWait  dd 0
     prevUp      dd 0
@@ -129,6 +136,7 @@ RST_H      equ 30
     szNumT      db "SELECT PLAYERS", 0
     szNumL      db "<<", 0
     szNumR      db ">>", 0
+    szRounds    db "ROUNDS", 0
     szHint      db "ENTER: CONFIRM   ESC: BACK", 0
     szReset     db "RESET ALL KEYS", 0
     szReb2      db "PRESS ANY KEY ... (ESC = CANCEL)", 0
@@ -154,6 +162,7 @@ RST_H      equ 30
     CN_EXIT dw 9000h,51fah, 0
     CN_LANG dw 8bedh,8a00h,0ff1ah,4e2dh,6587h, 0
     CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
+    CN_ROUNDS dw 5c40h,6570h, 0                                          ; 局数
     CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
     CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
     CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0ff08h,0045h,0073h,0063h,0020h,003dh,0020h,53d6h,6d88h,0ff09h, 0 ; 请按任意键（Esc = 取消）
@@ -495,8 +504,20 @@ UiTick proc uses ebx esi edi
     local enE:dword, esE:dword, scanVk:dword
     local lbE:dword
 
-    ; ---------- 对局中：仅处理 Esc ----------
+    ; ---------- 对局中：Esc 暂停 / 比赛结束回菜单 ----------
     .if gameState == ST_PLAY
+        ; 打满局数：Enter/Esc 回主菜单
+        mov eax, matchOver
+        .if eax != 0
+            invoke KeyEdge, VK_RETURN, addr prevEnter
+            mov ecx, eax
+            invoke KeyEdge, VK_ESCAPE, addr prevEsc
+            .if ecx != 0 || eax != 0
+                mov matchOver, 0
+                mov gameState, ST_MENU
+            .endif
+            jmp UT_Done
+        .endif
         invoke KeyEdge, VK_ESCAPE, addr prevEsc
         .if eax != 0
             mov gameState, ST_MENU
@@ -650,6 +671,8 @@ UT_Scan2Done:
             .if enE != 0
                 mov eax, numSel
                 mov numPlayers, eax
+                mov eax, roundsSel
+                mov maxRounds, eax
                 invoke GameInit
                 mov netMode, 0
                 mov gameState, ST_PLAY
@@ -657,7 +680,7 @@ UT_Scan2Done:
             .if esE != 0
                 mov gameState, ST_MENU
             .endif
-            ; ---- 鼠标：键位容器改键 / 重置 / << >> 调人数 / 数字区开始 ----
+            ; ---- 鼠标：键位容器改键 / 重置 / << >> 调人数与局数 / 数字区开始 ----
             .if lbE != 0
                 invoke NumSelHitTest
                 .if eax >= 0
@@ -665,23 +688,37 @@ UT_Scan2Done:
                 .elseif eax == -2
                     invoke InitKeyDefaults   ; 重置所有更改按键
                 .else
-                    ; << 区域 400..460, 270..322
+                    ; PLAYERS << 400..460, y190..242
                     mov eax, mouseX
-                    .if eax >= 400 && eax < 460 && mouseY >= 270 && mouseY < 322
+                    .if eax >= 400 && eax < 460 && mouseY >= 190 && mouseY < 242
                         dec numSel
                         .if numSel < 2
                             mov numSel, 4
                         .endif
-                    ; >> 区域 535..600, 270..322
-                    .elseif eax >= 535 && eax < 600 && mouseY >= 270 && mouseY < 322
+                    ; PLAYERS >> 535..600, y190..242
+                    .elseif eax >= 535 && eax < 600 && mouseY >= 190 && mouseY < 242
                         inc numSel
                         .if numSel > 4
                             mov numSel, 2
                         .endif
-                    ; 数字区 465..530, 260..322 -> 确认开始
-                    .elseif eax >= 465 && eax < 530 && mouseY >= 260 && mouseY < 322
+                    ; ROUNDS << 400..460, y252..304
+                    .elseif eax >= 400 && eax < 460 && mouseY >= 252 && mouseY < 304
+                        sub roundsSel, 2
+                        .if roundsSel < ROUNDS_MIN
+                            mov roundsSel, ROUNDS_MAX
+                        .endif
+                    ; ROUNDS >> 535..600, y252..304
+                    .elseif eax >= 535 && eax < 600 && mouseY >= 252 && mouseY < 304
+                        add roundsSel, 2
+                        .if roundsSel > ROUNDS_MAX
+                            mov roundsSel, ROUNDS_MIN
+                        .endif
+                    ; 人数数字区 465..530, y180..242 -> 确认开始
+                    .elseif eax >= 465 && eax < 530 && mouseY >= 180 && mouseY < 242
                         mov eax, numSel
                         mov numPlayers, eax
+                        mov eax, roundsSel
+                        mov maxRounds, eax
                         invoke GameInit
                         mov netMode, 0
                         mov gameState, ST_PLAY
@@ -843,18 +880,34 @@ UM_Items:
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
         invoke UiTextL, hdcBack, 420, 150, offset szNumT, offset CN_NUMT, colDark
-        invoke UiTextZ, hdcBack, 410, 280, offset szNumL, colDark
-        invoke UiTextZ, hdcBack, 545, 280, offset szNumR, colDark
+        ; PLAYERS 行（y 190..242）
+        invoke UiTextZ, hdcBack, 410, 200, offset szNumL, colDark
+        invoke UiTextZ, hdcBack, 545, 200, offset szNumR, colDark
         lea edi, uiBuf
         mov eax, numSel
         add eax, '0'
         mov [edi], al
         mov byte ptr [edi+1], 0
-        invoke UiTextZ, hdcBack, 485, 272, offset uiBuf, 000000D0h
+        invoke UiTextZ, hdcBack, 485, 192, offset uiBuf, 000000D0h
+        ; ROUNDS 行（y 252..304）
+        invoke UiTextL, hdcBack, 322, 262, offset szRounds, offset CN_ROUNDS, colDark
+        invoke UiTextZ, hdcBack, 410, 262, offset szNumL, colDark
+        invoke UiTextZ, hdcBack, 545, 262, offset szNumR, colDark
+        lea edi, uiBuf
+        mov eax, roundsSel
+        xor edx, edx
+        mov ecx, 10
+        div ecx                          ; eax=十位 edx=个位
+        add eax, '0'
+        add edx, '0'
+        mov [edi], al
+        mov [edi+1], dl
+        mov byte ptr [edi+2], 0
+        invoke UiTextZ, hdcBack, 480, 254, offset uiBuf, 000000D0h
 
         ; ---- 键位容器（小字体）：按当前选择的人数显示 2..4 个 ----
         invoke SelectObject, hdcBack, fontSmall
-        invoke UiTextL, hdcBack, 30, 298, offset szKeysLbl, offset CN_KEYS, colGray
+        invoke UiTextL, hdcBack, 30, 306, offset szKeysLbl, offset CN_KEYS, colGray
         xor ebx, ebx
 NS_Box:
         .if ebx >= numSel

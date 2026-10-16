@@ -51,6 +51,9 @@ public fireHappened
 public seqSelf
 public SelfTestRun
 public InitKeyDefaults
+public matchOver
+public maxRounds
+public roundsPlayed
 public pickupType
 public pickupX
 public pickupY
@@ -75,6 +78,9 @@ public prevTank
     inputTable  dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] 每 tick 快照 0/1
     prevUse     dd MAX_PLAYERS dup (0)  ; 技能键上帧状态（边沿检测）
     gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
+    maxRounds   dd 11                ; 比赛局数（11..51，人数页可调）
+    roundsPlayed dd 0                 ; 已完成局数
+    matchOver   dd 0                  ; 1=打满局数，显示胜者等待回菜单
     inputRestart dd 0                      ; R 重开（固定键）
     roundOver   dd 0                 ; 回合结束定格中
     roundTimer  dd 0                 ; 定格剩余 tick
@@ -1232,7 +1238,7 @@ T9Done:
     invoke LogNum, tanks[1*SIZEOF TANK].alive      ; expect 0
     invoke LogStr, offset stT9c, 18
     invoke LogNum, tanks[1*SIZEOF TANK].hp         ; expect 0
-    invoke AdvanceTicks, 100                       ; 等定格结束（90 tick）开新一轮
+    invoke AdvanceTicks, 350                       ; 等 5s 判分定格结束（300 tick）开新一轮
     invoke LogStr, offset stT10, 22
     invoke LogNum, tanks[0*SIZEOF TANK].score      ; expect 1
 
@@ -1856,6 +1862,8 @@ GameInit proc uses ebx esi edi
     mov tanks[1*SIZEOF TANK].score, 0
     mov tanks[2*SIZEOF TANK].score, 0
     mov tanks[3*SIZEOF TANK].score, 0
+    mov roundsPlayed, 0
+    mov matchOver, 0
     ret
 GameInit endp
 
@@ -3436,6 +3444,11 @@ MoveTank endp
 GameUpdate proc uses ebx esi edi
     local dirWanted:dword
     inc gTick
+    ; 比赛已结束：冻结（等待回菜单）
+    mov eax, matchOver
+    .if eax != 0
+        jmp GU_Done
+    .endif
 
     ; ---- 任一坦克死亡时按 R 重新开始 ----
     xor ecx, ecx                       ; 存活数
@@ -3937,12 +3950,44 @@ GU_MineNext:
     jmp GU_Mine
 GU_MineDone:
 
-    ; ---- 回合计分：只剩 1 辆存活 且 已毁坦克的子弹全部消失 ----
-    ; 满足 -> 存活者 +1 分并定格 ROUND_PAUSE_TICKS；全灭 -> 不加分只定格
+    ; ---- 回合流程：剩 <=1 辆存活 -> 定格 5s（期间继续模拟：
+    ;      幸存者可能被亡者弹/雷击杀成同归）-> 到时恰剩 1 辆才计一分；
+    ;      打满局数 -> 比赛结束（等待回菜单）----
     .if roundOver != 0
         dec roundTimer
         .if roundTimer == 0
-            call ResetTanks             ; 开新一轮（不清比分）
+            ; 5s 到：重新统计存活并判分
+            xor eax, eax
+            xor esi, esi
+            xor ebx, ebx
+SCJ_Alive:
+            .if ebx >= MAX_PLAYERS
+                jmp SCJ_Done
+            .endif
+            mov edx, ebx
+            imul edx, edx, SIZEOF TANK
+            add edx, offset tanks
+            mov ecx, (TANK ptr [edx]).alive
+            .if ecx != 0
+                inc eax
+                mov esi, ebx
+            .endif
+            inc ebx
+            jmp SCJ_Alive
+SCJ_Done:
+            .if eax == 1
+                mov edx, esi
+                imul edx, edx, SIZEOF TANK
+                add edx, offset tanks
+                inc (TANK ptr [edx]).score   ; 最后存活的坦克才计一分
+            .endif
+            inc roundsPlayed
+            mov eax, roundsPlayed
+            .if eax >= maxRounds
+                mov matchOver, 1             ; 打满局数：比赛结束
+                jmp GU_Done
+            .endif
+            call ResetTanks                  ; 开新一轮（不清比分）
         .endif
         jmp GU_Done
     .endif
@@ -3968,38 +4013,10 @@ SC_AliveDone:
     .if eax > 1
         jmp GU_Done                     ; 多车存活：不判分
     .endif
-    ; 已毁坦克的子弹是否全部消失（弹序固定）
-    xor ebx, ebx
-SC_Bul:
-    .if ebx >= MAX_BULLETS
-        jmp SC_BulDone
-    .endif
-    mov edx, ebx
-    shl edx, 5                          ; * SIZEOF BULLET(32)
-    add edx, offset bullets
-    mov ecx, (BULLET ptr [edx]).active
-    .if ecx != 0
-        mov ecx, (BULLET ptr [edx]).owner
-        imul ecx, ecx, SIZEOF TANK
-        add ecx, offset tanks
-        mov edx, (TANK ptr [ecx]).alive
-        .if edx == 0
-            jmp GU_Done                 ; 亡者的弹还在飞：不判分
-        .endif
-    .endif
-    inc ebx
-    jmp SC_Bul
-SC_BulDone:
-    ; 条件成立：幸存者加分（同归于尽不加）
-    .if eax == 1 && roundScored == 0
-        mov edx, esi
-        imul edx, edx, SIZEOF TANK
-        add edx, offset tanks
-        inc (TANK ptr [edx]).score
-    .endif
-    mov roundScored, 1
+    ; 剩 0 或 1 辆：进入 5s 判分定格（期间模拟照常）
+    mov roundScored, 0
     mov roundOver, 1
-    mov roundTimer, ROUND_PAUSE_TICKS
+    mov roundTimer, ROUND_JUDGE_TICKS
 GU_Done:
     ret
 GameUpdate endp

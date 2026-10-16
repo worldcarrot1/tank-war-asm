@@ -64,8 +64,8 @@ PLAYER_PEER equ 1
 PLAYER_P2   equ 1                   ; 本地第二坦克（对练用）
 
 ; ---- 冰面滑行 ----
-ICE_SLIDE_MIN equ 6                 ; 滑行 tick 下限
-ICE_SLIDE_RNG equ 5                 ; 6 + rand%5 -> 6..10
+ICE_SLIDE_MIN equ 14                ; 滑行 tick 下限（14*2=28px 起步，可感）
+ICE_SLIDE_RNG equ 10                ; 14 + rand%10 -> 14..23 tick（28..46px）
 
 ; ---- 子弹（§3）----
 MAX_BULLETS     equ 56              ; 全场弹池

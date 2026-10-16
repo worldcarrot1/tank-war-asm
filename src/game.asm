@@ -527,6 +527,7 @@ arenaTable dd ARENA1,
     stT9c db "T9_P2_HP(expect0)="
     stT10 db "T10_P1_SCORE(expect1)="       ; 22 字符（勿多打 1 字节）
     stT11 db "T11_DIRT_SLOW_DISP(expect2)="
+    stT12 db "T12_SELFKILL_HP(expect2)="    ; 25 字符
 
 .code
 
@@ -1141,6 +1142,31 @@ T11dyPos:
     invoke LogStr, offset stT11, 28
     invoke LogNum, logVal                ; expect 2
 T11Done:
+    ; T12: 反弹自伤 —— P1 贴右侧边界墙朝右发射，出膛弹立即撞墙反弹
+    ;      回来命中自己 -> hp 3->2（Tank Trouble 核心规则：弹可自杀）
+    mov tanks[0*SIZEOF TANK].x, 951      ; 贴 col30 挡板（972..980）
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].fireCd, 0
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov edi, offset bullets
+    xor ecx, ecx
+ST12ClrB:
+    mov (BULLET ptr [edi]).active, 0
+    add edi, SIZEOF BULLET
+    inc ecx
+    .if ecx < MAX_BULLETS
+        jmp ST12ClrB
+    .endif
+    mov inputTable[16], 1
+    invoke GameUpdate                    ; 发射
+    mov inputTable[16], 0
+    invoke AdvanceTicks, 30              ; 出膛->撞墙->反弹->自中
+    mov eax, tanks[0*SIZEOF TANK].hp
+    mov logVal, eax                      ; 中转（invoke 会破坏 eax）
+    invoke LogStr, offset stT12, 25
+    invoke LogNum, logVal                ; expect 2
     call CloseLog
     ret
 SelfTestRun endp
@@ -1199,15 +1225,19 @@ TileAtPx endp
 ; 越界返回 0（地图四周自带整圈边界墙，无需虚拟延伸）
 ; ------------------------------------------------------------
 IsWallCell proc colX: dword, rowX: dword
+    ; 注意：MASM 的 .if eax < 0 会编译成无符号 jb 恒为假（已两次踩坑），
+    ; 负数判断一律手写 test + js。
     mov eax, colX
-    .if eax < 0 || eax >= COLS
-        xor eax, eax
-        ret
+    test eax, eax
+    js ISW_No
+    .if eax >= COLS
+        jmp ISW_No
     .endif
     mov eax, rowX
-    .if eax < 0 || eax >= ROWS
-        xor eax, eax
-        ret
+    test eax, eax
+    js ISW_No
+    .if eax >= ROWS
+        jmp ISW_No
     .endif
     mov eax, rowX
     imul eax, eax, COLS
@@ -1218,6 +1248,9 @@ IsWallCell proc colX: dword, rowX: dword
     .else
         xor eax, eax
     .endif
+    ret
+ISW_No:
+    xor eax, eax
     ret
 IsWallCell endp
 
@@ -1344,19 +1377,21 @@ WallRects endp
 WallRectsHit proc uses ebx esi edi px0: dword, py0: dword, w0: dword, h0: dword
     local c0:dword, r0:dword, cc:dword, rr:dword, cnt:dword, i:dword
     local rbuf[5]:RECT
-    ; 防御性 clamp 后取所在格
+    ; 防御性 clamp 后取所在格（.if eax < 0 恒假，手写 test/jns）
     mov eax, px0
-    .if eax < 0
-        mov eax, 0
-    .endif
+    test eax, eax
+    jns WRH_PxOk
+    xor eax, eax
+WRH_PxOk:
     xor edx, edx
     mov ebx, CELL
     div ebx
     mov c0, eax
     mov eax, py0
-    .if eax < 0
-        mov eax, 0
-    .endif
+    test eax, eax
+    jns WRH_PyOk
+    xor eax, eax
+WRH_PyOk:
     xor edx, edx
     div ebx                           ; ebx 仍是 CELL（中间无 invoke）
     mov r0, eax
@@ -1381,11 +1416,15 @@ WRH_Col:
         jmp WRH_Row
     .endif
     mov eax, cc
-    .if eax < 0 || eax >= COLS
+    test eax, eax
+    js WRH_CNext
+    .if eax >= COLS
         jmp WRH_CNext
     .endif
     mov eax, rr
-    .if eax < 0 || eax >= ROWS
+    test eax, eax
+    js WRH_CNext
+    .if eax >= ROWS
         jmp WRH_CNext
     .endif
     mov eax, rr
@@ -1484,11 +1523,15 @@ TB_Col:
         jmp TB_Row
     .endif
     mov eax, cc
-    .if eax < 0 || eax >= COLS
+    test eax, eax
+    js TB_CNext
+    .if eax >= COLS
         jmp TB_CNext
     .endif
     mov eax, rr
-    .if eax < 0 || eax >= ROWS
+    test eax, eax
+    js TB_CNext
+    .if eax >= ROWS
         jmp TB_CNext
     .endif
     mov eax, rr
@@ -1857,25 +1900,54 @@ BulletTick:
         mov eax, (BULLET ptr [edi]).vx
         .if eax != 0
             add (BULLET ptr [edi]).x, eax
-            ; 屏幕边界反弹
+            ; 屏幕边界反弹（.if eax < 0 恒假，手写 test/jns）
             mov eax, (BULLET ptr [edi]).x
-            .if eax < 0
-                mov (BULLET ptr [edi]).x, 0
-                neg (BULLET ptr [edi]).vx
-                invoke BounceOne, edi
-            .elseif eax > MAP_W - BULLET_SIZE_PX
+            test eax, eax
+            jns BT_XPos
+            ; x < 0：左边界反弹
+            mov (BULLET ptr [edi]).x, 0
+            neg (BULLET ptr [edi]).vx
+            invoke BounceOne, edi
+            jmp BT_XEnd
+BT_XPos:
+            .if eax > MAP_W - BULLET_SIZE_PX
                 mov (BULLET ptr [edi]).x, MAP_W - BULLET_SIZE_PX
                 neg (BULLET ptr [edi]).vx
                 invoke BounceOne, edi
             .else
                 invoke BulletWallHit, edi
                 .if eax != 0            ; 1=钢 2=砖(已清子块)
+                    ; 命中：逐像素回退直到弹体完全出墙再反弹。
+                    ; （旧逻辑只回退一步：出膛/斜射嵌墙时回退后仍在墙里，
+                    ;  弹在挡板内抖动耗尽反弹次数消失，或沿墙内滑出另一侧
+                    ;  = "子弹穿墙" + "贴墙射弹无法反弹自杀" 的根因）
                     mov eax, (BULLET ptr [edi]).vx
-                    sub (BULLET ptr [edi]).x, eax   ; 回退
+                    .if eax > 0
+BT_XBackR:
+                        dec (BULLET ptr [edi]).x
+                        invoke BulletWallHit, edi
+                        .if eax != 0
+                            mov eax, (BULLET ptr [edi]).x
+                            .if eax > 0
+                                jmp BT_XBackR
+                            .endif
+                        .endif
+                    .else
+BT_XBackL:
+                        inc (BULLET ptr [edi]).x
+                        invoke BulletWallHit, edi
+                        .if eax != 0
+                            mov eax, (BULLET ptr [edi]).x
+                            .if eax < MAP_W - BULLET_SIZE_PX
+                                jmp BT_XBackL
+                            .endif
+                        .endif
+                    .endif
                     neg (BULLET ptr [edi]).vx       ; 反弹
                     invoke BounceOne, edi
                 .endif
             .endif
+BT_XEnd:
             mov eax, (BULLET ptr [edi]).active
             .if eax == 0
                 jmp BulletNext          ; 反弹次数耗尽
@@ -1886,23 +1958,49 @@ BulletTick:
         .if eax != 0
             add (BULLET ptr [edi]).y, eax
             mov eax, (BULLET ptr [edi]).y
-            .if eax < 0
-                mov (BULLET ptr [edi]).y, 0
-                neg (BULLET ptr [edi]).vy
-                invoke BounceOne, edi
-            .elseif eax > MAP_H - BULLET_SIZE_PX
+            test eax, eax
+            jns BT_YPos
+            ; y < 0：上边界反弹
+            mov (BULLET ptr [edi]).y, 0
+            neg (BULLET ptr [edi]).vy
+            invoke BounceOne, edi
+            jmp BT_YEnd
+BT_YPos:
+            .if eax > MAP_H - BULLET_SIZE_PX
                 mov (BULLET ptr [edi]).y, MAP_H - BULLET_SIZE_PX
                 neg (BULLET ptr [edi]).vy
                 invoke BounceOne, edi
             .else
                 invoke BulletWallHit, edi
                 .if eax != 0
+                    ; 命中：逐像素回退到出墙（同 X 轴，防嵌墙抖动）
                     mov eax, (BULLET ptr [edi]).vy
-                    sub (BULLET ptr [edi]).y, eax
-                    neg (BULLET ptr [edi]).vy
+                    .if eax > 0
+BT_YBackD:
+                        dec (BULLET ptr [edi]).y
+                        invoke BulletWallHit, edi
+                        .if eax != 0
+                            mov eax, (BULLET ptr [edi]).y
+                            .if eax > 0
+                                jmp BT_YBackD
+                            .endif
+                        .endif
+                    .else
+BT_YBackU:
+                        inc (BULLET ptr [edi]).y
+                        invoke BulletWallHit, edi
+                        .if eax != 0
+                            mov eax, (BULLET ptr [edi]).y
+                            .if eax < MAP_H - BULLET_SIZE_PX
+                                jmp BT_YBackU
+                            .endif
+                        .endif
+                    .endif
+                    neg (BULLET ptr [edi]).vy       ; 反弹
                     invoke BounceOne, edi
                 .endif
             .endif
+BT_YEnd:
             mov eax, (BULLET ptr [edi]).active
             .if eax == 0
                 jmp BulletNext

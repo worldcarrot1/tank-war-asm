@@ -37,6 +37,11 @@ extern peerAddr  :sockaddr_in
 extern peerKnown :dword
 extern hSock     :dword
 
+; win32.inc 未收录的鼠标 API 原型与常量
+VK_LBUTTON     equ 001h
+GetCursorPos   PROTO stdcall :DWORD
+ScreenToClient PROTO stdcall :DWORD,:DWORD
+
 .data
     gameState   dd ST_MENU
     langFlag    dd 0                   ; 0=英文 1=中文
@@ -53,6 +58,10 @@ extern hSock     :dword
     prevEnter   dd 0
     prevEsc     dd 0
     prevAny     dd 0
+    prevLBtn    dd 0                   ; 鼠标左键上帧状态（边沿检测）
+    mousePt     POINT <>               ; 鼠标客户区坐标（GetCursorPos+ScreenToClient）
+    mouseX      dd 0
+    mouseY      dd 0
     discTimer   dd 0
     discBuf     db "TWNET01"
     discFrom    sockaddr_in <>
@@ -195,6 +204,33 @@ PickLang proc pEn: dword, pCn: dword
     .endif
     ret
 PickLang endp
+
+; ------------------------------------------------------------
+; MenuActivate -- 主菜单当前项（menuSel）的激活动作
+; 键盘 Enter 与鼠标左键点击共用，保证两种操作行为一致
+; ------------------------------------------------------------
+MenuActivate proc
+    .if menuSel == 0
+        mov gameState, ST_NUMSEL
+    .elseif menuSel == 1
+        mov setSel, 0
+        mov rebindWait, 0
+        mov gameState, ST_SET
+    .elseif menuSel == 2
+        mov gameState, ST_LAN
+        invoke NetShutdown
+        invoke NetInit
+        mov peerKnown, 0
+        mov discTimer, 0
+        invoke setsockopt, hSock, SOL_SOCKET, SO_BROADCAST,
+               addr oneVal, 4
+    .elseif menuSel == 3
+        invoke PostQuitMessage, NULL
+    .else
+        xor langFlag, 1              ; 语言切换
+    .endif
+    ret
+MenuActivate endp
 
 ; UiTextL -- 语言感知文本输出（EN=UiTextZ / CN=UiTextW）
 UiTextL proc hdc: dword, x: dword, y: dword, pEn: dword, pCn: dword, color: dword
@@ -345,6 +381,7 @@ IpToStr endp
 UiTick proc uses ebx esi edi
     local upE:dword, dnE:dword, ltE:dword, rtE:dword
     local enE:dword, esE:dword, scanVk:dword
+    local lbE:dword
 
     ; ---------- 对局中：仅处理 Esc ----------
     .if gameState == ST_PLAY
@@ -360,6 +397,16 @@ UiTick proc uses ebx esi edi
         .endif
         jmp UT_Done
     .endif
+
+    ; ---- 鼠标采样（菜单界面用）：客户区坐标 + 左键点击边沿 ----
+    invoke GetCursorPos, addr mousePt
+    invoke ScreenToClient, hWnd, addr mousePt
+    mov eax, mousePt.x
+    mov mouseX, eax
+    mov eax, mousePt.y
+    mov mouseY, eax
+    invoke KeyEdge, VK_LBUTTON, addr prevLBtn
+    mov lbE, eax
 
     invoke KeyEdge, VK_UP, addr prevUp
     mov upE, eax
@@ -390,26 +437,31 @@ UiTick proc uses ebx esi edi
             .endif
         .endif
         .if enE != 0
-            .if menuSel == 0
-                mov gameState, ST_NUMSEL
-            .elseif menuSel == 1
-                mov setSel, 0
-                mov rebindWait, 0
-                mov gameState, ST_SET
-            .elseif menuSel == 2
-                mov gameState, ST_LAN
-                invoke NetShutdown
-                invoke NetInit
-                mov peerKnown, 0
-                mov discTimer, 0
-                invoke setsockopt, hSock, SOL_SOCKET, SO_BROADCAST,
-                       addr oneVal, 4
-            .elseif menuSel == 3
-                invoke PostQuitMessage, NULL
-            .else
-                xor langFlag, 1          ; 语言切换
+            invoke MenuActivate
+        .endif
+        ; ---- 鼠标：悬停高亮 + 左键点击激活 ----
+        ; 菜单 5 项渲染矩形：x 440..660，y = 250+i*60 .. +34
+        xor ebx, ebx
+UT_MMouse:
+        .if ebx >= 5
+            jmp UT_MMouseDone
+        .endif
+        mov eax, ebx
+        imul eax, eax, 60
+        add eax, 250
+        mov ecx, eax                     ; ecx = 项顶部 y
+        add eax, 34                      ; eax = 项底部 y
+        .if mouseY >= ecx && mouseY < eax && mouseX >= 440 && mouseX < 660
+            mov eax, ebx
+            mov menuSel, eax             ; 悬停即选中（高亮联动）
+            .if lbE != 0
+                invoke MenuActivate      ; 点击激活
+                jmp UT_MMouseDone        ; 状态可能已切换
             .endif
         .endif
+        inc ebx
+        jmp UT_MMouse
+UT_MMouseDone:
 
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
@@ -434,6 +486,30 @@ UiTick proc uses ebx esi edi
         .endif
         .if esE != 0
             mov gameState, ST_MENU
+        .endif
+        ; ---- 鼠标：<< / >> 点击调整人数，点数字区确认开始 ----
+        ; 文本布局：<<(410,280) 数字(485,272) >>(545,280)，行高约 42px
+        .if lbE != 0
+            ; << 区域 400..460, 270..322
+            .if mouseX >= 400 && mouseX < 460 && mouseY >= 270 && mouseY < 322
+                dec numSel
+                .if numSel < 2
+                    mov numSel, 4
+                .endif
+            ; >> 区域 535..600, 270..322
+            .elseif mouseX >= 535 && mouseX < 600 && mouseY >= 270 && mouseY < 322
+                inc numSel
+                .if numSel > 4
+                    mov numSel, 2
+                .endif
+            ; 数字区 465..530, 260..322 -> 确认开始
+            .elseif mouseX >= 465 && mouseX < 530 && mouseY >= 260 && mouseY < 322
+                mov eax, numSel
+                mov numPlayers, eax
+                invoke GameInit
+                mov netMode, 0
+                mov gameState, ST_PLAY
+            .endif
         .endif
 
     ; ---------- 按键设置 ----------

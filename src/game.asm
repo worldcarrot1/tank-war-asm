@@ -567,6 +567,8 @@ arenaTable dd ARENA1,
     stT14b db "T14_ICE_CELLS(expect2)="    ; 23 字符
     stT15a db "T15_LASER_HP(expect2)="     ; 22 字符
     stT15b db "T15_LASER_PTS(expect2)="    ; 23 字符
+    stT16a db "T16_REFL_HP(expect2)="      ; 22 字符
+    stT16b db "T16_REFL_PTS(expect>=3)="   ; 22 字符
 
 .code
 
@@ -1342,6 +1344,34 @@ T14Done:
     invoke LogStr, offset stT15b, 23
     invoke LogNum, logVal                ; expect 2（两点直线路径）
     mov mapData[13*COLS+10], TILE_EMPTY  ; 还原走廊
+T15Done:
+    ; T16: 反射激光 —— 预览反弹路径，0.7s 后全路径伤害（含反弹段）
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[1*SIZEOF TANK].x, 200
+    mov tanks[1*SIZEOF TANK].y, 416
+    mov tanks[1*SIZEOF TANK].alive, 1
+    mov tanks[1*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].skill, SK_REFLASER
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 进入瞄准（预览生成）
+    mov inputTable[20], 0
+    invoke AdvanceTicks, 41              ; 到时发射
+    mov eax, tanks[1*SIZEOF TANK].hp
+    mov logVal, eax
+    invoke LogStr, offset stT16a, 21
+    invoke LogNum, logVal                ; expect 2
+    mov eax, laserN
+    .if eax < 3
+        mov eax, 0                       ; 折点不足 = 无反弹路径
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT16b, 24
+    invoke LogNum, logVal                ; expect >=3（起点+反弹点+终点）
     call CloseLog
     ret
 SelfTestRun endp
@@ -1980,7 +2010,7 @@ SRP_Step:
     mov eax, steps
     inc eax
     mov steps, eax
-    .if eax > 1200
+    .if eax > 4000                       ; 7 次反弹约需 3700px 路径
         jmp SRP_Done
     .endif
     ; ---- X 轴 ----
@@ -2016,7 +2046,8 @@ SRP_Step:
                 mov [eax+ecx*4], edx
                 inc pc
             .endif
-            ; 反射次数用尽 -> 终止
+            ; 反射次数用尽 -> 终止（eax 被记录代码破坏，从 bn 重载）
+            mov eax, bn
             .if eax > GHOST_USES+4        ; bn > 7
                 jmp SRP_Done
             .endif
@@ -2054,6 +2085,8 @@ SRP_Step:
                 mov [eax+ecx*4], edx
                 inc pc
             .endif
+            ; 反射次数用尽 -> 终止（eax 被记录代码破坏，从 bn 重载）
+            mov eax, bn
             .if eax > GHOST_USES+4        ; bn > 7
                 jmp SRP_Done
             .endif

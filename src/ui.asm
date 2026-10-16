@@ -860,11 +860,15 @@ UT_Scan2Done:
             ; 等待中允许点击其他键位行切换目标 / 点重置按钮
             .if lbE != 0
                 invoke NumSelHitTest
+                test eax, eax
+                js UTW_Next                ; 负值（重置/标题）不走切换
+                .if eax != rebindSlot
+                    mov rebindSlot, eax
+                .endif
+UTW_Next:
                 .if eax == -2
                     invoke InitKeyDefaults
                     mov rebindSlot, -1
-                .elseif eax != -1 && eax != rebindSlot
-                    mov rebindSlot, eax
                 .endif
             .endif
         .else
@@ -896,51 +900,59 @@ UT_Scan2Done:
             ; ---- 鼠标：键位容器改键 / 重置 / << >> 调人数与局数 / 数字区开始 ----
             .if lbE != 0
                 invoke NumSelHitTest
-                .if eax >= 0
-                    mov rebindSlot, eax      ; 点击键位 -> 闪烁等待新键
-                .elseif eax == -2
-                    invoke InitKeyDefaults   ; 重置所有更改按键
-                .elseif eax <= -3
-                    neg eax                  ; eax = 3 + slot
-                    sub eax, 3
-                    mov editSlot, eax        ; 点击容器标题 -> 改名该槽位
+                test eax, eax
+                js NHT_NegRet              ; 负值：重置/改名（勿写 >= 0：恒真）
+                mov rebindSlot, eax        ; 点击键位 -> 闪烁等待新键
+                jmp NHT_Done
+NHT_NegRet:
+                .if eax == -2
+                    invoke InitKeyDefaults ; 重置所有更改按键
+                    mov rebindSlot, -1
+                .elseif eax == -1
+                    jmp NHT_Done2          ; 无命中 -> 落到 << >> / 开始区域
                 .else
-                    ; PLAYERS << 400..460, y190..242
-                    mov eax, mouseX
-                    .if eax >= 400 && eax < 460 && mouseY >= 190 && mouseY < 242
-                        dec numSel
-                        .if numSel < 2
-                            mov numSel, 4
-                        .endif
-                    ; PLAYERS >> 535..600, y190..242
-                    .elseif eax >= 535 && eax < 600 && mouseY >= 190 && mouseY < 242
-                        inc numSel
-                        .if numSel > 4
-                            mov numSel, 2
-                        .endif
-                    ; ROUNDS << 400..460, y252..304
-                    .elseif eax >= 400 && eax < 460 && mouseY >= 252 && mouseY < 304
-                        sub roundsSel, 2
-                        .if roundsSel < ROUNDS_MIN
-                            mov roundsSel, ROUNDS_MAX
-                        .endif
-                    ; ROUNDS >> 535..600, y252..304
-                    .elseif eax >= 535 && eax < 600 && mouseY >= 252 && mouseY < 304
-                        add roundsSel, 2
-                        .if roundsSel > ROUNDS_MAX
-                            mov roundsSel, ROUNDS_MIN
-                        .endif
-                    ; 人数数字区 465..530, y180..242 -> 确认开始
-                    .elseif eax >= 465 && eax < 530 && mouseY >= 180 && mouseY < 242
-                        mov eax, numSel
-                        mov numPlayers, eax
-                        mov eax, roundsSel
-                        mov maxRounds, eax
-                        invoke GameInit
-                        mov netMode, 0
-                        mov gameState, ST_PLAY
-                    .endif
+                    neg eax                ; -3-slot -> slot
+                    sub eax, 3
+                    mov editSlot, eax      ; 点击容器标题 -> 改名
                 .endif
+                jmp NHT_Done
+NHT_Done2:
+                ; PLAYERS << 400..460, y190..242
+                mov eax, mouseX
+                .if eax >= 400 && eax < 460 && mouseY >= 190 && mouseY < 242
+                    dec numSel
+                    .if numSel < 2
+                        mov numSel, 4
+                    .endif
+                ; PLAYERS >> 535..600, y190..242
+                .elseif eax >= 535 && eax < 600 && mouseY >= 190 && mouseY < 242
+                    inc numSel
+                    .if numSel > 4
+                        mov numSel, 2
+                    .endif
+                ; ROUNDS << 400..460, y252..304
+                .elseif eax >= 400 && eax < 460 && mouseY >= 252 && mouseY < 304
+                    sub roundsSel, 2
+                    .if roundsSel < ROUNDS_MIN
+                        mov roundsSel, ROUNDS_MAX
+                    .endif
+                ; ROUNDS >> 535..600, y252..304
+                .elseif eax >= 535 && eax < 600 && mouseY >= 252 && mouseY < 304
+                    add roundsSel, 2
+                    .if roundsSel > ROUNDS_MAX
+                        mov roundsSel, ROUNDS_MIN
+                    .endif
+                ; 人数数字区 465..530, y180..242 -> 确认开始
+                .elseif eax >= 465 && eax < 530 && mouseY >= 180 && mouseY < 242
+                    mov eax, numSel
+                    mov numPlayers, eax
+                    mov eax, roundsSel
+                    mov maxRounds, eax
+                    invoke GameInit
+                    mov netMode, 0
+                    mov gameState, ST_PLAY
+                .endif
+NHT_Done:
             .endif
         .endif
 

@@ -8,17 +8,24 @@
 
 ; ---- 窗口与渲染 ----
 HUD_H       equ 32                  ; 顶部计分条高度（像素）
-MAP_W       equ 640                 ; 地图宽度（像素）
-MAP_H       equ 480                 ; 地图高度（像素）
+MAP_W       equ 992                 ; 地图宽度（31 列 x 32，奇数宽保证镜像对称）
+MAP_H       equ 640                 ; 地图高度（20 行 x 32）
 WND_W       equ MAP_W               ; 窗口客户区宽度
 WND_H       equ MAP_H + HUD_H       ; 窗口客户区高度（地图 + 计分条）
 CELL        equ 32                  ; 地图格子边长（像素）
 
-COLS        equ MAP_W / CELL        ; 20 列
-ROWS        equ MAP_H / CELL        ; 15 行
+COLS        equ MAP_W / CELL        ; 31 列
+ROWS        equ MAP_H / CELL        ; 20 行
 
 ; ---- 回合节奏 ----
 ROUND_PAUSE_TICKS equ 90            ; 得分后定格 1.5 秒再开新一轮
+
+; ---- 界面状态（ui.asm）----
+ST_MENU     equ 0                   ; 主菜单
+ST_NUMSEL   equ 1                   ; 人数选择
+ST_SET      equ 2                   ; 按键设置
+ST_LAN      equ 3                   ; 联机大厅
+ST_PLAY     equ 4                   ; 对局中
 
 ; ---- 游戏节奏 ----
 TICK_MS     equ 16                  ; 约 60 tick/秒

@@ -20,6 +20,9 @@ include game.inc
 public NetInit
 public NetFlush
 public NetShutdown
+public hSock
+public peerAddr
+public peerKnown
 
 extern tanks        :TANK
 extern fireHappened :dword

@@ -22,18 +22,11 @@ include game.inc
 GameUpdate PROTO                   ; 同模块前向声明（自测助手先用后定义）
 TileAtPx  PROTO :DWORD,:DWORD      ; 同模块前向声明
 
-; ---- 输入快照（本模块定义，input.asm 写入）----
-public inputUp
-public inputDown
-public inputLeft
-public inputRight
-public inputFire
+; ---- 输入快照（本模块定义，input.asm / ui.asm 写入）----
+public keyTable
+public inputTable
 public inputRestart
-public input2Up
-public input2Down
-public input2Left
-public input2Right
-public input2Fire
+extern numPlayers :dword               ; ui.asm（当前玩家数 2..4）
 
 ; ---- 游戏状态（本模块定义，gfx.asm / net.asm 读取）----
 public tanks
@@ -46,6 +39,7 @@ public GameUpdate
 public fireHappened
 public seqSelf
 public SelfTestRun
+public InitKeyDefaults
 
 .data
     tanks       TANK MAX_PLAYERS dup (<>)
@@ -55,17 +49,9 @@ public SelfTestRun
     spawnY      dd 4 dup (0)
     spawnCount  dd 0
     mapIndex    dd 0                 ; 当前 ARENA 编号
-    inputUp      dd 0
-    inputDown    dd 0
-    inputLeft    dd 0
-    inputRight   dd 0
-    inputFire    dd 0
-    inputRestart dd 0
-    input2Up     dd 0                ; P2（方向键 + Enter）
-    input2Down   dd 0
-    input2Left   dd 0
-    input2Right  dd 0
-    input2Fire   dd 0
+    keyTable    dd MAX_PLAYERS*5 dup (0)   ; [slot*5+动作] VK 码: 0上1下2左3右4开火
+    inputTable  dd MAX_PLAYERS*5 dup (0)   ; [slot*5+动作] 每 tick 快照 0/1
+    inputRestart dd 0                      ; R 重开（固定键）
     roundOver   dd 0                 ; 回合结束定格中
     roundTimer  dd 0                 ; 定格剩余 tick
     roundScored dd 0                 ; 本回合已判分
@@ -75,81 +61,110 @@ public SelfTestRun
 
 ; ---- 字符画对战地图（20x15 字符/张，编译期嵌入）----
 ; 字符表：. 空地  # 钢墙  b 砖墙  ~ 水  - 冰  S 出生点
-ARENA1 db "####################"
-       db "#S#...#..--..#...#S#"
-       db "#.b.#.#.#..#.#.#.b.#"
-       db "#.#.....#..#.....#.#"
-       db "#.#b#~###..###~#b#.#"
-       db "#.#.....-..-.....#.#"
-       db "#.#.#####..#####.#.#"
-       db "#..................#"
-       db "#.#.#.###~~###.#.#.#"
-       db "#~..#..-....-..#..~#"
-       db "###.##bbb..bbb##.###"
-       db "#..-#...#..#...#-..#"
-       db "#.b##.#.#..#.#.##b.#"
-       db "#S................S#"
-       db "####################"
-ARENA2 db "####################"
-       db "#S#...#-....-#...#S#"
-       db "#.#.#.#bb..bb#.#.#.#"
-       db "#....~........~....#"
-       db "#.####b.#..#.b####.#"
-       db "#.......#..#.......#"
-       db "#.#######..#######.#"
-       db "#...-..........-...#"
-       db "#########..#########"
-       db "#~......#..#......~#"
-       db "#.#.####b..b####.#.#"
-       db "#....~..#--#..~....#"
-       db "#.#b##b.#..#.b##b#.#"
-       db "#S....-......-....S#"
-       db "####################"
-ARENA3 db "####################"
-       db "#S#......--......#S#"
-       db "#.#######..#######.#"
-       db "#....~.-#..#-.~....#"
-       db "#b#.###.#..#.###.#b#"
-       db "#.#.....b..b.....#.#"
-       db "#.#.#####..#####.#.#"
-       db "#...b..-....-..b...#"
-       db "#.#####.####.#####.#"
-       db "#.....#......#.....#"
-       db "#.#b#.#b#..#b#.#b#.#"
-       db "#...~.#..--..#.~...#"
-       db "#.#b###.#..#.###b#.#"
-       db "#S......~..~......S#"
-       db "####################"
-ARENA4 db "####################"
-       db "#S#..............#S#"
-       db "#.#.#-#.b##b.#-#.#.#"
-       db "#-b.#..........#.b-#"
-       db "#.###b#-b..b-#b###.#"
-       db "#.....#~#..#~#.....#"
-       db "#.###.##b..b##.###.#"
-       db "#...#.#......#.#...#"
-       db "#~#~#.#.####.#.#~#~#"
-       db "#.#.#.#......#.#.#.#"
-       db "#.#.#.###..###.#.#.#"
-       db "#.b.-.#......#.-.b.#"
-       db "#.#.#.#.#..#.#.#.#.#"
-       db "#S......#..#......S#"
-       db "####################"
-ARENA5 db "####################"
-       db "#S#..............#S#"
-       db "#.#.b.########.b.#.#"
-       db "#.b.#..........#.b.#"
-       db "#.#.#b###..###b#.#.#"
-       db "#..-..#.-..-.#..-..#"
-       db "#.###~#.#..#.#~###.#"
-       db "#.....#.#..#.#.....#"
-       db "#.###.#-#..#-#.###.#"
-       db "#...#.#......#.#...#"
-       db "#bb.#.#~####~#.#.bb#"
-       db "#..-b..........b-..#"
-       db "#.#######~~#######.#"
-       db "#S................S#"
-       db "####################"
+ARENA1 db "###############################"
+       db "#S..b...#.-.........-.#...b..S#"
+       db "#.#~#.#-b#b.#.###.#.b#b-#.#~#.#"
+       db "#.#........-.......-........#.#"
+       db "#.#####.#.#.#.#.#.#.#.#.#####.#"
+       db "#...........~.#.#.~...........#"
+       db "#.#.##b.#.##b##-##b##.#.b##.#.#"
+       db "#.#..-~.#.~.........~.#.~-..#.#"
+       db "#-#.b.#.#.#b#.###.#b#.#.#.b.#-#"
+       db "#...~.....................~...#"
+       db "#.#b###~#.#.b.#b#.b.#.#~###b#.#"
+       db "#.......#.............#.......#"
+       db "#.#.#.#.#.###.#.#.###.#.#.#.#.#"
+       db "#........-...........-........#"
+       db "#.b.#.#.#.#.#.###.#.#.#.#.#.b.#"
+       db "#.............................#"
+       db "#.#.##b.#.#####.#####.#.b##.#.#"
+       db "#S...-...................-...S#"
+       db "###############################"
+       db "###############################"
+
+ARENA2 db "###############################"
+       db "#S..#.....................#..S#"
+       db "#.b-#.#.#.#.#.###.#.#.#.#.#-b.#"
+       db "#.#...#.....#.....#.....#...#.#"
+       db "#.#.b.#.#####.###.#####.#.b.#.#"
+       db "#...~~.....-.......-.....~~...#"
+       db "#.#.#.b####.#######.####b.#.#.#"
+       db "#.#.........................#.#"
+       db "#-#.###.b####.#.#.####b.###.#-#"
+       db "#-............#.#............-#"
+       db "#.###.#.#.#.###.###.#.#.#.###.#"
+       db "#.....b........-........b.....#"
+       db "#~###.#.#####-#b#-#####.#.###~#"
+       db "#.~...#.................#...~.#"
+       db "#.b.#.b.#.###.###.###.#.b.#.b.#"
+       db "#.#...b.~-.-#.....#-.-~.b...#.#"
+       db "#.#.#.b.###.#.#.#.#.###.b.#.#.#"
+       db "#S....~.................~....S#"
+       db "##b#b#####################b#b##"
+       db "###############################"
+
+ARENA3 db "###############################"
+       db "#S....-.......-.-.......-....S#"
+       db "#.#.#.#.#b#.###.###.#b#.#.#.#.#"
+       db "#......-..#.........#..-......#"
+       db "#.#.#.#.#.#.#.###.#.#.#.#.#.#.#"
+       db "#.....~.....~.~.~.~.....~.....#"
+       db "#.#.###.#.###.b.b.###.#.###.#.#"
+       db "#.......-.~.........~.-.......#"
+       db "#.#.#.###.#.#.###.#.#.###.#.#.#"
+       db "#...b....~#.........#~....b...#"
+       db "#.#.#.#.#.#~#.b.b.#~#.#.#.#.#.#"
+       db "#.#........-#-...-#-........#.#"
+       db "#.#######.#.#.#.#.#.#.#######.#"
+       db "#......-..#...#.#...#..-......#"
+       db "#-#.b.b.#.#.#.###.#.#.#.b.b.#-#"
+       db "#...#.#.................#.#...#"
+       db "#.###.#.#bb.###.###.bb#.#.###.#"
+       db "#S...........................S#"
+       db "###bb#b#####b#####b#####b#bb###"
+       db "###############################"
+
+ARENA4 db "###############################"
+       db "#S..~..........-..........~..S#"
+       db "#.#.#.#.#.#.#.#b#.#.#.#.#.#.#.#"
+       db "#.#........~#.....#~........#.#"
+       db "#-#-###b#.b.#.###.#.b.#b###-#-#"
+       db "#.........-.........-.........#"
+       db "#.#.#.b.#.#.b.#.#.b.#.#.b.#.#.#"
+       db "#.......#...#.....#...#.......#"
+       db "#.#.###.#.#~b.###.b~#.#.###.#.#"
+       db "#..-.......................-..#"
+       db "#.#.#.#.#.#.##b#b##.#.#.#.#.#.#"
+       db "#...-.....................-...#"
+       db "#.#.#.###.#.###.###.#.###.#.#.#"
+       db "#......~......#-#......~......#"
+       db "#.#.#.b.#.b.#.#.#.#.b.#.b.#.#.#"
+       db "#.....#...#...#.#...#...#.....#"
+       db "#.#-#.b.#.#.#.#.#.#.#.#.b.#-#.#"
+       db "#S~......~..#.....#..~......~S#"
+       db "###b##b#################b##b###"
+       db "###############################"
+
+ARENA5 db "###############################"
+       db "#S...........................S#"
+       db "#.#.#~###.#b#.###.#b#.###~#.#.#"
+       db "#.........#.-.....-.#.........#"
+       db "#~#.#~####b.###.###.b####~#.#~#"
+       db "#...#....-..#.....#..-....#...#"
+       db "#.b.#.#.#.#b#-###-#b#.#.#.#.b.#"
+       db "#-..#...-.....#.#.....-...#..-#"
+       db "#.#.#.#.#.###.b.b.###.#.#.#.#.#"
+       db "#.......-.....#.#.....-.......#"
+       db "#####.#.#.#.#.#.#.#.#.#.#.#####"
+       db "#.....#...#.........#...#.....#"
+       db "#.#.#.#.#.#.#######.#.#.#.#.#.#"
+       db "#.#.........-.....-.........#.#"
+       db "#.#.#.###.#.b.#.#.b.#.###.#.#.#"
+       db "#.#.........#.....#.........#.#"
+       db "#~##b.#.b.b.#.b#b.#.b.b.#.b##~#"
+       db "#S.......~..~..-..~..~.......S#"
+       db "######b######b###b######b######"
+       db "###############################"
 
 arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5
     logName     db "selftest.log", 0
@@ -278,25 +293,35 @@ RTLoop:
     .if ebx < MAX_PLAYERS
         jmp RTLoop
     .endif
-    ; tank0 = spawn 0 (top-left, facing down)
-    mov eax, spawnX[0]
-    mov tanks[0*SIZEOF TANK].x, eax
-    mov eax, spawnY[0]
-    mov tanks[0*SIZEOF TANK].y, eax
-    mov tanks[0*SIZEOF TANK].dir, DIR_DOWN
-    mov tanks[0*SIZEOF TANK].alive, 1
-    ; tank1 = spawn 3 (opposite corner, facing up)
-    mov ebx, 3
-    .if spawnCount < 4
-        mov ebx, 1
+    ; 按 numPlayers 激活坦克：2P=出生点0,3(对角) 3P=0,1,2 4P=0,1,2,3
+    xor ebx, ebx
+RT_Spawn:
+    .if ebx >= numPlayers
+        jmp RT_SpawnDone
     .endif
-    mov eax, spawnX[ebx*4]
-    mov tanks[1*SIZEOF TANK].x, eax
-    mov eax, spawnY[ebx*4]
-    mov tanks[1*SIZEOF TANK].y, eax
-    mov tanks[1*SIZEOF TANK].dir, DIR_UP
-    mov tanks[1*SIZEOF TANK].alive, 1
-    ; clear bullet pool
+    mov esi, ebx
+    .if numPlayers == 2 && ebx == 1
+        mov esi, 3
+    .endif
+    mov eax, ebx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov edi, eax
+    mov eax, esi
+    mov eax, spawnX[eax*4]
+    mov (TANK ptr [edi]).x, eax
+    mov eax, esi
+    mov eax, spawnY[eax*4]
+    mov (TANK ptr [edi]).y, eax
+    mov (TANK ptr [edi]).dir, DIR_DOWN
+    mov (TANK ptr [edi]).alive, 1
+    .if esi >= 2
+        mov (TANK ptr [edi]).dir, DIR_UP      ; 下半出生点朝上
+    .endif
+    inc ebx
+    jmp RT_Spawn
+RT_SpawnDone:
+    ; 清空弹池
     xor eax, eax
     mov ecx, MAX_BULLETS*(SIZEOF BULLET)/4
     lea edi, bullets
@@ -454,22 +479,51 @@ FindOpenNeighbor endp
 ; SetDirInput -- 按方向码设置 P1 输入（99 = 全部清零）
 ; ------------------------------------------------------------
 SetDirInput proc dir: dword
-    mov inputUp, 0
-    mov inputDown, 0
-    mov inputLeft, 0
-    mov inputRight, 0
+    mov inputTable[0], 0
+    mov inputTable[4], 0
+    mov inputTable[8], 0
+    mov inputTable[12], 0
     mov eax, dir
     .if eax == 0
-        mov inputUp, 1
+        mov inputTable[0], 1
     .elseif eax == 1
-        mov inputRight, 1
+        mov inputTable[12], 1
     .elseif eax == 2
-        mov inputDown, 1
+        mov inputTable[4], 1
     .elseif eax == 3
-        mov inputLeft, 1
+        mov inputTable[8], 1
     .endif
     ret
 SetDirInput endp
+
+; ------------------------------------------------------------
+; InitKeyDefaults -- 默认键位表（设置界面可覆盖）
+; P1 WASD+空格  P2 方向键+Enter  P3 IJKL+U  P4 TFGH+B
+; 动作顺序：0上 1下 2左 3右 4开火
+; ------------------------------------------------------------
+InitKeyDefaults proc
+    mov keyTable[0],  VK_W
+    mov keyTable[4],  VK_S
+    mov keyTable[8],  VK_A
+    mov keyTable[12], VK_D
+    mov keyTable[16], VK_SPACE
+    mov keyTable[20], VK_UP
+    mov keyTable[24], VK_DOWN
+    mov keyTable[28], VK_LEFT
+    mov keyTable[32], VK_RIGHT
+    mov keyTable[36], VK_RETURN
+    mov keyTable[40], VK_I
+    mov keyTable[44], VK_K
+    mov keyTable[48], VK_J
+    mov keyTable[52], VK_L
+    mov keyTable[56], VK_U
+    mov keyTable[60], VK_T
+    mov keyTable[64], VK_G
+    mov keyTable[68], VK_F
+    mov keyTable[72], VK_H
+    mov keyTable[76], VK_B
+    ret
+InitKeyDefaults endp
 
 ; ------------------------------------------------------------
 ; CountOwnBullets -- number of active bullets owned by ownerIdx
@@ -517,16 +571,16 @@ SelfTestRun proc uses ebx esi edi
     ; T1: P1 沿第 13 行走廊右移 40 tick（32 -> 112）
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
-    mov inputRight, 1
+    invoke SetDirInput, 1
     invoke AdvanceTicks, 40
-    mov inputRight, 0
+    invoke SetDirInput, 99
     invoke LogStr, offset stT1, 25
     invoke LogNum, tanks[0*SIZEOF TANK].x          ; expect 112
 
     ; T2: 开火 -> 一颗弹在飞
-    mov inputFire, 1
+    mov inputTable[16], 1
     invoke GameUpdate
-    mov inputFire, 0
+    mov inputTable[16], 0
     invoke CountOwnBullets, 0
     mov logVal, eax
     invoke LogStr, offset stT2, 21
@@ -540,9 +594,9 @@ SelfTestRun proc uses ebx esi edi
     invoke LogNum, logVal                          ; expect 0
 
     ; T4: 墙体不可摧毁 —— 轰一炮再跑 900 tick，地图逐字节不变
-    mov inputFire, 1
+    mov inputTable[16], 1
     invoke GameUpdate
-    mov inputFire, 0
+    mov inputTable[16], 0
     invoke AdvanceTicks, 900
     cld
     mov esi, offset mapData
@@ -614,7 +668,7 @@ T6Find:
 T6Found:
     invoke FindOpenNeighbor, esi
     mov ebx, eax
-    mov eax, nbIdx
+    mov eax, esi                       ; 传送目标是冰面格本身
     xor edx, edx
     mov ecx, COLS
     div ecx
@@ -634,9 +688,10 @@ T7Start:
     call ResetTanks
     mov tanks[1*SIZEOF TANK].x, 160
     mov tanks[1*SIZEOF TANK].y, 416
-    mov input2Left, 1
+    mov tanks[1*SIZEOF TANK].alive, 1
+    mov inputTable[28], 1
     invoke AdvanceTicks, 20
-    mov input2Left, 0
+    mov inputTable[28], 0
     invoke LogStr, offset stT7, 19
     invoke LogNum, tanks[1*SIZEOF TANK].x          ; expect 120
 
@@ -645,9 +700,9 @@ T7Start:
     mov ebx, 15
 T8Loop:
     mov tanks[0*SIZEOF TANK].fireCd, 0
-    mov inputFire, 1
+    mov inputTable[16], 1
     invoke GameUpdate
-    mov inputFire, 0
+    mov inputTable[16], 0
     dec ebx
     .if ebx != 0
         jmp T8Loop
@@ -666,7 +721,7 @@ T8Loop:
     mov tanks[1*SIZEOF TANK].y, 416
     mov tanks[1*SIZEOF TANK].hp, TANK_HP
     mov tanks[1*SIZEOF TANK].alive, 1
-    mov inputFire, 1
+    mov inputTable[16], 1
     xor esi, esi
 T9Loop:
     .if esi >= 300
@@ -678,7 +733,7 @@ T9Loop:
     je T9Done
     jmp T9Loop
 T9Done:
-    mov inputFire, 0
+    mov inputTable[16], 0
     invoke LogStr, offset stT9a, 19
     invoke LogNum, esi                             ; kill tick (<300)
     invoke LogStr, offset stT9b, 21
@@ -710,8 +765,11 @@ GameInit proc uses ebx esi edi
     mov ecx, arenaTable[eax*4]
     invoke ParseArena, ecx
     call ResetTanks
+    call InitKeyDefaults
     mov tanks[0*SIZEOF TANK].score, 0
     mov tanks[1*SIZEOF TANK].score, 0
+    mov tanks[2*SIZEOF TANK].score, 0
+    mov tanks[3*SIZEOF TANK].score, 0
     ret
 GameInit endp
 
@@ -981,72 +1039,105 @@ GameUpdate proc uses ebx esi edi
     local dirWanted:dword
 
     ; ---- 任一坦克死亡时按 R 重新开始 ----
-    mov eax, tanks[0*SIZEOF TANK].alive
-    .if eax != 0
-        mov eax, tanks[1*SIZEOF TANK].alive
+    xor ecx, ecx                       ; 存活数
+    xor edx, edx
+GUR_Count:
+    .if edx >= numPlayers
+        jmp GUR_CountDone
     .endif
-    .if eax == 0 && inputRestart != 0
+    mov eax, edx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov ebx, (TANK ptr [eax]).alive
+    add ecx, ebx
+    inc edx
+    jmp GUR_Count
+GUR_CountDone:
+    .if ecx < numPlayers && inputRestart != 0
         invoke GameInit
         ret
     .endif
 
-    ; ---- P1（WASD）：输入优先，无输入则冰面滑行 ----
-    mov dirWanted, -1
-    .if inputUp != 0
-        mov dirWanted, DIR_UP
-    .elseif inputDown != 0
-        mov dirWanted, DIR_DOWN
-    .elseif inputLeft != 0
-        mov dirWanted, DIR_LEFT
-    .elseif inputRight != 0
-        mov dirWanted, DIR_RIGHT
-    .endif
-    mov eax, dirWanted
-    .if eax != -1
-        invoke MoveTank, 0, eax
-    .elseif tanks[0*SIZEOF TANK].slide > 0
-        dec tanks[0*SIZEOF TANK].slide
-        mov eax, tanks[0*SIZEOF TANK].sdir
-        invoke MoveTank, 0, eax
-    .endif
-
-    ; ---- P2（方向键）：本地对练第二坦克 ----
-    mov dirWanted, -1
-    .if input2Up != 0
-        mov dirWanted, DIR_UP
-    .elseif input2Down != 0
-        mov dirWanted, DIR_DOWN
-    .elseif input2Left != 0
-        mov dirWanted, DIR_LEFT
-    .elseif input2Right != 0
-        mov dirWanted, DIR_RIGHT
-    .endif
-    mov eax, dirWanted
-    .if eax != -1
-        invoke MoveTank, 1, eax
-    .elseif tanks[1*SIZEOF TANK].slide > 0
-        dec tanks[1*SIZEOF TANK].slide
-        mov eax, tanks[1*SIZEOF TANK].sdir
-        invoke MoveTank, 1, eax
-    .endif
-
-    ; ---- 开火（P1 空格 / P2 Enter，冷却 20 tick）----
+    ; ---- 各玩家槽位：移动 / 冰面滑行 / 开火 ----
     mov fireHappened, 0
-    .if tanks[0*SIZEOF TANK].fireCd == 0 && inputFire != 0 && tanks[0*SIZEOF TANK].alive != 0
-        invoke SpawnBullet, 0
-        mov tanks[0*SIZEOF TANK].fireCd, FIRE_CD
-        mov fireHappened, 1
+    xor ebx, ebx                       ; slot（跨 invoke 保持）
+GU_Slot:
+    .if ebx >= numPlayers
+        jmp GU_SlotsDone
     .endif
-    .if tanks[0*SIZEOF TANK].fireCd > 0
-        dec tanks[0*SIZEOF TANK].fireCd
+    mov esi, ebx
+    imul esi, esi, 20                  ; esi = slot*5*4（输入表字节偏移）
+    ; 方向选择
+    mov dirWanted, -1
+    mov eax, inputTable[esi]
+    .if eax != 0
+        mov dirWanted, DIR_UP
+    .else
+        mov eax, inputTable[esi+4]
+        .if eax != 0
+            mov dirWanted, DIR_DOWN
+        .else
+            mov eax, inputTable[esi+8]
+            .if eax != 0
+                mov dirWanted, DIR_LEFT
+            .else
+                mov eax, inputTable[esi+12]
+                .if eax != 0
+                    mov dirWanted, DIR_RIGHT
+                .endif
+            .endif
+        .endif
     .endif
-    .if tanks[1*SIZEOF TANK].fireCd == 0 && input2Fire != 0 && tanks[1*SIZEOF TANK].alive != 0
-        invoke SpawnBullet, 1
-        mov tanks[1*SIZEOF TANK].fireCd, FIRE_CD
+    mov eax, dirWanted
+    .if eax != -1
+        invoke MoveTank, ebx, eax
+    .else
+        ; 无输入 -> 冰面滑行
+        mov eax, ebx
+        imul eax, eax, SIZEOF TANK
+        add eax, offset tanks
+        mov edx, eax
+        mov eax, (TANK ptr [edx]).slide
+        .if eax > 0
+            dec (TANK ptr [edx]).slide
+            mov eax, (TANK ptr [edx]).sdir
+            invoke MoveTank, ebx, eax
+        .endif
     .endif
-    .if tanks[1*SIZEOF TANK].fireCd > 0
-        dec tanks[1*SIZEOF TANK].fireCd
+    ; 开火（冷却 20 tick）
+    mov eax, inputTable[esi+16]
+    .if eax != 0
+        mov eax, ebx
+        imul eax, eax, SIZEOF TANK
+        add eax, offset tanks
+        mov edx, eax
+        mov eax, (TANK ptr [edx]).fireCd
+        .if eax == 0
+            mov eax, (TANK ptr [edx]).alive
+            .if eax != 0
+                invoke SpawnBullet, ebx
+                mov eax, ebx
+                imul eax, eax, SIZEOF TANK
+                add eax, offset tanks
+                mov edx, eax
+                mov (TANK ptr [edx]).fireCd, FIRE_CD
+                .if ebx == 0
+                    mov fireHappened, 1
+                .endif
+            .endif
+        .endif
     .endif
+    mov eax, ebx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov edx, eax
+    mov eax, (TANK ptr [edx]).fireCd
+    .if eax > 0
+        dec (TANK ptr [edx]).fireCd
+    .endif
+    inc ebx
+    jmp GU_Slot
+GU_SlotsDone:
 
     ; ---- 子弹更新（edi = &bullets[ebx]，遍历顺序固定）----
     ; 每 tick 顺序：age -> X 轴(边界->地形) -> Y 轴(边界->地形) -> 坦克命中

@@ -14,7 +14,9 @@ option casemap:none
 include win32.inc
 include game.inc
 
+public hdcBack                    ; ui.asm 菜单界面复用后台 DC
 extern hWnd        :dword          ; main.asm 里的主窗口句柄
+extern numPlayers  :dword          ; ui.asm（当前玩家数）
 extern mapData     :byte           ; game.asm 里的地图数组
 extern tanks       :TANK           ; game.asm 里的坦克状态
 extern bullets     :BULLET         ; game.asm 里的子弹池
@@ -36,9 +38,11 @@ extern bullets     :BULLET         ; game.asm 里的子弹池
     brushStreak dd ?                ; 冰高光：白
     brushP1     dd ?                ; P1 车体：绿
     brushP2     dd ?                ; P2 车体：蓝
+    brushP3     dd ?                ; P3 车体：红
+    brushP4     dd ?                ; P4 车体：橙
     brushBullet dd ?                ; 子弹：近黑
     brushHud    dd ?                ; 计分条：深灰
-    scoreBuf    db 16 dup (0)       ; 比分文本 "P1 03 : 01 P2"
+    scoreBuf    db 48 dup (0)       ; 比分文本 "P1 nn P2 nn ..."
 
 .code
 
@@ -79,6 +83,10 @@ GfxInit proc
     mov brushP1, eax
     invoke CreateSolidBrush, 00E66E46h
     mov brushP2, eax
+    invoke CreateSolidBrush, 002828A0h
+    mov brushP3, eax
+    invoke CreateSolidBrush, 000080F0h
+    mov brushP4, eax
     invoke CreateSolidBrush, 00191919h
     mov brushBullet, eax
     invoke CreateSolidBrush, 00282828h
@@ -91,43 +99,40 @@ GfxInit endp
 ; ------------------------------------------------------------
 FormatScore proc uses ebx edi
     lea edi, scoreBuf
-    mov byte ptr [edi], 'P'
-    mov byte ptr [edi+1], '1'
-    mov byte ptr [edi+2], ' '
+    xor ebx, ebx
+FS_Slot:
+    .if ebx >= numPlayers
+        jmp FS_Done
+    .endif
+    ; "Pn nn "
+    mov eax, ebx
+    add eax, '1'
+    mov ecx, edi
+    mov byte ptr [ecx], 'P'
+    mov byte ptr [ecx+1], al
+    mov byte ptr [ecx+2], ' '
     add edi, 3
-    ; P1 分数（两位十进制，封顶 99）
-    mov eax, tanks[0*SIZEOF TANK].score
+    mov eax, ebx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov eax, (TANK ptr [eax]).score
     .if eax > 99
         mov eax, 99
     .endif
     xor edx, edx
-    mov ebx, 10
-    div ebx
+    mov ecx, 10
+    div ecx
     add al, '0'
     add dl, '0'
     mov [edi], al
     mov [edi+1], dl
-    add edi, 2
-    mov byte ptr [edi], ' '
-    mov byte ptr [edi+1], ':'
     mov byte ptr [edi+2], ' '
     add edi, 3
-    ; P2 分数
-    mov eax, tanks[1*SIZEOF TANK].score
-    .if eax > 99
-        mov eax, 99
-    .endif
-    xor edx, edx
-    div ebx
-    add al, '0'
-    add dl, '0'
-    mov [edi], al
-    mov [edi+1], dl
-    add edi, 2
-    mov byte ptr [edi], ' '
-    mov byte ptr [edi+1], 'P'
-    mov byte ptr [edi+2], '2'
-    mov eax, 13                            ; 固定 13 字符
+    inc ebx
+    jmp FS_Slot
+FS_Done:
+    mov eax, edi
+    sub eax, offset scoreBuf         ; 长度
     ret
 FormatScore endp
 
@@ -215,6 +220,7 @@ DrawTank endp
 GfxRender proc
     local rc:RECT
     local r2:RECT
+    local txtLen:dword
 
     ; 0) 背景与计分条
     mov rc.left, 0
@@ -227,7 +233,13 @@ GfxRender proc
     invoke SetBkMode, hdcBack, TRANSPARENT
     invoke SetTextColor, hdcBack, 00FFFFFFh
     invoke FormatScore
-    invoke TextOutA, hdcBack, 268, 9, offset scoreBuf, eax
+    mov txtLen, eax                   ; 保存长度（勿被居中计算覆盖）
+    mov eax, txtLen
+    shl eax, 3                        ; len*8（近似字符宽）
+    mov ecx, MAP_W
+    sub ecx, eax
+    sar ecx, 1
+    invoke TextOutA, hdcBack, ecx, 9, offset scoreBuf, txtLen
 
     ; 1) 描边笔就位；逐格画地图（y 偏移 HUD_H）
     invoke SelectObject, hdcBack, penDark
@@ -364,10 +376,15 @@ TankLoop:
     mov eax, (TANK ptr [esi]).alive
     .if eax != 0
         push ebx
-        .if ebx == 0
+        mov eax, ebx
+        .if eax == 0
             invoke SelectObject, hdcBack, brushP1
-        .else
+        .elseif eax == 1
             invoke SelectObject, hdcBack, brushP2
+        .elseif eax == 2
+            invoke SelectObject, hdcBack, brushP3
+        .else
+            invoke SelectObject, hdcBack, brushP4
         .endif
         pop ebx
         mov eax, (TANK ptr [esi]).x
@@ -436,6 +453,8 @@ GfxShutdown proc
     invoke DeleteObject, brushStreak
     invoke DeleteObject, brushP1
     invoke DeleteObject, brushP2
+    invoke DeleteObject, brushP3
+    invoke DeleteObject, brushP4
     invoke DeleteObject, brushBullet
     invoke DeleteObject, brushHud
     ret

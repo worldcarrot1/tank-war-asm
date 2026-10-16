@@ -25,6 +25,11 @@ NetInit     PROTO                   ; net.asm  Winsock 初始化 + 绑定端口
 NetFlush    PROTO                   ; net.asm  发送状态包 + 收包应用
 NetShutdown PROTO                   ; net.asm  关闭 socket
 SelfTestRun PROTO                   ; game.asm 无头自测（tankwar selftest）
+UiInit    PROTO                     ; ui.asm 界面
+UiTick    PROTO
+UiRender  PROTO
+extern gameState :dword
+extern netMode   :dword
 
 .data
     public hWnd                 ; gfx.asm / net.asm 需要引用主窗口句柄
@@ -100,6 +105,7 @@ WinMain proc
 
     ; ---- 各模块初始化 ----
     invoke GfxInit
+    invoke UiInit
     invoke GameInit
     invoke NetInit
 
@@ -123,13 +129,19 @@ MainLoop:
     invoke GetTickCount
     .if eax >= nextTick
         add nextTick, TICK_MS
-        invoke InputSample         ; 1. 采样键盘
-        invoke GameUpdate          ; 2. 推进游戏逻辑
-        invoke NetFlush            ; 3. 发状态包 + 收对方包
+        invoke UiTick              ; 1. 界面状态机（菜单/联机/对局切换）
+        .if gameState == ST_PLAY   ; 2. 仅对局状态推进玩法
+            invoke InputSample
+            invoke GameUpdate
+            mov eax, netMode
+            .if eax != 0
+                invoke NetFlush    ; 3. 联机对局：交换状态包
+            .endif
+        .endif
     .endif
 
 Render:
-    invoke GfxRender               ; 4. 绘制当前帧
+    invoke UiRender                ; 4. 绘制（菜单或对局画面）
     invoke Sleep, 1                ; 让出 CPU 片
     jmp MainLoop
 

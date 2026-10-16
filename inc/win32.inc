@@ -38,6 +38,17 @@ VK_D        equ 044h
 VK_R        equ 052h
 VK_S        equ 053h
 VK_W        equ 057h
+VK_ESCAPE   equ 01Bh
+VK_B        equ 042h
+VK_F        equ 046h
+VK_G        equ 047h
+VK_H        equ 048h
+VK_I        equ 049h
+VK_J        equ 04Ah
+VK_K        equ 04Bh
+VK_L        equ 04Ch
+VK_T        equ 054h
+VK_U        equ 055h
 
 ; ---- GDI ----
 SRCCOPY     equ 00CC0020h
@@ -162,6 +173,8 @@ Rectangle               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 RoundRect               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 Ellipse                 PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 CreatePen               PROTO stdcall :DWORD,:DWORD,:DWORD
+CreateFontA             PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+GetStockObject          PROTO stdcall :DWORD
 SetTextColor            PROTO stdcall :DWORD,:DWORD
 SetBkMode               PROTO stdcall :DWORD,:DWORD
 TextOutA                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
@@ -178,6 +191,16 @@ bind            PROTO stdcall :DWORD,:DWORD,:DWORD
 sendto          PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 recvfrom        PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 closesocket     PROTO stdcall :DWORD
+setsockopt      PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+SOL_SOCKET      equ 0FFFFh
+SO_BROADCAST    equ 00020h
+INADDR_BROADCAST equ 0FFFFFFFFh
+FW_NORMAL       equ 400
+DEFAULT_CHARSET equ 1
+OUT_DEFAULT_PRECIS equ 0
+CLIP_DEFAULT_PRECIS equ 0
+DEFAULT_QUALITY equ 0
+DEFAULT_PITCH   equ 0
 WSACleanup      PROTO stdcall
 
 ; ---- 导入库（Windows SDK 的 um/x86 下可找到）----

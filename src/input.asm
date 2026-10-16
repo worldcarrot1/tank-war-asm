@@ -1,12 +1,8 @@
 ; ============================================================
-; input.asm —— 键盘输入采样
-; 用 GetAsyncKeyState 每个逻辑 tick 采样一次（而不是依赖
-; WM_KEYDOWN 消息），保证帧率波动时输入节奏一致。
-;
-; 键位（M1 本地双坦克对练）：
-;   P1：WASD 移动 / 空格开火     P2：方向键移动 / Enter 开火
-;   R：重新开始（任一方死亡时）
-; 采样结果写入 game.asm 的输入快照变量，供 GameUpdate 消费。
+; input.asm —— 键盘输入采样（键位表驱动）
+; 每 tick 用 GetAsyncKeyState 扫描 keyTable（4 人 x 5 键，
+; 键位可在设置界面重绑），结果写入 inputTable。
+; R = 重开整场（固定键）；菜单导航键由 ui.asm 自行处理。
 ; ============================================================
 
 .386
@@ -14,65 +10,53 @@
 option casemap:none
 
 include win32.inc
+include game.inc
 
-extern inputUp      :dword
-extern inputDown    :dword
-extern inputLeft    :dword
-extern inputRight   :dword
-extern inputFire    :dword
+extern keyTable    :dword
+extern inputTable  :dword
 extern inputRestart :dword
-extern input2Up     :dword
-extern input2Down   :dword
-extern input2Left   :dword
-extern input2Right  :dword
-extern input2Fire   :dword
 
 .code
 
 ; ------------------------------------------------------------
-; KeyDown —— 检测某键当前是否按下
-; 入参：vk = VK 码，返回 eax = 1(按下) / 0(抬起)
+; InputSample —— 每 tick 调用一次，扫描全部键位
 ; ------------------------------------------------------------
-KeyDown proc vk: DWORD
-    invoke GetAsyncKeyState, vk
-    and eax, 8000h                   ; 取最高位：当前是否按下
+InputSample proc uses ebx esi edi
+    local act: dword                 ; 动作计数（invoke 会破坏易失寄存器，不能寄存器计数）
+    xor ebx, ebx                     ; slot
+    mov esi, offset keyTable
+    mov edi, offset inputTable
+IS_Slot:
+    mov act, 0                       ; action 0..4
+IS_Act:
+    mov eax, [esi]
+    invoke GetAsyncKeyState, eax
+    and eax, 8000h
     .if eax != 0
-        mov eax, 1
+        mov dword ptr [edi], 1
     .else
-        mov eax, 0
+        mov dword ptr [edi], 0
     .endif
-    ret
-KeyDown endp
-
-; ------------------------------------------------------------
-; InputSample —— 每 tick 调用一次，刷新输入快照
-; ------------------------------------------------------------
-InputSample proc
-    invoke KeyDown, VK_W
-    mov inputUp, eax
-    invoke KeyDown, VK_S
-    mov inputDown, eax
-    invoke KeyDown, VK_A
-    mov inputLeft, eax
-    invoke KeyDown, VK_D
-    mov inputRight, eax
-    invoke KeyDown, VK_SPACE
-    mov inputFire, eax
-    invoke KeyDown, VK_R
-    mov inputRestart, eax
-    ; ---- P2：方向键 + Enter ----
-    invoke KeyDown, VK_UP
-    mov input2Up, eax
-    invoke KeyDown, VK_DOWN
-    mov input2Down, eax
-    invoke KeyDown, VK_LEFT
-    mov input2Left, eax
-    invoke KeyDown, VK_RIGHT
-    mov input2Right, eax
-    invoke KeyDown, VK_RETURN
-    mov input2Fire, eax
+    add esi, 4
+    add edi, 4
+    inc act
+    mov eax, act
+    .if eax < 5
+        jmp IS_Act
+    .endif
+    inc ebx
+    .if ebx < MAX_PLAYERS
+        jmp IS_Slot
+    .endif
+    ; 固定重开键
+    invoke GetAsyncKeyState, VK_R
+    and eax, 8000h
+    .if eax != 0
+        mov inputRestart, 1
+    .else
+        mov inputRestart, 0
+    .endif
     ret
 InputSample endp
 
 end
-

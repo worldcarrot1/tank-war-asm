@@ -582,6 +582,10 @@ arenaTable dd ARENA1,
     stT20b db "T20_BUL_BACK(expect1)="     ; 22 字符
     stT20c db "T20_DIR(expect1)="          ; 17 字符
     stT20d db "T20_UNBOUND(expect1)="      ; 21 字符
+    stT21a db "T21_WATER_BLOCK(expect1)="  ; 25 字符
+    stT21b db "T21_IN_WATER(expect1)="     ; 23 字符
+    stT21c db "T21_HOLD(expect1)="        ; 18 字符
+    stT21d db "T21_OFF(expect0)="          ; 17 字符
 
 .code
 
@@ -1554,6 +1558,70 @@ T19Done:
     mov logVal, eax
     invoke LogStr, offset stT20d, 21
     invoke LogNum, logVal                ; expect 1
+T20Done:
+    ; T21: 驭水术 —— 无技能被水挡；发动后行走水上；到期保护；离水失效
+    call ResetTanks
+    mov mapData[13*COLS+5], TILE_WATER   ; row13 走廊 col5/col6 设水（测后还原）
+    mov mapData[13*COLS+6], TILE_WATER
+    mov tanks[0*SIZEOF TANK].x, 96       ; col3
+    mov tanks[0*SIZEOF TANK].y, 416      ; row13
+    mov tanks[0*SIZEOF TANK].alive, 1
+    ; a) 无技能：右移 25 tick 被水挡在 x=138（col5 水 160..191）
+    mov inputTable[12], 1
+    invoke AdvanceTicks, 25
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    .if eax == 138
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT21a, 25
+    invoke LogNum, logVal                ; expect 1（被挡在水边）
+    ; b) 发动驭水 -> 穿过水域继续走（20 tick -> x=178）
+    mov tanks[0*SIZEOF TANK].skill, SK_WATER
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate
+    mov inputTable[20], 0
+    mov inputTable[12], 1
+    invoke AdvanceTicks, 20
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    .if eax == 178
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT21b, 22
+    invoke LogNum, logVal                ; expect 1（水上行走）
+    ; c) 到期保护：中心仍在水上（x=178 -> 中心 188 ∈ col5）-> 延寿不掉效
+    mov tanks[0*SIZEOF TANK].effT, 1
+    invoke AdvanceTicks, 1
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_WATER
+    .if eax != 0
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT21c, 18
+    invoke LogNum, logVal                ; expect 1（水上延寿）
+    ; d) 离开水 -> 到期即失效
+    mov tanks[0*SIZEOF TANK].x, 96       ; 传回 row13 走廊（非水）
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].effT, 1
+    invoke AdvanceTicks, 1
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_WATER
+    mov logVal, eax
+    invoke LogStr, offset stT21d, 17
+    invoke LogNum, logVal                ; expect 0（已失效）
+    mov mapData[13*COLS+5], TILE_EMPTY   ; 还原走廊
+    mov mapData[13*COLS+6], TILE_EMPTY
     call CloseLog
     ret
 SelfTestRun endp

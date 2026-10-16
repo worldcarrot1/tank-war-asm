@@ -34,3 +34,7 @@ T20_SWAPPED(expect1)=1
 T20_BUL_BACK(expect1)=1
 T20_DIR(expect1)=1
 T20_UNBOUND(expect1)=1
+T21_WATER_BLOCK(expect1)=1
+T21_IN_WATER(expect1)=1
+T21_HOLD(expect1)=1
+T21_OFF(expect0)=0

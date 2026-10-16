@@ -120,6 +120,9 @@ RST_H      equ 30
     menuFont    dd ?
     fontSmall   dd ?                   ; 键位容器用小字体（18px）
     boxBrush    dd ?                   ; 容器边框画刷（深灰）
+    brushNight  dd ?                   ; 深夜模式背景刷（近黑）
+    boxBrushN   dd ?                   ; 深夜模式容器边框（浅灰）
+    boxCur      dd ?                   ; 当帧生效的边框刷
     fontOld     dd ?
     bcastAddr   sockaddr_in <>
     oneVal      dd 1
@@ -159,6 +162,11 @@ RST_H      equ 30
     szHint      db "ENTER: CONFIRM   ESC: BACK", 0
     szNameHint  db "CLICK NAME TO RENAME", 0
     szNameEdit  db "TYPE A NAME, ENTER TO OK", 0
+    szVol2      db "VOLUME", 0
+    szSfx2      db "SOUND FX", 0
+    szOn2       db "ON", 0
+    szOff2      db "OFF", 0
+    szNight     db "NIGHT MODE", 0
     szReset     db "RESET ALL KEYS", 0
     szReb2      db "PRESS ANY KEY ... (ESC = CANCEL)", 0
     szSetT      db "KEY SETTINGS", 0
@@ -187,6 +195,11 @@ RST_H      equ 30
     CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
     CN_NAMEHINT dw 70B9h,51FBh,540Dh,5B57h,53EFh,6539h,540Dh, 0   ; 点击名字可改名
     CN_NAMEEDIT dw 8F93h,5165h,540Dh,5B57h,56DEh,8F66h,786Eh,8BA4h, 0 ; 输入名字回车确认
+    CN_VOL2     dw 97F3h,91CFh, 0                              ; 音量
+    CN_SFX      dw 97F3h,6548h, 0                              ; 音效
+    CN_ON2      dw 5F00h, 0                                    ; 开
+    CN_OFF2     dw 5173h, 0                                    ; 关
+    CN_NIGHT    dw 6DF1h,591Ch,6A21h,5F0Fh, 0                  ; 深夜模式
     CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
     CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0ff08h,0045h,0073h,0063h,0020h,003dh,0020h,53d6h,6d88h,0ff09h, 0 ; 请按任意键（Esc = 取消）
     CN_KEYS dw 952eh,4f4dh, 0                                            ; 键位
@@ -212,8 +225,12 @@ RST_H      equ 30
 UiInit proc
     invoke CreateSolidBrush, 00D2D2D2h
     mov menuBrush, eax
+    invoke CreateSolidBrush, 00141414h       ; 深夜模式背景（近黑）
+    mov brushNight, eax
     invoke CreateSolidBrush, 00232323h
     mov boxBrush, eax
+    invoke CreateSolidBrush, 00A0A0A0h       ; 深夜模式容器边框（浅灰）
+    mov boxBrushN, eax
     invoke CreateFontA, 30, 0, 0, 0, FW_NORMAL, 0, 0, 0,
            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
            DEFAULT_QUALITY, DEFAULT_PITCH, offset szFont
@@ -930,6 +947,41 @@ UT_Scan2Done:
 
     ; ---------- 按键设置 ----------
     .elseif gameState == ST_SET
+        ; ---- 音量（←→）/ 音效 / 深夜模式 快捷设置 ----
+        .if ltE != 0
+            sub volumeLvl, 5
+            .if volumeLvl < 0
+                mov volumeLvl, 0
+            .endif
+            invoke SndVolume, volumeLvl
+        .endif
+        .if rtE != 0
+            add volumeLvl, 5
+            .if volumeLvl > 100
+                mov volumeLvl, 100
+            .endif
+            invoke SndVolume, volumeLvl
+        .endif
+        .if lbE != 0 && mouseY >= 88 && mouseY < 114
+            mov eax, mouseX
+            .if eax >= 330 && eax < 400
+                sub volumeLvl, 10
+                .if volumeLvl < 0
+                    mov volumeLvl, 0
+                .endif
+                invoke SndVolume, volumeLvl
+            .elseif eax >= 402 && eax < 472
+                add volumeLvl, 10
+                .if volumeLvl > 100
+                    mov volumeLvl, 100
+                .endif
+                invoke SndVolume, volumeLvl
+            .elseif eax >= 500 && eax < 560
+                xor sfxOn, 1
+            .elseif eax >= 600 && eax < 760
+                xor themeNight, 1
+            .endif
+        .endif
         .if rebindWait != 0
             invoke KeyEdge, VK_ESCAPE, addr prevEsc
             .if eax != 0
@@ -1036,7 +1088,23 @@ UiRender proc uses ebx esi edi
     mov rc.top, 0
     mov rc.right, WND_W
     mov rc.bottom, WND_H
-    invoke FillRect, hdcBack, addr rc, menuBrush
+    ; 深夜模式：背景近黑 + 文字浅色重映射
+    mov eax, themeNight
+    .if eax != 0
+        invoke FillRect, hdcBack, addr rc, brushNight
+        mov colDark, 00D0D0D0h
+        mov colGray, 00808080h
+        mov colHi,   0000E0E0h
+        mov eax, boxBrushN
+        mov boxCur, eax
+    .else
+        invoke FillRect, hdcBack, addr rc, menuBrush
+        mov colDark, 00232323h
+        mov colGray, 00606060h
+        mov colHi,   0000C06000h
+        mov eax, boxBrush
+        mov boxCur, eax
+    .endif
     invoke SelectObject, hdcBack, menuFont
     mov fontOld, eax
 
@@ -1125,7 +1193,7 @@ NS_Box:
         mov boxRc.top, eax
         add eax, KBBOX_H
         mov boxRc.bottom, eax
-        invoke FrameRect, hdcBack, addr boxRc, boxBrush
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
         ; 容器标题：玩家名（可点击改名；编辑中光标 '_' 闪烁）
         mov eax, ebx
         imul eax, eax, 16
@@ -1224,7 +1292,7 @@ NS_BoxDone:
         mov boxRc.top, RST_Y-4
         mov boxRc.right, RST_X+RST_W+8
         mov boxRc.bottom, RST_Y+RST_H+4
-        invoke FrameRect, hdcBack, addr boxRc, boxBrush
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
         invoke UiTextL, hdcBack, RST_X, RST_Y, offset szReset, offset CN_RESET, edx
         ; ---- 底部提示：改键等待时显示引导，否则显示操作提示 ----
         .if rebindSlot != -1
@@ -1241,6 +1309,36 @@ NS_BoxDone:
     .elseif gameState == ST_SET
         invoke UiTextL, hdcBack, 420, 36, offset szSetT, offset CN_SETT, colDark
         invoke UiTextL, hdcBack, 380, 74, offset szSetH, offset CN_SETH, colGray
+        ; ---- 快捷设置行（小字体，y 96）：音量 / 音效 / 深夜模式 ----
+        invoke SelectObject, hdcBack, fontSmall
+        invoke UiTextL, hdcBack, 240, 96, offset szVol2, offset CN_VOL2, colDark
+        lea edi, uiBuf
+        mov eax, volumeLvl
+        xor edx, edx
+        mov ecx, 10
+        div ecx
+        add al, '0'
+        add dl, '0'
+        mov [edi], al
+        mov [edi+1], dl
+        mov byte ptr [edi+2], '%'
+        mov byte ptr [edi+3], 0
+        invoke UiTextZ, hdcBack, 330, 96, offset uiBuf, colDark
+        invoke UiTextL, hdcBack, 430, 96, offset szSfx2, offset CN_SFX, colDark
+        mov eax, sfxOn
+        .if eax != 0
+            invoke UiTextL, hdcBack, 500, 96, offset szOn2, offset CN_ON2, colDark
+        .else
+            invoke UiTextL, hdcBack, 500, 96, offset szOff2, offset CN_OFF2, colDark
+        .endif
+        invoke UiTextL, hdcBack, 600, 96, offset szNight, offset CN_NIGHT, colDark
+        mov eax, themeNight
+        .if eax != 0
+            invoke UiTextL, hdcBack, 700, 96, offset szOn2, offset CN_ON2, colDark
+        .else
+            invoke UiTextL, hdcBack, 700, 96, offset szOff2, offset CN_OFF2, colDark
+        .endif
+        invoke SelectObject, hdcBack, menuFont
 
         xor ebx, ebx
 SS_Rows:
@@ -1325,7 +1423,7 @@ KN_Done:
             mov edx, colGray
         .endif
         mov eax, ebx
-        imul eax, eax, 28
+        imul eax, eax, 26                 ; 行高 26（20 行 110..614 不溢出）
         add eax, 110
         mov rowY, eax
         invoke UiTextW, hdcBack, 380, rowY, offset wBuf, edx

@@ -32,5 +32,5 @@ T19_BOOST_DX(expect3)=3
 T19_MUD_BOOST(expect2)=2
 T20_SWAPPED(expect1)=1
 T20_BUL_BACK(expect1)=1
-T20_DIR(expect1)=T20_1
+T20_DIR(expect1)=1
 T20_UNBOUND(expect1)=1

@@ -1542,7 +1542,7 @@ T19Done:
     ; c) 坦克朝向 = 子弹方向（右 = 1）
     mov eax, tanks[0*SIZEOF TANK].dir
     mov logVal, eax
-    invoke LogStr, offset stT20c, 21
+    invoke LogStr, offset stT20c, 17
     invoke LogNum, logVal                ; expect 1
     ; d) 换位后绑定解除
     mov eax, tanks[0*SIZEOF TANK].swapBul

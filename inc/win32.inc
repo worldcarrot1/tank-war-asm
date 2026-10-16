@@ -49,6 +49,11 @@ VK_K        equ 04Bh
 VK_L        equ 04Ch
 VK_T        equ 054h
 VK_U        equ 055h
+VK_O        equ 04Fh
+VK_Q        equ 051h
+VK_V        equ 056h
+VK_LSHIFT   equ 0A0h
+VK_RSHIFT   equ 0A1h
 
 ; ---- GDI ----
 SRCCOPY     equ 00CC0020h
@@ -167,6 +172,9 @@ SelectObject            PROTO stdcall :DWORD,:DWORD
 DeleteObject            PROTO stdcall :DWORD
 DeleteDC                PROTO stdcall :DWORD
 CreateSolidBrush        PROTO stdcall :DWORD
+FrameRect               PROTO stdcall :DWORD,:DWORD,:DWORD
+MoveToEx                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD
+LineTo                  PROTO stdcall :DWORD,:DWORD,:DWORD
 FillRect                PROTO stdcall :DWORD,:DWORD,:DWORD
 BitBlt                  PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 Rectangle               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
@@ -181,6 +189,7 @@ TextOutA                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 TextOutW                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 
 PS_SOLID    equ 0
+PS_DASH     equ 1
 TRANSPARENT equ 1
 
 ; ws2_32（htons 实际参数是 16 位，这里按 32 位压栈，栈平衡不受影响）

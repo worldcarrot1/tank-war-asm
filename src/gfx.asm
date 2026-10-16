@@ -20,6 +20,17 @@ extern numPlayers  :dword          ; ui.asm（当前玩家数）
 extern mapData     :byte           ; game.asm 里的地图数组
 extern tanks       :TANK           ; game.asm 里的坦克状态
 extern bullets     :BULLET         ; game.asm 里的子弹池
+extern pickupType  :dword          ; 技能拾取物
+extern pickupX     :dword
+extern pickupY     :dword
+extern laserN      :dword          ; 激光路径（发射后显示）
+extern laserX      :dword
+extern laserY      :dword
+extern laserT      :dword
+extern prevN       :dword          ; 激光预览路径（瞄准中虚线）
+extern prevX       :dword
+extern prevY       :dword
+extern prevTank    :dword
 
 WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
 
@@ -46,6 +57,10 @@ WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
     brushP4     dd ?                ; P4 车体：橙
     brushBullet dd ?                ; 子弹：近黑
     brushHud    dd ?                ; 计分条：深灰
+    skillBrush  dd 9 dup (0)        ; [1..8] 技能配色刷（BGR）
+    penLaser    dd ?                ; 发射激光：红实线 2px
+    penPreview  dd ?                ; 激光预览：灰虚线 1px
+    skillNum    db "0", 0           ; 拾取物上的技能序号
     scoreBuf    db 48 dup (0)       ; 比分文本 "P1 nn P2 nn ..."
 
 .code
@@ -99,6 +114,28 @@ GfxInit proc
     mov brushBullet, eax
     invoke CreateSolidBrush, 00282828h
     mov brushHud, eax
+    ; ---- 技能配色（下标 = 技能 id）----
+    ; 1冰盾淡蓝 2激光红 3反射品红 4穿墙紫 5地雷深灰 6加速橙 7换位青 8驭水蓝
+    invoke CreateSolidBrush, 00FFF0E0h
+    mov skillBrush[4], eax
+    invoke CreateSolidBrush, 003030FFh
+    mov skillBrush[8], eax
+    invoke CreateSolidBrush, 00FF00C8h
+    mov skillBrush[12], eax
+    invoke CreateSolidBrush, 00C020A0h
+    mov skillBrush[16], eax
+    invoke CreateSolidBrush, 003C3C3Ch
+    mov skillBrush[20], eax
+    invoke CreateSolidBrush, 00008CFFh
+    mov skillBrush[24], eax
+    invoke CreateSolidBrush, 00C8C800h
+    mov skillBrush[28], eax
+    invoke CreateSolidBrush, 00E05010h
+    mov skillBrush[32], eax
+    invoke CreatePen, PS_SOLID, 2, 000000E0h
+    mov penLaser, eax
+    invoke CreatePen, PS_DASH, 1, 00606060h
+    mov penPreview, eax
     ret
 GfxInit endp
 
@@ -222,6 +259,107 @@ DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
     invoke Ellipse, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
     ret
 DrawTank endp
+
+; ------------------------------------------------------------
+; DrawTankBadges —— 坦克技能徽标
+; 持有技能：右上角 8x8 色块（黑边）；冰盾：外圈冰色框；
+; 角标彩点：加速左下橙 / 穿墙左上紫 / 驭水右下蓝 / 换位待发右下青
+; ------------------------------------------------------------
+DrawTankBadges proc uses ebx esi edi tk: dword
+    local r2:RECT
+    mov esi, tk
+    ; 持有技能（右上角）
+    mov eax, (TANK ptr [esi]).skill
+    .if eax != SKILL_NONE
+        mov ebx, eax
+        mov eax, (TANK ptr [esi]).x
+        add eax, TANK_SIZE-8
+        mov r2.left, eax
+        add eax, 8
+        mov r2.right, eax
+        mov eax, (TANK ptr [esi]).y
+        add eax, HUD_H
+        mov r2.top, eax
+        add eax, 8
+        mov r2.bottom, eax
+        invoke FillRect, hdcBack, addr r2, skillBrush[ebx*4]
+        invoke FrameRect, hdcBack, addr r2, brushMortar
+    .endif
+    ; 冰盾激活：坦克外圈
+    mov eax, (TANK ptr [esi]).effOn
+    .if eax & EFF_SHIELD
+        mov eax, (TANK ptr [esi]).x
+        sub eax, 4
+        mov r2.left, eax
+        add eax, TANK_SIZE+8
+        mov r2.right, eax
+        mov eax, (TANK ptr [esi]).y
+        add eax, HUD_H-4
+        mov r2.top, eax
+        add eax, TANK_SIZE+8
+        mov r2.bottom, eax
+        invoke FrameRect, hdcBack, addr r2, brushIce
+    .endif
+    ; 燃油加速：左下橙点
+    mov eax, (TANK ptr [esi]).effOn
+    .if eax & EFF_NITRO
+        mov eax, (TANK ptr [esi]).x
+        mov r2.left, eax
+        add eax, 5
+        mov r2.right, eax
+        mov eax, (TANK ptr [esi]).y
+        add eax, HUD_H + TANK_SIZE-5
+        mov r2.top, eax
+        add eax, 5
+        mov r2.bottom, eax
+        invoke FillRect, hdcBack, addr r2, skillBrush[6*4]
+    .endif
+    ; 穿墙：左上紫点
+    mov eax, (TANK ptr [esi]).effOn
+    .if eax & EFF_GHOST
+        mov eax, (TANK ptr [esi]).x
+        mov r2.left, eax
+        add eax, 5
+        mov r2.right, eax
+        mov eax, (TANK ptr [esi]).y
+        add eax, HUD_H
+        mov r2.top, eax
+        add eax, 5
+        mov r2.bottom, eax
+        invoke FillRect, hdcBack, addr r2, skillBrush[4*4]
+    .endif
+    ; 驭水：右下蓝点
+    mov eax, (TANK ptr [esi]).effOn
+    .if eax & EFF_WATER
+        mov eax, (TANK ptr [esi]).x
+        add eax, TANK_SIZE-5
+        mov r2.left, eax
+        add eax, 5
+        mov r2.right, eax
+        mov eax, (TANK ptr [esi]).y
+        add eax, HUD_H + TANK_SIZE-5
+        mov r2.top, eax
+        add eax, 5
+        mov r2.bottom, eax
+        invoke FillRect, hdcBack, addr r2, skillBrush[8*4]
+    .endif
+    ; 换位待发：右下青点（与驭水同角但互斥出现概率低，颜色可辨）
+    mov eax, (TANK ptr [esi]).swapBul
+    .if eax >= 0
+        mov eax, (TANK ptr [esi]).x
+        add eax, TANK_SIZE-5
+        mov r2.left, eax
+        add eax, 5
+        mov r2.right, eax
+        mov eax, (TANK ptr [esi]).y
+        add eax, HUD_H + TANK_SIZE-5
+        mov r2.top, eax
+        add eax, 5
+        mov r2.bottom, eax
+        invoke FillRect, hdcBack, addr r2, skillBrush[7*4]
+    .endif
+    ret
+DrawTankBadges endp
 
 ; ------------------------------------------------------------
 ; GfxRender —— 绘制一帧：计分条 -> 地图 -> 坦克 -> 子弹 -> 上屏
@@ -442,6 +580,31 @@ BR_Done:
         jmp WallRow
     .endif
 
+    ; 1c) 技能拾取物：彩色块 + 白色序号（1..8）
+    mov eax, pickupType
+    .if eax != 0
+        mov eax, pickupX
+        mov rc.left, eax
+        add eax, PICKUP_SIZE
+        mov rc.right, eax
+        mov eax, pickupY
+        add eax, HUD_H
+        mov rc.top, eax
+        add eax, PICKUP_SIZE
+        mov rc.bottom, eax
+        mov eax, pickupType
+        invoke FillRect, hdcBack, addr rc, skillBrush[eax*4]
+        invoke FrameRect, hdcBack, addr rc, brushMortar
+        mov al, '0'
+        add al, byte ptr pickupType
+        mov skillNum, al
+        mov eax, pickupX
+        add eax, 6
+        mov ecx, pickupY
+        add ecx, HUD_H+1
+        invoke TextOutA, hdcBack, eax, ecx, offset skillNum, 1
+    .endif
+
     ; 2) 画坦克（ebx=槽位号，y 偏移 HUD_H）
     xor ebx, ebx
     mov esi, offset tanks
@@ -467,6 +630,7 @@ TankLoop:
         mov edx, eax                   ; py（含计分条偏移）
         mov eax, (TANK ptr [esi]).dir
         invoke DrawTank, hdcBack, ecx, edx, eax
+        invoke DrawTankBadges, esi      ; 技能徽标
     .endif
     add esi, SIZEOF TANK
     inc ebx
@@ -497,6 +661,48 @@ BulletLoop:
     inc ebx
     .if ebx < MAX_BULLETS
         jmp BulletLoop
+    .endif
+
+    ; 3b) 激光：发射路径（红实线）与瞄准预览（灰虚线）
+    mov eax, laserT
+    .if eax > 0 && laserN >= 2
+        invoke SelectObject, hdcBack, penLaser
+        mov eax, laserY[0]
+        add eax, HUD_H
+        invoke MoveToEx, hdcBack, laserX[0], eax, 0
+        xor ebx, ebx
+GL_Seg:
+        inc ebx
+        mov eax, laserN
+        .if ebx < eax
+            mov edx, ebx
+            shl edx, 2
+            mov eax, laserY[edx]
+            add eax, HUD_H
+            mov ecx, laserX[edx]
+            invoke LineTo, hdcBack, ecx, eax
+            jmp GL_Seg
+        .endif
+    .endif
+    mov eax, prevTank
+    .if eax != -1 && prevN >= 2
+        invoke SelectObject, hdcBack, penPreview
+        mov eax, prevY[0]
+        add eax, HUD_H
+        invoke MoveToEx, hdcBack, prevX[0], eax, 0
+        xor ebx, ebx
+GP_Seg:
+        inc ebx
+        mov eax, prevN
+        .if ebx < eax
+            mov edx, ebx
+            shl edx, 2
+            mov eax, prevY[edx]
+            add eax, HUD_H
+            mov ecx, prevX[edx]
+            invoke LineTo, hdcBack, ecx, eax
+            jmp GP_Seg
+        .endif
     .endif
 
     ; 4) 恢复画笔，整幅上屏
@@ -532,6 +738,21 @@ GfxShutdown proc
     invoke DeleteObject, brushP4
     invoke DeleteObject, brushBullet
     invoke DeleteObject, brushHud
+    ; 技能刷与激光笔
+    xor ebx, ebx
+GS_SkillBrush:
+    mov eax, skillBrush[ebx*4]
+    .if eax != 0
+        push ebx
+        invoke DeleteObject, eax
+        pop ebx
+    .endif
+    inc ebx
+    .if ebx < 9
+        jmp GS_SkillBrush
+    .endif
+    invoke DeleteObject, penLaser
+    invoke DeleteObject, penPreview
     ret
 GfxShutdown endp
 

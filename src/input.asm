@@ -1,7 +1,8 @@
 ; ============================================================
 ; input.asm —— 键盘输入采样（键位表驱动）
-; 每 tick 用 GetAsyncKeyState 扫描 keyTable（4 人 x 5 键，
-; 键位可在设置界面重绑），结果写入 inputTable。
+; 每 tick 用 GetAsyncKeyState 扫描 keyTable（4 人 x 6 键：
+; 上/下/左/右/开火/技能，键位可在人数页容器或设置界面重绑），
+; 结果写入 inputTable。
 ; R = 重开整场（固定键）；菜单导航键由 ui.asm 自行处理。
 ; ============================================================
 
@@ -41,7 +42,7 @@ IS_Act:
     add edi, 4
     inc act
     mov eax, act
-    .if eax < 5
+    .if eax < KEY_PER
         jmp IS_Act
     .endif
     inc ebx

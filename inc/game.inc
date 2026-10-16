@@ -54,6 +54,7 @@ DIR_LEFT    equ 3
 
 ; ---- 坦克 ----
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
+KEY_PER     equ 6                   ; 每玩家键位数：0上1下2左3右4开火5技能
 TANK_SIZE   equ 21                  ; 坦克碰撞/绘制边长（32 的 2/3）
 TANK_SPEED  equ 2                   ; 每 tick 移动像素
 DIRT_SPEED  equ 1                   ; 泥土上每 tick 移动像素（减速）
@@ -62,6 +63,35 @@ FIRE_CD     equ 20                  ; 开火冷却 tick（§3）
 PLAYER_SELF equ 0
 PLAYER_PEER equ 1
 PLAYER_P2   equ 1                   ; 本地第二坦克（对练用）
+
+; ---- 技能系统 ----
+; 拾取物每 10s 随机生成一个（非水/非墙格），坦克中心格拾取，
+; 再按各自"技能键"发动；连续拾取覆盖前一个。
+SKILL_NONE      equ 0
+SK_ICE_SHIELD   equ 1               ; 冰盾：挡一次伤害 + 周围 2x2 冰面
+SK_LASER        equ 2               ; 激光炮：0.7s 后穿墙直线激光
+SK_REFLASER     equ 3               ; 反射激光：预览反弹路径 0.7s 后全路径伤害
+SK_GHOST        equ 4               ; 穿墙术：4s 或 3 次穿墙
+SK_MINE         equ 5               ; 地雷：隐藏雷 2s 后生效（含自己）
+SK_NITRO        equ 6               ; 燃油加速：50% 加速（与地形叠加）
+SK_SWAP         equ 7               ; 换位术：发射子弹后可与之换位
+SK_WATER        equ 8               ; 驭水术：可在水域行走
+SKILL_COUNT     equ 8
+PICKUP_PERIOD   equ 600             ; 10s @ 60tick
+PICKUP_SIZE     equ 18              ; 拾取物边长（像素）
+LASER_AIM_TICKS equ 42              ; 0.7s 瞄准延迟
+SHIELD_TICKS    equ 420             ; 冰盾 7s
+GHOST_TICKS     equ 240             ; 穿墙 4s
+GHOST_USES      equ 3               ; 穿墙 3 次
+MINE_ARM_TICKS  equ 120             ; 地雷 2s 生效
+NITRO_TICKS     equ 300             ; 燃油加速 5s
+WATER_TICKS     equ 360             ; 驭水 6s
+MAX_MINES       equ 16
+MAX_LASER_PTS   equ 10              ; 反射 <=7 次 -> 最多 9 个折点
+EFF_SHIELD      equ 1
+EFF_NITRO       equ 2
+EFF_GHOST       equ 4
+EFF_WATER       equ 8
 
 ; ---- 冰面滑行 ----
 ICE_SLIDE_MIN equ 14                ; 滑行 tick 下限（14*2=28px 起步，可感）
@@ -109,6 +139,15 @@ TANK STRUCT
     slide   dd ?                     ; 冰面滑行剩余 tick（0=无）
     sdir    dd ?                     ; 滑行方向
     score   dd ?                     ; 本场得分（回合制积分）
+    skill   dd ?                     ; 持有未发动的技能 id（SKILL_NONE=无）
+    effOn   dd ?                     ; 激活效果位掩码 EFF_*
+    shieldT dd ?                     ; 冰盾剩余 tick
+    effT    dd ?                     ; 激活效果剩余 tick（加速/穿墙/驭水共用）
+    wallPass dd ?                    ; 穿墙剩余次数
+    swapBul dd ?                     ; 换位绑定子弹池索引（-1=无）
+    aimT    dd ?                     ; 激光瞄准剩余 tick（0=无）
+    aimSkill dd ?                    ; 瞄准中的技能 id
+    lastCell dd ?                    ; 上 tick 中心格 index（穿墙计数）
 TANK ENDS
 
 ; 子弹（全场固定池 bullets[MAX_BULLETS]）

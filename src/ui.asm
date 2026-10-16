@@ -42,24 +42,23 @@ extern peerAddr  :sockaddr_in
 extern peerKnown :dword
 extern hSock     :dword
 
-; win32.inc 未收录的鼠标/图形 API 原型与常量
+; win32.inc 未收录的鼠标 API 原型与常量
 VK_LBUTTON     equ 001h
 GetCursorPos   PROTO stdcall :DWORD
 ScreenToClient PROTO stdcall :DWORD,:DWORD
-FrameRect      PROTO stdcall :DWORD,:DWORD,:DWORD
 
-; ---- 人数选择页键位容器布局（客户区 992x640）----
+; ---- 人数选择页键位容器布局（客户区 992x640，6 行/人）----
 KBBOX_X0   equ 28                  ; 首个容器左缘
 KBBOX_DX   equ 240                 ; 容器水平间距（宽 216 + 缝 24）
 KBBOX_W    equ 216                 ; 容器宽
-KBBOX_H    equ 196                 ; 容器高
-KBBOX_Y    equ 330                 ; 容器顶部 y
+KBBOX_H    equ 228                 ; 容器高（头 40 + 6 行*30 + 底 8）
+KBBOX_Y    equ 322                 ; 容器顶部 y
 KBROW_Y0   equ 40                  ; 容器顶 -> 首行偏移
 KBROW_DH   equ 30                  ; 行高
 RST_X      equ 745                 ; 重置按钮区（容器区右下角）
-RST_Y      equ 538
+RST_Y      equ 556
 RST_W      equ 210
-RST_H      equ 34
+RST_H      equ 30
 
 .data
     gameState   dd ST_MENU
@@ -98,25 +97,29 @@ RST_H      equ 34
     fontOld     dd ?
     bcastAddr   sockaddr_in <>
     oneVal      dd 1
-    aTab        dd aUp, aDn, aLt, aRt, aFire
+    aTab        dd aUp, aDn, aLt, aRt, aFire, aUse
     aUp         db "UP", 0
     aDn         db "DOWN", 0
     aLt         db "LEFT", 0
     aRt         db "RIGHT", 0
     aFire       db "FIRE", 0
+    aUse        db "SKILL", 0
     ; 中文动作名：等长指针表（每项独立 0 结尾，按下标索引）
     cUpW        dw 4E0Ah, 0             ; 上
     cDnW        dw 4E0Bh, 0             ; 下
     cLtW        dw 5DE6h, 0             ; 左
     cRtW        dw 53F3h, 0             ; 右
     cFireW      dw 5F00h, 706Bh, 0      ; 开火
-    cnActT      dd cUpW, cDnW, cLtW, cRtW, cFireW
+    cUseW       dw 4F7Fh, 7528h, 0      ; 使用（技能）
+    cnActT      dd cUpW, cDnW, cLtW, cRtW, cFireW, cUseW
     vkUpN       db "UP", 0
     vkDnN       db "DOWN", 0
     vkLtN       db "LEFT", 0
     vkRtN       db "RIGHT", 0
     vkSpN       db "SPACE", 0
     vkEnN       db "ENTER", 0
+    vkRsN       db "RSH", 0
+    vkLsN       db "LSH", 0
     szTitle     db "T A N K   W A R   A S M", 0
     szKeysLbl   db "KEYS (CLICK A KEY TO CHANGE)", 0
     szItem1     db "START GAME", 0
@@ -356,6 +359,12 @@ VkName proc uses ebx ecx edx edi vk: dword, pDst: dword
     .elseif eax == VK_RETURN
         invoke StrCopy, offset vkEnN, edi, 5
         mov eax, 5
+    .elseif eax == VK_RSHIFT
+        invoke StrCopy, offset vkRsN, edi, 4
+        mov eax, 4
+    .elseif eax == VK_LSHIFT
+        invoke StrCopy, offset vkLsN, edi, 4
+        mov eax, 4
     .elseif (eax >= 'A' && eax <= 'Z') || (eax >= '0' && eax <= '9')
         mov [edi], al
         mov eax, 1
@@ -458,15 +467,15 @@ NHT_Box:
         mov edx, KBBOX_Y + KBROW_Y0  ; 首行顶部
         xor esi, esi
 NHT_Row:
-        .if esi >= 5
+        .if esi >= KEY_PER
             jmp NHT_Next
         .endif
         mov eax, edx
         add eax, KBROW_DH - 4        ; 行命中高度 26px
         .if mouseY >= edx && mouseY < eax
             mov eax, ebx
-            imul eax, eax, 5
-            add eax, esi             ; slot*5 + 动作
+            imul eax, eax, KEY_PER
+            add eax, esi             ; slot*KEY_PER + 动作
             ret
         .endif
         add edx, KBROW_DH
@@ -570,7 +579,7 @@ UT_MMouseDone:
     .elseif gameState == ST_NUMSEL
         ; 人数变少时改键目标可能指向已隐藏的容器 -> 清理
         mov eax, numSel
-        imul eax, eax, 5
+        imul eax, eax, KEY_PER
         .if rebindSlot >= eax
             mov rebindSlot, -1
         .endif
@@ -590,11 +599,11 @@ UT_Scan2:
                 invoke GetAsyncKeyState, eax
                 and eax, 8000h
                 .if eax != 0
-                    ; 冲突校验：不得与其他任何坦克（含未显示的 3/4 号位）的键相同
+                    ; 冲突校验：不得与其他任何槽位的键相同
                     mov edx, scanVk
                     xor ebx, ebx
 UT_Conf:
-                    .if ebx >= 20
+                    .if ebx >= MAX_PLAYERS*KEY_PER
                         ; 无冲突：写入并结束等待
                         mov eax, rebindSlot
                         mov keyTable[eax*4], edx
@@ -711,13 +720,13 @@ UT_ScanDone:
         .else
             .if dnE != 0
                 inc setSel
-                .if setSel > 19
+                .if setSel > MAX_PLAYERS*KEY_PER-1
                     mov setSel, 0
                 .endif
             .endif
             .if upE != 0
                 .if setSel == 0
-                    mov setSel, 19
+                    mov setSel, MAX_PLAYERS*KEY_PER-1
                 .else
                     dec setSel
                 .endif
@@ -871,16 +880,16 @@ NS_Box:
         mov [edi+1], al
         mov byte ptr [edi+2], 0
         invoke UiTextZ, hdcBack, boxRc.left, KBBOX_Y+8, offset uiBuf, colDark
-        ; 5 行键位：0上 1下 2左 3右 4开火
+        ; 5 行键位：0上 1下 2左 3右 4开火 5技能
         mov rowY, KBBOX_Y + KBROW_Y0
-        xor esi, esi                     ; 动作 0..4
+        xor esi, esi                     ; 动作 0..5
 NS_Row:
-        .if esi >= 5
+        .if esi >= KEY_PER
             inc ebx
             jmp NS_Box
         .endif
         mov eax, ebx
-        imul eax, eax, 5
+        imul eax, eax, KEY_PER
         add eax, esi
         mov slotIdx, eax
         ; 颜色：改键中的槽位闪烁；悬停高亮；其余灰
@@ -945,9 +954,9 @@ NS_BoxDone:
         invoke UiTextL, hdcBack, RST_X, RST_Y, offset szReset, offset CN_RESET, edx
         ; ---- 底部提示：改键等待时显示引导，否则显示操作提示 ----
         .if rebindSlot != -1
-            invoke UiTextL, hdcBack, 360, 588, offset szReb2, offset CN_REB2, colHi
+            invoke UiTextL, hdcBack, 360, 600, offset szReb2, offset CN_REB2, colHi
         .else
-            invoke UiTextL, hdcBack, 380, 588, offset szHint, offset CN_HINT, colGray
+            invoke UiTextL, hdcBack, 380, 600, offset szHint, offset CN_HINT, colGray
         .endif
         invoke SelectObject, hdcBack, menuFont
 
@@ -958,7 +967,7 @@ NS_BoxDone:
 
         xor ebx, ebx
 SS_Rows:
-        .if ebx >= 20
+        .if ebx >= MAX_PLAYERS*KEY_PER
             jmp SS_Done
         .endif
         ; 行文本（宽字符）: "P<p+1> <ACTION> : <KEY>"
@@ -966,7 +975,7 @@ SS_Rows:
         mov word ptr [edi], 'P'
         mov eax, ebx
         xor edx, edx
-        mov ecx, 5
+        mov ecx, KEY_PER
         div ecx
         add al, '1'
         mov [edi+2], ax                 ; '1'..'4'（宽）

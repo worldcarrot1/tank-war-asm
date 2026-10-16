@@ -24,3 +24,6 @@ T16_REFL_PTS(expect>=3)=10
 T17_BLOCKED(expect1)=1
 T17_PASSED(expect1)=1
 T17_USES_LEFT(expect2)=2
+T18_ARM_HP(expect3)=3
+T18_BOOM_HP(expect2)=2
+T18_MINE_GONE(expect1)=1

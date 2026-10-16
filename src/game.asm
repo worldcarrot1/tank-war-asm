@@ -572,6 +572,9 @@ arenaTable dd ARENA1,
     stT17a db "T17_BLOCKED(expect1)="      ; 21 字符
     stT17b db "T17_PASSED(expect1)="       ; 20 字符
     stT17c db "T17_USES_LEFT(expect2)="    ; 23 字符
+    stT18a db "T18_ARM_HP(expect3)="       ; 20 字符
+    stT18b db "T18_BOOM_HP(expect2)="      ; 21 字符
+    stT18c db "T18_MINE_GONE(expect1)="    ; 23 字符
 
 .code
 
@@ -1418,6 +1421,37 @@ T16Done:
     invoke LogStr, offset stT17c, 23
     invoke LogNum, logVal                ; expect 2（用掉 1 次）
     mov mapData[13*COLS+6], TILE_EMPTY
+T17Done:
+    ; T18: 地雷 —— 2s 后生效；生效时踩雷者（含自己）受伤；引爆后消失
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].skill, SK_MINE
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 布雷（就埋在自己脚下）
+    mov inputTable[20], 0
+    invoke AdvanceTicks, 60              ; 未到 2s
+    mov eax, tanks[0*SIZEOF TANK].hp
+    mov logVal, eax
+    invoke LogStr, offset stT18a, 20
+    invoke LogNum, logVal                ; expect 3（未生效）
+    invoke AdvanceTicks, 61              ; 到时 -> 仍踩在雷上 -> 自伤
+    mov eax, tanks[0*SIZEOF TANK].hp
+    mov logVal, eax
+    invoke LogStr, offset stT18b, 21
+    invoke LogNum, logVal                ; expect 2（含自己）
+    mov eax, mineCell[0]
+    .if eax == -1
+        mov eax, 1
+    .else
+        mov eax, 0
+    .endif
+    mov logVal, eax
+    invoke LogStr, offset stT18c, 23
+    invoke LogNum, logVal                ; expect 1（引爆后消失）
     call CloseLog
     ret
 SelfTestRun endp

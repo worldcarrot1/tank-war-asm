@@ -62,7 +62,7 @@ extern brushP2     :dword        ; gfx：P2 车体色
 extern brushBullet :dword        ; gfx：子弹
 extern brushIce    :dword        ; gfx：冰面（演示/护盾）
 extern brushWater  :dword        ; gfx：水面（演示）
-DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD
 DrawPickupIcon PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 GameInit  PROTO
 InitKeyDefaults PROTO
@@ -902,7 +902,6 @@ PS_VlOk:
         .endif
         ; ---- 鼠标：悬停高亮 + 左键点击激活 ----
         ; 菜单 5 项渲染矩形：x 440..660，y = 250+i*60 .. +34
-        xor ebx, ebx
         ; 鼠标坐标需在窗口客户区内才参与 hover（多屏 DPI 下 GetCursorPos 可能返回界外乱值）
         mov eax, mouseX
         .if eax < 0 || eax >= WND_W
@@ -1698,6 +1697,7 @@ NS_BoxDone:
         invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
         invoke SelectObject, hdcBack, menuFont
 
+        xor ebx, ebx
 
     ; ---------- 联机大厅 ----------
     .elseif gameState == ST_LAN
@@ -1845,21 +1845,21 @@ NS_BoxDone:
                 mov demoDir, DIR_UP
             .endif
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, demoP1x, demoP1y, demoDir, brushP1
+            invoke DrawTank, hdcBack, demoP1x, demoP1y, demoDir
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 1
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT, brushP1
+            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT
             mov eax, demoPh
             .if eax < 3
                 invoke SelectObject, hdcBack, brushP2
-                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
+                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
             .else
                 mov eax, demoT
                 and eax, 8
                 .if eax == 0
                     invoke SelectObject, hdcBack, brushP2
-                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
+                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
                 .endif
                 mov eax, demoPt
                 .if eax < 40
@@ -1885,6 +1885,7 @@ NS_BoxDone:
                     mov boxRc.bottom, 344
                     invoke FillRect, hdcBack, addr boxRc, brushBullet
                 .endif
+            .endif
             ; P2 血条：一滴血（第一发即淘汰）
             mov eax, demoPh
             .if eax == 0
@@ -1894,13 +1895,16 @@ NS_BoxDone:
                 mov boxRc.bottom, 304
                 invoke FillRect, hdcBack, addr boxRc, brushBrick
             .endif
+            invoke SelectObject, hdcBack, menuFont
+        .elseif eax == 2
+            invoke SelectObject, hdcBack, brushSteel
             mov boxRc.left, 596
             mov boxRc.top, 240
             mov boxRc.right, 604
             mov boxRc.bottom, 440
             invoke FillRect, hdcBack, addr boxRc, brushSteel
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT, brushP1
+            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT
             mov eax, demoT
             xor edx, edx
             mov ecx, 480
@@ -1979,7 +1983,7 @@ NS_BoxDone:
             mov ecx, 100
             div ecx
             add eax, 160
-            invoke DrawTank, hdcBack, eax, 325, DIR_RIGHT, brushP1
+            invoke DrawTank, hdcBack, eax, 316, DIR_RIGHT
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 4
             mov eax, demoPh
@@ -2012,21 +2016,21 @@ NS_BoxDone:
                 invoke FrameRect, hdcBack, addr boxRc, brushIce
             .endif
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, demoP1x, 330, DIR_RIGHT, brushP1
+            invoke DrawTank, hdcBack, demoP1x, 330, DIR_RIGHT
             invoke SelectObject, hdcBack, menuFont
         .else
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, 250, 330, DIR_RIGHT, brushP1
+            invoke DrawTank, hdcBack, 250, 330, DIR_RIGHT
             mov eax, demoPh
             .if eax < 2
                 invoke SelectObject, hdcBack, brushP2
-                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
+                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
             .else
                 mov eax, demoT
                 and eax, 8
                 .if eax == 0
                     invoke SelectObject, hdcBack, brushP2
-                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
+                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
                 .endif
                 invoke SelectObject, hdcBack, menuFont
                 mov eax, 300
@@ -2064,7 +2068,6 @@ NS_BoxDone:
         mov byte ptr [edi+5], 0
         invoke UiTextZ, hdcBack, 470, 165, offset uiBuf, colDark
         invoke UiTextL, hdcBack, 360, 560, offset szSkHint, offset CN_SKHINT, colGray
-    .endif
     .endif
 
 UR_Done:

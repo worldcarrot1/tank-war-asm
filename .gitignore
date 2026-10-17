@@ -1,8 +1,10 @@
-*.png
-*.jpg
-*.bmp
-selftest.log
-*.exe
+# 构建产物
 *.obj
-*.pdb
+*.exe
+*.res
 *.ilk
+*.pdb
+
+# 编辑器
+.vs/
+.vscode/

@@ -51,17 +51,10 @@ ARENA_COUNT equ 20                  ; 内置对战图 ARENA1..20（每局随机�
 WALL_THICK  equ 8                   ; 挡板厚度（像素），格内居中
 
 ; ---- 方向 ----
-; ---- 方向（360 度角度制：0=朝右，90=朝下，180=朝左，270=朝上）----
-DIR_RIGHT   equ 0
-DIR_DOWN    equ 90
-DIR_LEFT    equ 180
-DIR_UP      equ 270
-TURN_SPEED  equ 4                   ; 每 tick 转向度数（左右键旋转）
-; MoveTank 动作码（与 DIR_* 角度值区分）
-MV_FWD      equ 0                   ; 前进
-MV_BACK     equ 1                   ; 后退
-MV_TL       equ 2                   ; 左转
-MV_TR       equ 3                   ; 右转
+DIR_UP      equ 0
+DIR_RIGHT   equ 1
+DIR_DOWN    equ 2
+DIR_LEFT    equ 3
 
 ; ---- 坦克 ----
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
@@ -70,8 +63,8 @@ TANK_SIZE   equ 25                  ; 坦克碰撞/绘制边长（21 的 1.2 倍
 TANK_SPEED  equ 4                   ; 每 tick 基础移动像素（偶 tick）
 TANK_SPEED_HI equ 5                 ; 奇 tick（4/5 交替 = 平均 4.5，比子弹慢 25%）
 DIRT_SPEED  equ 2                   ; 泥土上每 tick 移动像素（减速）
-TANK_HP     equ 1                   ; 一滴血（用户要求：命中即淘汰）
-LIVES_INIT  equ 1                   ; 每辆坦克初始命数
+TANK_HP     equ 1                   ; 一滴血（命中即淘汰）
+LIVES_INIT  equ 3                   ; 每辆坦克初始命数
 RESPAWN_TICKS equ 90                ; 阵亡后 1.5s 重生
 SPAWN_PROT_TICKS equ 150            ; 重生保护 2.5s（免伤+闪烁）
 FIRE_CD     equ 20                  ; 开火冷却 tick（§3）

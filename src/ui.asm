@@ -62,7 +62,7 @@ extern brushP2     :dword        ; gfx：P2 车体色
 extern brushBullet :dword        ; gfx：子弹
 extern brushIce    :dword        ; gfx：冰面（演示/护盾）
 extern brushWater  :dword        ; gfx：水面（演示）
-DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD
+DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 DrawPickupIcon PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 GameInit  PROTO
 InitKeyDefaults PROTO
@@ -1936,21 +1936,21 @@ SS_Done:
                 mov demoDir, DIR_UP
             .endif
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, demoP1x, demoP1y, demoDir
+            invoke DrawTank, hdcBack, demoP1x, demoP1y, demoDir, brushP1
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 1
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT
+            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT, brushP1
             mov eax, demoPh
             .if eax < 3
                 invoke SelectObject, hdcBack, brushP2
-                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
+                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
             .else
                 mov eax, demoT
                 and eax, 8
                 .if eax == 0
                     invoke SelectObject, hdcBack, brushP2
-                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
+                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
                 .endif
                 mov eax, demoPt
                 .if eax < 40
@@ -2000,7 +2000,7 @@ SS_Done:
             mov boxRc.bottom, 440
             invoke FillRect, hdcBack, addr boxRc, brushSteel
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT
+            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT, brushP1
             mov eax, demoT
             xor edx, edx
             mov ecx, 480
@@ -2079,7 +2079,7 @@ SS_Done:
             mov ecx, 100
             div ecx
             add eax, 160
-            invoke DrawTank, hdcBack, eax, 325, DIR_RIGHT
+            invoke DrawTank, hdcBack, eax, 325, DIR_RIGHT, brushP1
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 4
             mov eax, demoPh
@@ -2112,21 +2112,21 @@ SS_Done:
                 invoke FrameRect, hdcBack, addr boxRc, brushIce
             .endif
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, demoP1x, 330, DIR_RIGHT
+            invoke DrawTank, hdcBack, demoP1x, 330, DIR_RIGHT, brushP1
             invoke SelectObject, hdcBack, menuFont
         .else
             invoke SelectObject, hdcBack, brushP1
-            invoke DrawTank, hdcBack, 250, 330, DIR_RIGHT
+            invoke DrawTank, hdcBack, 250, 330, DIR_RIGHT, brushP1
             mov eax, demoPh
             .if eax < 2
                 invoke SelectObject, hdcBack, brushP2
-                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
+                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
             .else
                 mov eax, demoT
                 and eax, 8
                 .if eax == 0
                     invoke SelectObject, hdcBack, brushP2
-                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
+                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT, brushP2
                 .endif
                 invoke SelectObject, hdcBack, menuFont
                 mov eax, 300

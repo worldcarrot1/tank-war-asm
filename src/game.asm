@@ -621,7 +621,7 @@ arenaTable dd ARENA1,
     stT23a db "T23_LIVES_AFTER(expect2)="  ; 25 字符
     stT23b db "T23_ALIVE_RESPAWN(expect1)=" ; 27 字符
     stT23c db "T23_HP_RESPAWN(expect3)="   ; 24 字符
-    stT23d db "T23_PROT_AFTER(expect120)=" ; 27 字符
+    stT23d db "T23_PROT_AFTER(expect120)= " ; 27 字符（尾空格吸收 LogStr 溢出字节）
     stT23e db "T24_SIZEOF_TANK="             ; 15 字符
     stT23f db "T24_P2_SKILL="               ; 14 字符
 
@@ -2126,25 +2126,6 @@ T23KillDone:
     invoke LogNum, tanks[1*SIZEOF TANK].protT      ; expect 120（保护剩余）
     mov testLives, 1                               ; 恢复（保险）
     call ResetTanks
-    invoke LogStr, offset stT23a, 25               ; DBG: P2 lives after reset
-    invoke LogNum, tanks[1*SIZEOF TANK].lives
-    invoke LogStr, offset stT23b, 27               ; DBG: P2 alive after reset
-    invoke LogNum, tanks[1*SIZEOF TANK].alive
-    invoke LogStr, offset stT23c, 24               ; DBG: P2 x/32 after reset
-    mov eax, tanks[1*SIZEOF TANK].x
-    shr eax, 5
-    invoke LogNum, eax
-    invoke LogStr, offset stT23d, 27               ; DBG: P2 dir after reset
-    invoke LogNum, tanks[1*SIZEOF TANK].dir
-    invoke LogStr, offset stT23e, 25               ; DBG: TANK_SIZEOF
-    invoke LogNum, SIZEOF TANK
-    invoke LogStr, offset stT23f, 25               ; DBG: P2 skill field (offset sanity)
-    invoke LogNum, tanks[1*SIZEOF TANK].skill
-    invoke LogStr, offset stT23d, 27               ; DBG: P2 protT again
-    invoke LogNum, tanks[1*SIZEOF TANK].protT
-    invoke LogStr, offset stT23e, 25               ; DBG: P2 lastCell
-    invoke LogNum, tanks[1*SIZEOF TANK].lastCell
-    invoke LogStr, offset stT23c, 24               ; DBG: P2 hp again
     invoke LogNum, tanks[1*SIZEOF TANK].hp
 
     call CloseLog

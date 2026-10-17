@@ -99,6 +99,7 @@ UiTextL   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD ; ui.asm：双语文�
     brushIcon   dd ?                ; 图标白色填充
     penIcon     dd ?                ; 图标白色 2px 笔
     penTube     dd ?                ; 坦克炮管 4px 笔
+    brushSel    dd ?                ; 当前坦克刷（TankLoop→DrawTank）
     penOld2     dd ?
     gfxX        dd ?                ; 图标绘制原点（宏用）
     gfxY        dd ?
@@ -575,7 +576,7 @@ ROTPT MACRO idx, lox, loy
     mov pts[idx*2+1], eax
 ENDM
 
-DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
+DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword, brushV: dword
     local oldPen2:dword
     local oldBr:dword
     mov eax, dirV
@@ -585,7 +586,7 @@ DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
     ; 1) 底盘：玩家色大圆（25px）+ 深色描边
     invoke SelectObject, hdc, penDark
     mov oldPen2, eax
-    invoke SelectObject, hdc, brushP1
+    invoke SelectObject, hdc, brushV
     mov oldBr, eax
     mov eax, px
     mov ecx, py
@@ -629,8 +630,8 @@ DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
     mov ebx, ecx
     add ebx, 13
     invoke Ellipse, hdc, eax, ecx, edx, ebx
-    ; 5) 炮塔中心亮点（当前刷=brushMortar 深色，换回玩家色小圆）
-    invoke SelectObject, hdc, brushP1
+    ; 5) 炮塔中心亮点（玩家色小圆）
+    invoke SelectObject, hdc, brushV
     mov eax, px
     add eax, 10
     mov ecx, py
@@ -1030,20 +1031,27 @@ TankLoop:
         mov eax, ebx
         .if eax == 0
             invoke SelectObject, hdcBack, brushP1
+            mov brushSel, eax
         .elseif eax == 1
             invoke SelectObject, hdcBack, brushP2
+            mov brushSel, eax
         .elseif eax == 2
             invoke SelectObject, hdcBack, brushP3
+            mov brushSel, eax
         .else
             invoke SelectObject, hdcBack, brushP4
+            mov brushSel, eax
         .endif
         pop ebx
-        mov eax, (TANK ptr [esi]).x
-        mov ecx, eax                   ; px
-        mov eax, (TANK ptr [esi]).y
-        mov edx, eax                   ; py（含计分条偏移）
+        mov eax, brushSel
+        push ebx
+        push esi
+        mov ecx, (TANK ptr [esi]).x
+        mov edx, (TANK ptr [esi]).y
         mov eax, (TANK ptr [esi]).dir
-        invoke DrawTank, hdcBack, ecx, edx, eax
+        invoke DrawTank, hdcBack, ecx, edx, eax, brushSel
+        pop esi
+        pop ebx
         invoke DrawTankBadges, esi      ; 技能徽标
         ; 定格虚影：画在虚影位置（空心轮廓）
         mov eax, (TANK ptr [esi]).effOn

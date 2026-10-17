@@ -57,15 +57,11 @@ extern brushMortar :dword        ; gfx：深色描边
 extern brushBg     :dword        ; gfx：页面底色
 extern brushSteel  :dword        ; gfx：钢墙
 extern brushBrick  :dword        ; gfx：砖红（爆炸/血条）
-extern brushP1     :dword        ; gfx：P1 车体色（演示动画）
+extern brushP1     :dword        ; gfx：P1 车体色
 extern brushP2     :dword        ; gfx：P2 车体色
 extern brushBullet :dword        ; gfx：子弹
-DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD
-extern brushP1    :dword
-extern brushP2    :dword
-extern brushBullet :dword
-extern brushBrick :dword
-
+extern brushIce    :dword        ; gfx：冰面（演示/护盾）
+extern brushWater  :dword        ; gfx：水面（演示）
 DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD
 DrawPickupIcon PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 GameInit  PROTO
@@ -160,14 +156,30 @@ RST_H      equ 30
     aTab        dd aUp, aDn, aLt, aRt, aFire, aUse
 
     ; ---- 技能说明页数据（9 技能：名/描述，中英双语）----
-    skillPage   dd 0                   ; 当前页 0..SKILL_COUNT（0=玩法演示，1..9=技能）
+    skillPage   dd 0                   ; 当前页 0..SKILL_COUNT-1
     demoT       dd 0                   ; 玩法演示动画 tick
     demoPage    dd 0                   ; 玩法演示页 0..5
-    demoP1y     dd 0                   ; 演示动画坦克 y
-    demoDir     dd 0                   ; 演示动画朝向
     szPlus1     db "+1", 0
     szScore0    db "P1 0 : 0 P2", 0
     szScore1    db "P1 1 : 0 P2", 0
+    szDemT      db "GAMEPLAY", 0
+    CN_DEMOMENU dw 073A9h,06CD5h,06F14h,0793Ah, 0
+    CN_DEMOT    dw 073A9h,06CD5h,06F14h,0793Ah, 0
+    szKO        db "K.O.", 0
+    dDemoEn     dd dDE0, dDE1, dDE2, dDE3, dDE4, dDE5
+    dDemoCn     dd kDD0, kDD1, kDD2, kDD3, kDD4, kDD5
+    dDE0        db "MOVE: arrow keys / WASD; spawn faces half-map side", 0
+    dDE1        db "FIRE: each hit drains 1 HP; 3 HP and out", 0
+    dDE2        db "BOUNCE: bullets ricochet off walls (up to 10)", 0
+    dDE3        db "TERRAIN: mud slows, ice slides, water blocks", 0
+    dDE4        db "SKILLS: a box spawns every 10s; skill key fires it", 0
+    dDE5        db "SCORE: last survivor +1; most wins takes the match", 0
+    kDD0        dw 079FBh,052A8h,0FF1Ah,065B9h,05411h,0952Eh,06216h,00020h,00057h,00041h,00053h,00044h,0FF1Bh,051FAh,0751Fh,0671Dh,05411h,06309h,06240h,05728h,0534Ah,0573Ah,081EAh,052A8h,08BBEh,05B9Ah, 0
+    kDD1        dw 05C04h,051FBh,0FF1Ah,06BCFh,06B21h,0547Dh,04E2Dh,06263h,0654Ch,04EBAh,00020h,00031h,00020h,08840h,0FF1Bh,00033h,00020h,08840h,08017h,05C3Dh,05373h,06DD8h,06C70h, 0
+    kDD2        dw 053CDh,05F39h,0FF1Ah,05B50h,05F39h,0649Eh,05899h,04F1Ah,053CDh,05F39h,0FF08h,06700h,0591Ah,00020h,00031h,00030h,00020h,06B21h,0FF09h,0FF0Ch,053EFh,04EE5h,07ED5h,0540Eh,0653Bh,051FBh, 0
+    kDD3        dw 05730h,05F62h,0FF1Ah,06CE5h,05730h,051CFh,0901Fh,03001h,051B0h,09762h,06ED1h,0884Ch,03001h,06C34h,09762h,0963Bh,06321h,0FF08h,09A6Dh,06C34h,0672Fh,053EFh,0901Ah,08FC7h,0FF09h, 0
+    kDD4        dw 06280h,080FDh,0FF1Ah,05730h,056FEh,06BCFh,00020h,00031h,00030h,00020h,079D2h,05237h,04E00h,04E2Ah,06280h,080FDh,07BB1h,0FF0Ch,06309h,06280h,080FDh,0952Eh,053D1h,052A8h, 0
+    kDD5        dw 05F97h,05206h,0FF1Ah,056DEh,05408h,06700h,0540Eh,05B58h,06D3Bh,08005h,00020h,0002Bh,00031h,00020h,05206h,0FF1Bh,05C40h,06570h,06253h,06EE1h,0603Bh,05206h,06700h,09AD8h,08005h,083B7h,080DCh, 0
     skNmEn      dd sKN1,sKN2,sKN3,sKN4,sKN5,sKN6,sKN7,sKN8,sKN9
     skNmCn      dd kCN1,kCN2,kCN3,kCN4,kCN5,kCN6,kCN7,kCN8,kCN9
     skDsEn      dd sKD1,sKD2,sKD3,sKD4,sKD5,sKD6,sKD7,sKD8,sKD9
@@ -209,44 +221,11 @@ RST_H      equ 30
     kCN9        dw 05B9Ah,0683Ch,0672Fh, 0
     kCD9        dw 0539Fh,05730h,07559h,04E0Bh,00020h,00032h,00020h,053EAh,0865Ah,05F71h,0FF0Ch,0672Ch,04F53h,0514Dh,04F24h,00020h,00036h,00020h,079D2h,0FF1Bh,05B50h,05F39h,06253h,04E2Dh,0865Ah,05F71h,04F1Ah,08BA9h,0672Ch,04F53h,06389h,08840h, 0
     szSkT       db "SKILLS", 0
-    CN_TITLE    dw 05766h,0514Bh,05927h,06218h, 0
     szItemSk    db "SKILL GUIDE", 0
     CN_SKT      dw 06280h,080FDh,08BF4h,0660Eh, 0
     CN_SKILLMENU dw 06280h,080FDh,08BF4h,0660Eh, 0
-    szMenuHint  db "UP/DOWN: SELECT   ENTER: CONFIRM   CLICK TO PICK", 0
-    CN_MENUHINT dw 04E0Ah,04E0Bh,0952Eh,09009h,062E9h,03000h,056DEh,08F66h,0786Eh,08BA4h,03000h,09F20h,06807h,070B9h,051FBh,076F4h,08FBEh, 0
     szSkHint    db "ESC: BACK   <- ->: PAGE", 0
-    szSetHint   db "ESC: BACK   LEFT/RIGHT: VOLUME", 0
-    CN_SETHINT  dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,08C03h,08282h,097F3h,091CFh, 0
     CN_SKHINT   dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,07FFBh,09875h, 0
-    skDemoEn    dd sDE0, sDE1, sDE2, sDE3
-    skDemoCn    dd kDM0, kDM1, kDM2, kDM3
-    sDE0        db "1. Move your tank with arrow keys / WASD", 0
-    sDE1        db "2. Grab the skill box, press your skill key to use it", 0
-    sDE2        db "3. Fire! Every hit drains 1 HP from the enemy", 0
-    sDE3        db "4. Deplete all enemy lives to win the round", 0
-    kDM0        dw 00031h,0002Eh,00020h,07528h,065B9h,05411h,0952Eh,079FBh,052A8h,04F60h,07684h,05766h,0514Bh, 0
-    kDM1        dw 00032h,0002Eh,00020h,06361h,08D77h,06280h,080FDh,07BB1h,0FF0Ch,06309h,06280h,080FDh,0952Eh,053D1h,052A8h,06280h,080FDh, 0
-    kDM2        dw 00033h,0002Eh,00020h,05F00h,070AEh,0FF01h,06BCFh,06B21h,0547Dh,04E2Dh,06D88h,08017h,0654Ch,04EBAh,00020h,00031h,00020h,070B9h,08840h,091CFh, 0
-    kDM3        dw 00034h,0002Eh,00020h,06253h,07A7Ah,0654Ch,04EBAh,06240h,06709h,0547Dh,06570h,05373h,06DD8h,06C70h,0FF0Ch,08D62h,04E0Bh,056DEh,05408h,05F97h,05206h, 0
-    szKO        db "K.O.", 0
-    szDemT      db "GAMEPLAY", 0
-    CN_DEMOMENU dw 073A9h,06CD5h,06F14h,0793Ah, 0
-    CN_DEMOT    dw 073A9h,06CD5h,06F14h,0793Ah, 0
-    dDemoEn     dd dDE0, dDE1, dDE2, dDE3, dDE4, dDE5
-    dDemoCn     dd kDD0, kDD1, kDD2, kDD3, kDD4, kDD5
-    dDE0        db "MOVE: arrow keys / WASD; spawn faces half-map side", 0
-    dDE1        db "FIRE: each hit drains 1 HP; 3 HP and out", 0
-    dDE2        db "BOUNCE: bullets ricochet off walls (up to 10)", 0
-    dDE3        db "TERRAIN: mud slows, ice slides, water blocks", 0
-    dDE4        db "SKILLS: a box spawns every 10s; skill key fires it", 0
-    dDE5        db "SCORE: last survivor +1; most wins takes the match", 0
-    kDD0        dw 079FBh,052A8h,0FF1Ah,065B9h,05411h,0952Eh,06216h,00020h,00057h,00041h,00053h,00044h,0FF1Bh,051FAh,0751Fh,0671Dh,05411h,06309h,06240h,05728h,0534Ah,0573Ah,081EAh,052A8h,08BBEh,05B9Ah, 0
-    kDD1        dw 05C04h,051FBh,0FF1Ah,06BCFh,06B21h,0547Dh,04E2Dh,06263h,0654Ch,04EBAh,00020h,00031h,00020h,08840h,0FF1Bh,00033h,00020h,08840h,08017h,05C3Dh,05373h,06DD8h,06C70h, 0
-    kDD2        dw 053CDh,05F39h,0FF1Ah,05B50h,05F39h,0649Eh,05899h,04F1Ah,053CDh,05F39h,0FF08h,06700h,0591Ah,00020h,00031h,00030h,00020h,06B21h,0FF09h,0FF0Ch,053EFh,04EE5h,07ED5h,0540Eh,0653Bh,051FBh, 0
-    kDD3        dw 05730h,05F62h,0FF1Ah,06CE5h,05730h,051CFh,0901Fh,03001h,051B0h,09762h,06ED1h,0884Ch,03001h,06C34h,09762h,0963Bh,06321h,0FF08h,09A6Dh,06C34h,0672Fh,053EFh,0901Ah,08FC7h,0FF09h, 0
-    kDD4        dw 06280h,080FDh,0FF1Ah,05730h,056FEh,06BCFh,00020h,00031h,00030h,00020h,079D2h,05237h,04E00h,04E2Ah,06280h,080FDh,07BB1h,0FF0Ch,06309h,06280h,080FDh,0952Eh,053D1h,052A8h, 0
-    kDD5        dw 05F97h,05206h,0FF1Ah,056DEh,05408h,06700h,0540Eh,05B58h,06D3Bh,08005h,00020h,0002Bh,00031h,00020h,05206h,0FF1Bh,05C40h,06570h,06253h,06EE1h,0603Bh,05206h,06700h,09AD8h,08005h,083B7h,080DCh, 0
     szSkPage    db " / %d", 0
 
     aUp         db "UP", 0
@@ -281,8 +260,6 @@ RST_H      equ 30
     szNumL      db "<<", 0
     szNumR      db ">>", 0
     szRounds    db "ROUNDS", 0
-    szPlLbl     db "PLAYERS", 0
-    CN_PLLBL    dw 04EBAh,06570h, 0
     szHint      db "ENTER: CONFIRM   ESC: BACK", 0
     szNameHint  db "CLICK NAME TO RENAME", 0
     szNameEdit  db "TYPE A NAME, ENTER TO OK", 0
@@ -291,6 +268,8 @@ RST_H      equ 30
     szOn2       db "ON", 0
     szOff2      db "OFF", 0
     szNight     db "NIGHT MODE", 0
+    szSetHint   db "ESC: BACK   LEFT/RIGHT: VOLUME", 0
+    CN_SETHINT  dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,08C03h,08282h,097F3h,091CFh, 0
     szReset     db "RESET ALL KEYS", 0
     szReb2      db "PRESS ANY KEY (EN IME! ESC=CANCEL)", 0
     szSetT      db "KEY SETTINGS", 0
@@ -310,10 +289,10 @@ RST_H      equ 30
                 dw 53F3h, 0             ; 右
                 dw 5F00h, 706Bh, 0      ; 开火
     CN_START dw 5f00h,59cbh,6e38h,620fh, 0
-    CN_SET dw 06E38h,0620Fh,08BBEh,07F6Eh, 0
+    CN_SET dw 8bbeh,7f6eh, 0
     CN_LAN dw 8054h,673ah,5bf9h,6218h, 0
-    CN_EXIT dw 09000h,051FAh,06E38h,0620Fh, 0
-    CN_LANG dw 05207h,06362h,08BEDh,08A00h, 0
+    CN_EXIT dw 9000h,51fah, 0
+    CN_LANG dw 8bedh,8a00h,0ff1ah,4e2dh,6587h, 0
     CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
     CN_ROUNDS dw 5c40h,6570h, 0                                          ; 局数
     CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
@@ -327,7 +306,7 @@ RST_H      equ 30
     CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
     CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0FF08h,5148h,5207h,82f1h,6587h,8f93h,5165h,6cd5h,0FF09h, 0 ; 请按任意键（先切英文输入法）
     CN_KEYS dw 952eh,4f4dh, 0                                            ; 键位
-    CN_SETT dw 8bbeh,7f6eh, 0
+    CN_SETT dw 6309h,952eh,8bbeh,7f6eh, 0
     CN_SETH dw 56deh,8f66h,0ff1ah,6539h,952eh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
     CN_REBIND dw 0020h,003ch,002dh,0020h,8bf7h,6309h,4efbh,610fh,952eh, 0
     CN_LANT dw 8054h,673ah,5bf9h,6218h,0ff08h,5c40h,57dfh,7f51h,0ff09h, 0
@@ -878,6 +857,33 @@ PS_VlOk:
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
+        ; DBG
+        invoke SelectObject, hdcBack, fontSmall
+        lea edi, uiBuf
+        mov byte ptr [edi], 'M'
+        inc edi
+        mov eax, mouseX
+        invoke DbgW, edi, mouseX
+        add edi, eax
+        mov byte ptr [edi], ','
+        inc edi
+        invoke DbgW, edi, mouseY
+        add edi, eax
+        mov byte ptr [edi], '|'
+        inc edi
+        invoke DbgW, edi, lbE
+        add edi, eax
+        mov byte ptr [edi], '|'
+        inc edi
+        invoke DbgW, edi, menuSel
+        add edi, eax
+        mov byte ptr [edi], '|'
+        inc edi
+        invoke DbgW, edi, clickEvt
+        add edi, eax
+        mov byte ptr [edi], 0
+        invoke UiTextZ, hdcBack, 30, 20, offset uiBuf, colDark
+        invoke SelectObject, hdcBack, menuFont
         .if dnE != 0
             inc menuSel
             .if menuSel > 6
@@ -897,8 +903,17 @@ PS_VlOk:
         ; ---- 鼠标：悬停高亮 + 左键点击激活 ----
         ; 菜单 5 项渲染矩形：x 440..660，y = 250+i*60 .. +34
         xor ebx, ebx
+        ; 鼠标坐标需在窗口客户区内才参与 hover（多屏 DPI 下 GetCursorPos 可能返回界外乱值）
+        mov eax, mouseX
+        .if eax < 0 || eax >= WND_W
+            jmp UT_MMouseDone
+        .endif
+        mov eax, mouseY
+        .if eax < 0 || eax >= WND_H
+            jmp UT_MMouseDone
+        .endif
 UT_MMouse:
-        .if ebx >= 7
+        .if ebx >= 6
             jmp UT_MMouseDone
         .endif
         mov eax, ebx
@@ -906,7 +921,7 @@ UT_MMouse:
         add eax, 190
         mov ecx, eax                     ; ecx = 项顶部 y
         add eax, 34                      ; eax = 项底部 y
-        .if mouseY >= ecx && mouseY < eax && mouseX >= 436 && mouseX < 660
+        .if mouseY >= ecx && mouseY < eax && mouseX >= 440 && mouseX < 660
             mov eax, ebx
             mov menuSel, eax             ; 悬停即选中（高亮联动）
             .if lbE != 0
@@ -1155,9 +1170,9 @@ NHT_Done:
             .endif
         .endif
 
-    ; ---------- 设置：音量（进度条拖动/←→）/ 音效 / 深夜模式 ----------
+    ; ---------- 按键设置 ----------
     .elseif gameState == ST_SET
-        ; ---- 音量 ←→ 加减 ----
+        ; ---- 音量（←→）/ 音效 / 深夜模式 快捷设置 ----
         .if ltE != 0
             sub volumeLvl, 5
             cmp volumeLvl, 0
@@ -1173,58 +1188,97 @@ SS_Vl1:
             .endif
             invoke SndVolume, volumeLvl
         .endif
-        ; ---- 音量进度条拖动：按住左键在条上移动即设值 ----
-        invoke GetAsyncKeyState, VK_LBUTTON
-        and eax, 8000h
-        .if eax != 0
+        .if lbE != 0 && mouseY >= 186 && mouseY < 222
             mov eax, mouseX
-            .if eax >= 432 && eax <= 632 && mouseY >= 186 && mouseY < 222
-                sub eax, 432
+            .if eax >= 412 && eax <= 612
+                sub eax, 412
+                mov ecx, 200
                 .if eax > 200
                     mov eax, 200
                 .endif
                 imul eax, eax, 100
                 xor edx, edx
-                mov ecx, 200
-                div ecx               ; eax = 0..100
+                div ecx
                 mov volumeLvl, eax
                 invoke SndVolume, eax
             .endif
-        .endif
-        ; ---- 点击：音效开关 / 深夜模式开关 ----
-        .if lbE != 0
-            mov eax, mouseY
-            .if eax >= 186 && eax < 222
-                mov eax, mouseX
-                .if eax >= 370 && eax < 418
-                    sub volumeLvl, 5
-                    cmp volumeLvl, 0
-                    jge SS_BtnL
-                    mov volumeLvl, 0
-SS_BtnL:
-                    invoke SndVolume, volumeLvl
-                .elseif eax >= 636 && eax < 684
-                    add volumeLvl, 5
-                    .if volumeLvl > 100
-                        mov volumeLvl, 100
-                    .endif
-                    invoke SndVolume, volumeLvl
-                .endif
+            mov eax, mouseX
+            .if eax >= 330 && eax < 400
+                sub volumeLvl, 10
+                cmp volumeLvl, 0
+                jge SS_Vl2
+                mov volumeLvl, 0
+SS_Vl2:
+                invoke SndVolume, volumeLvl
             .endif
-            .if eax >= 290 && eax < 330
+            mov eax, mouseY
+            .if eax >= 288 && eax < 324
                 mov eax, mouseX
-                .if eax >= 500 && eax < 620
+                .if eax >= 480 && eax < 604
                     xor sfxOn, 1
                 .endif
-            .elseif eax >= 390 && eax < 430
+            .elseif eax >= 388 && eax < 424
                 mov eax, mouseX
-                .if eax >= 500 && eax < 620
+                .if eax >= 480 && eax < 604
                     xor themeNight, 1
                 .endif
             .endif
         .endif
-        .if esE != 0
-            mov gameState, ST_MENU
+        .if rebindWait != 0
+            .if esE != 0
+                mov rebindWait, 0
+            .else
+                ; 扫描同人数页：0x8000 电平 + 收窄范围（排 Esc/Win/IME/鼠标）；
+                ; 进入重绑由回车触发，起点 0x20 已排除 Enter，无需冷却
+                mov scanVk, 20h
+UT_Scan:
+                mov eax, scanVk
+                .if eax > 0A5h
+                    jmp UT_ScanDone
+                .endif
+                .if eax == 1Bh
+                    jmp UT_ScanNext
+                .endif
+                .if eax > 5Ah && eax < 60h
+                    jmp UT_ScanNext
+                .endif
+                .if eax > 87h && eax < 0A0h
+                    jmp UT_ScanNext
+                .endif
+                invoke GetAsyncKeyState, eax
+                and eax, 8000h
+                .if eax != 0
+                    mov eax, scanVk
+                    mov edx, setSel
+                    mov keyTable[edx*4], eax
+                    mov rebindWait, 0
+                    jmp UT_ScanDone
+                .endif
+UT_ScanNext:
+                inc scanVk
+                jmp UT_Scan
+UT_ScanDone:
+            .endif
+        .else
+            .if dnE != 0
+                inc setSel
+                .if setSel > MAX_PLAYERS*KEY_PER-1
+                    mov setSel, 0
+                .endif
+            .endif
+            .if upE != 0
+                .if setSel == 0
+                    mov setSel, MAX_PLAYERS*KEY_PER-1
+                .else
+                    dec setSel
+                .endif
+            .endif
+            .if enE != 0
+                mov rebindWait, 1
+            .endif
+            .if esE != 0
+                mov gameState, ST_MENU
+            .endif
         .endif
 
     ; ---------- 联机大厅 ----------
@@ -1266,7 +1320,7 @@ SS_BtnL:
             mov gameState, ST_MENU
         .endif
 
-    ; ---------- 技能说明页：左右翻页（9 技能）----------
+    ; ---------- 技能说明页：左右翻页 ----------
     .elseif gameState == ST_SKILL
         .if ltE != 0
             .if skillPage > 0
@@ -1283,6 +1337,7 @@ SS_BtnL:
             mov gameState, ST_MENU
         .endif
         .if lbE != 0
+            ; 左箭头 130..210, 260..340 / 右箭头 778..858
             mov eax, mouseY
             .if eax >= 260 && eax < 340
                 mov eax, mouseX
@@ -1291,13 +1346,13 @@ SS_BtnL:
                         dec skillPage
                     .endif
                 .elseif eax >= 778 && eax < 858
-                    .if skillPage < SKILL_COUNT-1
+                    mov eax, skillPage
+                    .if eax < SKILL_COUNT-1
                         inc skillPage
                     .endif
                 .endif
             .endif
         .endif
-
     ; ---------- 玩法演示页：6 段动画翻页 ----------
     .elseif gameState == ST_DEMO
         inc demoT
@@ -1345,6 +1400,8 @@ UiRender proc uses ebx esi edi
     local demoPh:dword
     local demoPt:dword
     local demoP1x:dword
+    local demoP1y:dword
+    local demoDir:dword
 
     mov rc.left, 0
     mov rc.top, 0
@@ -1377,19 +1434,7 @@ UiRender proc uses ebx esi edi
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
-        ; 装饰：标题两侧各一辆坦克（车体色 + 深色描边由 DrawTank 自选）
-        invoke SelectObject, hdcBack, brushP1
-        invoke DrawTank, hdcBack, 230, 78, DIR_RIGHT
-        invoke SelectObject, hdcBack, brushP2
-        invoke DrawTank, hdcBack, 728, 78, DIR_LEFT
-        invoke UiTextL, hdcBack, 385, 84, offset szTitle, offset CN_TITLE, colDark
-        ; 标题下分隔线（画笔 penIcon 已由 DrawTank 恢复为 penDark 内部笔，重选白笔太亮——用 penDark 描边色画）
-        invoke SelectObject, hdcBack, brushMortar
-        mov boxRc.left, 220
-        mov boxRc.top, 148
-        mov boxRc.right, 768
-        mov boxRc.bottom, 152
-        invoke FillRect, hdcBack, addr boxRc, brushMortar
+        invoke UiTextZ, hdcBack, 385, 90, offset szTitle, colDark
         mov ebx, 0
 UM_Items:
         .if ebx == menuSel
@@ -1423,16 +1468,11 @@ UM_Items:
         .if ebx < 7
             jmp UM_Items
         .endif
-        ; 底部操作提示
-        invoke SelectObject, hdcBack, fontSmall
-        invoke UiTextL, hdcBack, 380, 560, offset szMenuHint, offset CN_MENUHINT, colGray
-        invoke SelectObject, hdcBack, menuFont
 
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
         invoke UiTextL, hdcBack, 420, 150, offset szNumT, offset CN_NUMT, colDark
         ; PLAYERS 行（y 190..242）
-        invoke UiTextL, hdcBack, 320, 200, offset szPlLbl, offset CN_PLLBL, colDark
         invoke UiTextZ, hdcBack, 410, 200, offset szNumL, colDark
         invoke UiTextZ, hdcBack, 545, 200, offset szNumR, colDark
         lea edi, uiBuf
@@ -1588,23 +1628,25 @@ NS_BoxDone:
         .endif
         invoke SelectObject, hdcBack, menuFont
 
-    ; ---------- 设置：音量进度条 / 音效 / 深夜模式 ----------
+    ; ---------- 按键设置 ----------
     .elseif gameState == ST_SET
-        invoke UiTextL, hdcBack, 460, 50, offset szSetT, offset CN_SETT, colDark
-        invoke UiTextL, hdcBack, 300, 196, offset szVol2, offset CN_VOL2, colDark
-        ; 音量调节按钮：← / →
-        invoke UiTextZ, hdcBack, 382, 190, offset szNumL, colDark
-        invoke UiTextZ, hdcBack, 648, 190, offset szNumR, colDark
-        mov boxRc.left, 430
+        invoke UiTextL, hdcBack, 420, 36, offset szSetT, offset CN_SETT, colDark
+        invoke UiTextL, hdcBack, 380, 74, offset szSetH, offset CN_SETH, colGray
+        ; ---- 快捷设置行（小字体，y 96）：音量 / 音效 / 深夜模式 ----
+        invoke SelectObject, hdcBack, fontSmall
+        ; 音量行（y 196）：标签 + << 按钮 + 进度条 + >> 按钮 + 数值
+        invoke UiTextL, hdcBack, 250, 196, offset szVol2, offset CN_VOL2, colDark
+        invoke UiTextZ, hdcBack, 356, 190, offset szNumL, colDark
+        mov boxRc.left, 410
         mov boxRc.top, 191
-        mov boxRc.right, 634
+        mov boxRc.right, 614
         mov boxRc.bottom, 217
         invoke FrameRect, hdcBack, addr boxRc, boxCur
         mov eax, volumeLvl
         .if eax > 0
             imul eax, eax, 2
-            add eax, 432
-            mov boxRc.left, 432
+            add eax, 412
+            mov boxRc.left, 412
             mov boxRc.top, 194
             mov boxRc.right, eax
             mov boxRc.bottom, 214
@@ -1615,6 +1657,7 @@ NS_BoxDone:
             .endif
             invoke FillRect, hdcBack, addr boxRc, edx
         .endif
+        invoke UiTextZ, hdcBack, 626, 190, offset szNumR, colDark
         lea edi, uiBuf
         mov eax, volumeLvl
         xor edx, edx
@@ -1626,32 +1669,126 @@ NS_BoxDone:
         mov [edi+1], dl
         mov byte ptr [edi+2], '%'
         mov byte ptr [edi+3], 0
-        invoke UiTextZ, hdcBack, 660, 196, offset uiBuf, colDark
-        invoke UiTextL, hdcBack, 300, 296, offset szSfx2, offset CN_SFX, colDark
-        mov boxRc.left, 496
+        invoke UiTextZ, hdcBack, 668, 196, offset uiBuf, colDark
+        ; 音效开关行（y 300）
+        invoke UiTextL, hdcBack, 250, 296, offset szSfx2, offset CN_SFX, colDark
+        mov boxRc.left, 480
         mov boxRc.top, 288
-        mov boxRc.right, 620
+        mov boxRc.right, 604
         mov boxRc.bottom, 324
         invoke FrameRect, hdcBack, addr boxRc, boxCur
         mov eax, sfxOn
         .if eax != 0
-            invoke UiTextL, hdcBack, 528, 296, offset szOn2, offset CN_ON2, colDark
+            invoke UiTextL, hdcBack, 516, 296, offset szOn2, offset CN_ON2, colDark
         .else
-            invoke UiTextL, hdcBack, 528, 296, offset szOff2, offset CN_OFF2, colDark
+            invoke UiTextL, hdcBack, 516, 296, offset szOff2, offset CN_OFF2, colDark
         .endif
-        invoke UiTextL, hdcBack, 300, 396, offset szNight, offset CN_NIGHT, colDark
-        mov boxRc.left, 496
+        ; 深夜模式行（y 400）
+        invoke UiTextL, hdcBack, 250, 396, offset szNight, offset CN_NIGHT, colDark
+        mov boxRc.left, 480
         mov boxRc.top, 388
-        mov boxRc.right, 620
+        mov boxRc.right, 604
         mov boxRc.bottom, 424
         invoke FrameRect, hdcBack, addr boxRc, boxCur
         mov eax, themeNight
         .if eax != 0
-            invoke UiTextL, hdcBack, 510, 396, offset szOn2, offset CN_ON2, colDark
+            invoke UiTextL, hdcBack, 494, 396, offset szOn2, offset CN_ON2, colDark
         .else
-            invoke UiTextL, hdcBack, 510, 396, offset szOff2, offset CN_OFF2, colDark
+            invoke UiTextL, hdcBack, 494, 396, offset szOff2, offset CN_OFF2, colDark
         .endif
         invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
+        invoke SelectObject, hdcBack, menuFont
+
+        xor ebx, ebx
+SS_Rows:
+        .if ebx >= MAX_PLAYERS*KEY_PER
+            jmp SS_Done
+        .endif
+        ; 行文本（宽字符）: "P<p+1> <ACTION> : <KEY>"
+        lea edi, wBuf
+        mov word ptr [edi], 'P'
+        mov eax, ebx
+        xor edx, edx
+        mov ecx, KEY_PER
+        div ecx
+        add al, '1'
+        mov [edi+2], ax                 ; '1'..'4'（宽）
+        mov word ptr [edi+4], ' '
+        add edi, 6
+        .if langFlag == 0
+            mov esi, aTab[edx*4]        ; 英文动作名（ASCII -> 宽）
+SS_CopyAct:
+            mov al, [esi]
+            .if al == 0
+                jmp SS_CopyDone
+            .endif
+            movzx eax, al
+            mov [edi], ax
+            inc esi
+            add edi, 2
+            jmp SS_CopyAct
+SS_CopyDone:
+        .else
+            mov esi, cnActT[edx*4]      ; 中文动作名（等长指针表，0 结尾）
+CN_CopyAct:
+            mov ax, [esi]
+            .if ax == 0
+                jmp SS_CopyDone2
+            .endif
+            mov [edi], ax
+            add esi, 2
+            add edi, 2
+            jmp CN_CopyAct
+SS_CopyDone2:
+        .endif
+        mov word ptr [edi], ' '
+        mov word ptr [edi+2], ':'
+        mov word ptr [edi+4], ' '
+        add edi, 6
+        ; 键名：VkName 生成 ASCII 到 uiBuf，再转宽
+        mov eax, ebx
+        mov eax, keyTable[eax*4]
+        invoke VkName, eax, offset uiBuf
+        mov klen, eax
+        xor ecx, ecx
+KN_Loop:
+        .if ecx >= klen
+            jmp KN_Done
+        .endif
+        movzx eax, byte ptr uiBuf[ecx]
+        mov [edi], ax
+        inc ecx
+        add edi, 2
+        jmp KN_Loop
+KN_Done:
+        ; 重绑提示（仅选中行）
+        .if rebindWait != 0 && ebx == setSel
+            .if langFlag == 0
+                invoke StrCopy, offset szRebind, edi, 17
+                mov word ptr [edi+17], 0
+                add edi, 18
+            .else
+                invoke StrCopy, offset CN_REBIND, edi, 18
+                mov word ptr [edi+18], 0
+                add edi, 20
+            .endif
+        .endif
+        mov word ptr [edi], 0
+        ; 颜色与行坐标
+        mov eax, ebx
+        .if eax == setSel
+            mov edx, colHi
+        .else
+            mov edx, colGray
+        .endif
+        mov eax, ebx
+        imul eax, eax, 26                 ; 行高 26（20 行 110..614 不溢出）
+        add eax, 110
+        mov rowY, eax
+        invoke UiTextW, hdcBack, 380, rowY, offset wBuf, edx
+        inc ebx
+        jmp SS_Rows
+SS_Done:
 
     ; ---------- 联机大厅 ----------
     .elseif gameState == ST_LAN
@@ -1683,178 +1820,350 @@ NS_BoxDone:
         invoke UiTextZ, hdcBack, 155, 285, offset szNumL, edx
         mov edx, colDark
         mov eax, skillPage
-        .if eax >= SKILL_COUNT
+        .if eax >= SKILL_COUNT-1
             mov edx, colGray
         .endif
         invoke UiTextZ, hdcBack, 815, 285, offset szNumR, edx
-        .if skillPage == 0
-            ; ============ 第 0 页：对战玩法演示动画 ============
-            mov eax, demoT
-            xor edx, edx
-            mov ecx, 480
-            div ecx                       ; eax=周期 edx=ph
-            mov eax, edx
-            xor edx, edx
-            mov ecx, 120
-            div ecx                       ; eax=阶段 edi  edx=阶段内 tick
-            mov demoPh, eax
-            mov demoPt, edx
-            ; 地面线
-            invoke SelectObject, hdcBack, brushMortar
-            mov boxRc.left, 150
-            mov boxRc.top, 362
-            mov boxRc.right, 838
-            mov boxRc.bottom, 366
-            invoke FillRect, hdcBack, addr boxRc, brushMortar
-            ; P1 位置：阶段0 180->420（x2），阶段1 420->540，之后 540
+        ; 图标：深色底 + 放大 3 倍特性图形（60x60 内 54px 图形）
+        mov boxRc.left, 220
+        mov boxRc.top, 240
+        mov boxRc.right, 280
+        mov boxRc.bottom, 300
+        invoke FillRect, hdcBack, addr boxRc, brushPickBg
+        invoke FrameRect, hdcBack, addr boxRc, brushMortar
+        invoke SelectObject, hdcBack, penIcon
+        mov penOld2, eax
+        mov eax, skillPage
+        inc eax
+        invoke DrawPickupIcon, hdcBack, 223, 243, eax, 3
+        invoke SelectObject, hdcBack, penOld2
+        invoke SelectObject, hdcBack, menuFont
+        ; 技能名（大字）+ 描述（小字，双语表查当前页）
+        mov eax, skillPage
+        mov edx, skNmEn[eax*4]
+        mov eax, skillPage
+        mov ecx, skNmCn[eax*4]
+        invoke UiTextL, hdcBack, 320, 240, edx, ecx, colDark
+        invoke SelectObject, hdcBack, fontSmall
+        mov eax, skillPage
+        mov edx, skDsEn[eax*4]
+        mov eax, skillPage
+        mov ecx, skDsCn[eax*4]
+        invoke UiTextL, hdcBack, 230, 330, edx, ecx, colGray
+        invoke SelectObject, hdcBack, menuFont
+        ; 页码 "n / 9"
+        lea edi, uiBuf
+        mov eax, skillPage
+        inc eax
+        add al, '0'
+        mov [edi], al
+        mov byte ptr [edi+1], ' '
+        mov byte ptr [edi+2], '/'
+        mov byte ptr [edi+3], ' '
+        mov byte ptr [edi+4], '0'+SKILL_COUNT
+        mov byte ptr [edi+5], 0
+        invoke UiTextZ, hdcBack, 470, 410, offset uiBuf, colDark
+        ; 底部提示
+        invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
+
+    ; ---------- 玩法演示页：6 段动画 ----------
+    .elseif gameState == ST_DEMO
+        invoke UiTextL, hdcBack, 430, 60, offset szDemT, offset CN_DEMOT, colDark
+        mov boxRc.left, 130
+        mov boxRc.top, 140
+        mov boxRc.right, 858
+        mov boxRc.bottom, 490
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke SelectObject, hdcBack, fontSmall
+        mov edx, colDark
+        .if demoPage == 0
+            mov edx, colGray
+        .endif
+        invoke UiTextZ, hdcBack, 155, 285, offset szNumL, edx
+        mov edx, colDark
+        mov eax, demoPage
+        .if eax >= 5
+            mov edx, colGray
+        .endif
+        invoke UiTextZ, hdcBack, 815, 285, offset szNumR, edx
+        invoke SelectObject, hdcBack, menuFont
+        mov eax, demoT
+        xor edx, edx
+        mov ecx, 480
+        div ecx
+        mov eax, edx
+        xor edx, edx
+        mov ecx, 120
+        div ecx
+        mov demoPh, eax
+        mov demoPt, edx
+        invoke SelectObject, hdcBack, brushMortar
+        mov boxRc.left, 150
+        mov boxRc.top, 362
+        mov boxRc.right, 838
+        mov boxRc.bottom, 366
+        invoke FillRect, hdcBack, addr boxRc, brushMortar
+        mov eax, demoPage
+        .if eax == 0
             mov eax, demoPh
             .if eax == 0
                 mov eax, demoPt
-                .if eax > 120
-                    mov eax, 120
-                .endif
                 imul eax, eax, 2
-                add eax, 180
+                add eax, 250
                 mov demoP1x, eax
+                mov demoP1y, 300
+                mov demoDir, DIR_RIGHT
             .elseif eax == 1
+                mov demoP1x, 490
                 mov eax, demoPt
-                add eax, 420
+                add eax, 300
+                mov demoP1y, eax
+                mov demoDir, DIR_DOWN
+            .elseif eax == 2
+                mov eax, demoPt
+                imul eax, eax, 2
+                mov ecx, eax
+                mov eax, 490
+                sub eax, ecx
                 mov demoP1x, eax
+                mov demoP1y, 420
+                mov demoDir, DIR_LEFT
             .else
-                mov demoP1x, 540
+                mov demoP1x, 250
+                mov eax, 420
+                sub eax, demoPt
+                mov demoP1y, eax
+                mov demoDir, DIR_UP
             .endif
-            ; 技能箱（阶段 1 显示，图标随周期轮换）
-            mov eax, demoPh
-            .if eax == 1
-                mov boxRc.left, 560
-                mov boxRc.top, 326
-                mov boxRc.right, 578
-                mov boxRc.bottom, 344
-                invoke FillRect, hdcBack, addr boxRc, brushPickBg
-                invoke FrameRect, hdcBack, addr boxRc, brushMortar
-                invoke SelectObject, hdcBack, penIcon
-                mov penOld2, eax
-                mov eax, demoT
-                xor edx, edx
-                mov ecx, 480
-                div ecx
-                xor edx, edx
-                mov ecx, 9
-                div ecx                   ; eax = 周期 % 9
-                inc eax                   ; 图标 1..9 轮换
-                invoke DrawPickupIcon, hdcBack, 562, 328, eax, 1
-                invoke SelectObject, hdcBack, penOld2
-            .endif
-            ; P2（阶段 3 被淘汰：闪烁淡出）
+            invoke SelectObject, hdcBack, brushP1
+            invoke DrawTank, hdcBack, demoP1x, demoP1y, demoDir
+            invoke SelectObject, hdcBack, menuFont
+        .elseif eax == 1
+            invoke SelectObject, hdcBack, brushP1
+            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT
             mov eax, demoPh
             .if eax < 3
                 invoke SelectObject, hdcBack, brushP2
-                invoke DrawTank, hdcBack, 700, 330, DIR_LEFT
+                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
             .else
                 mov eax, demoT
                 and eax, 8
                 .if eax == 0
                     invoke SelectObject, hdcBack, brushP2
-                    invoke DrawTank, hdcBack, 700, 330, DIR_LEFT
+                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
                 .endif
-                ; 命中爆炸（阶段 3 前 40 tick 红光闪烁）
                 mov eax, demoPt
                 .if eax < 40
                     mov eax, demoT
                     and eax, 4
                     .if eax == 0
                         invoke SelectObject, hdcBack, brushBrick
-                        invoke Ellipse, hdcBack, 685, 315, 740, 370
+                        invoke Ellipse, hdcBack, 635, 315, 690, 370
                     .endif
                 .endif
-                ; K.O.（阶段 3 后段）
+                invoke UiTextZ, hdcBack, 640, 260, offset szKO, 0000E0E0h
+            .endif
+            mov eax, demoPh
+            .if eax < 3
                 mov eax, demoPt
-                .if eax >= 60
-                    invoke SelectObject, hdcBack, menuFont
-                    invoke UiTextZ, hdcBack, 688, 260, offset szKO, 0000E0E0h
+                .if eax < 100
+                    imul eax, eax, 4
+                    add eax, 230
+                    mov boxRc.left, eax
+                    add eax, 8
+                    mov boxRc.right, eax
+                    mov boxRc.top, 336
+                    mov boxRc.bottom, 344
+                    invoke FillRect, hdcBack, addr boxRc, brushBullet
                 .endif
             .endif
-            ; 子弹（阶段 2：从 P1 炮口飞向 P2）
-            mov eax, demoPh
-            .if eax == 2
-                mov eax, demoPt
-                imul eax, eax, 115
-                xor edx, edx
-                mov ecx, 120
-                div ecx
-                add eax, 560
-                mov boxRc.left, eax
-                add eax, 8
+            mov eax, 3
+            sub eax, demoPh
+            .if eax > 0
+                mov esi, eax
+                mov boxRc.left, 640
+                mov boxRc.top, 296
+                mov boxRc.bottom, 304
+                mov eax, 640
+                mov ecx, esi
+                imul ecx, ecx, 20
+                add eax, ecx
                 mov boxRc.right, eax
-                mov boxRc.top, 336
-                mov boxRc.bottom, 344
-                invoke FillRect, hdcBack, addr boxRc, brushBullet
+                invoke FillRect, hdcBack, addr boxRc, brushBrick
             .endif
-            ; P1（最后画，压在上面）
+            invoke SelectObject, hdcBack, menuFont
+        .elseif eax == 2
+            invoke SelectObject, hdcBack, brushSteel
+            mov boxRc.left, 596
+            mov boxRc.top, 240
+            mov boxRc.right, 604
+            mov boxRc.bottom, 440
+            invoke FillRect, hdcBack, addr boxRc, brushSteel
+            invoke SelectObject, hdcBack, brushP1
+            invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT
+            mov eax, demoT
+            xor edx, edx
+            mov ecx, 480
+            div ecx
+            mov eax, edx
+            .if eax < 240
+                imul eax, eax, 146
+                xor edx, edx
+                mov ecx, 100
+                div ecx
+                add eax, 230
+                mov demoP1x, eax
+            .else
+                sub eax, 240
+                imul eax, eax, 146
+                xor edx, edx
+                mov ecx, 100
+                div ecx
+                mov ecx, eax
+                mov eax, 580
+                sub eax, ecx
+                mov demoP1x, eax
+            .endif
+            mov eax, demoT
+            xor edx, edx
+            mov ecx, 480
+            div ecx
+            mov eax, edx
+            .if eax >= 232 && eax < 250
+                invoke SelectObject, hdcBack, brushBrick
+                invoke Ellipse, hdcBack, 580, 316, 620, 356
+            .endif
+            invoke SelectObject, hdcBack, brushBullet
+            mov eax, demoP1x
+            mov boxRc.left, eax
+            mov boxRc.top, 336
+            mov eax, demoP1x
+            add eax, 8
+            mov boxRc.right, eax
+            mov boxRc.bottom, 344
+            invoke FillRect, hdcBack, addr boxRc, brushBullet
+            invoke SelectObject, hdcBack, menuFont
+        .elseif eax == 3
+            invoke SelectObject, hdcBack, brushBrick
+            mov boxRc.left, 150
+            mov boxRc.top, 350
+            mov boxRc.right, 320
+            mov boxRc.bottom, 372
+            invoke FillRect, hdcBack, addr boxRc, brushBrick
+            invoke SelectObject, hdcBack, brushIce
+            mov boxRc.left, 320
+            mov boxRc.top, 350
+            mov boxRc.right, 490
+            mov boxRc.bottom, 372
+            invoke FillRect, hdcBack, addr boxRc, brushIce
+            invoke SelectObject, hdcBack, brushWater
+            mov boxRc.left, 490
+            mov boxRc.top, 350
+            mov boxRc.right, 660
+            mov boxRc.bottom, 372
+            invoke FillRect, hdcBack, addr boxRc, brushWater
+            invoke SelectObject, hdcBack, brushBg
+            mov boxRc.left, 660
+            mov boxRc.top, 350
+            mov boxRc.right, 838
+            mov boxRc.bottom, 372
+            invoke FillRect, hdcBack, addr boxRc, brushBg
+            invoke SelectObject, hdcBack, brushP1
+            mov eax, demoT
+            xor edx, edx
+            mov ecx, 480
+            div ecx
+            mov eax, edx
+            imul eax, eax, 140
+            xor edx, edx
+            mov ecx, 100
+            div ecx
+            add eax, 160
+            invoke DrawTank, hdcBack, eax, 316, DIR_RIGHT
+            invoke SelectObject, hdcBack, menuFont
+        .elseif eax == 4
+            mov eax, demoPh
+            .if eax == 0
+                mov eax, demoPt
+                imul eax, eax, 2
+                add eax, 180
+                mov demoP1x, eax
+                mov boxRc.left, 460
+                mov boxRc.top, 326
+                mov boxRc.right, 478
+                mov boxRc.bottom, 344
+                invoke FillRect, hdcBack, addr boxRc, brushPickBg
+                invoke FrameRect, hdcBack, addr boxRc, brushMortar
+                invoke SelectObject, hdcBack, penIcon
+                mov penOld2, eax
+                invoke DrawPickupIcon, hdcBack, 462, 328, SK_ICE_SHIELD, 1
+                invoke SelectObject, hdcBack, penOld2
+            .else
+                mov demoP1x, 420
+                invoke SelectObject, hdcBack, brushIce
+                mov eax, demoP1x
+                mov boxRc.left, eax
+                sub boxRc.left, 6
+                mov boxRc.top, 324
+                mov eax, demoP1x
+                add eax, TANK_SIZE+6
+                mov boxRc.right, eax
+                mov boxRc.bottom, 356
+                invoke FrameRect, hdcBack, addr boxRc, brushIce
+            .endif
             invoke SelectObject, hdcBack, brushP1
             invoke DrawTank, hdcBack, demoP1x, 330, DIR_RIGHT
             invoke SelectObject, hdcBack, menuFont
-            ; 阶段解释词
-            mov eax, demoPh
-            mov edx, skDemoEn[eax*4]
-            mov eax, demoPh
-            mov ecx, skDemoCn[eax*4]
-            invoke UiTextL, hdcBack, 230, 420, edx, ecx, colDark
         .else
-            ; ============ 第 1..9 页：技能图鉴 ============
-            mov boxRc.left, 220
-            mov boxRc.top, 240
-            mov boxRc.right, 280
-            mov boxRc.bottom, 300
-            invoke FillRect, hdcBack, addr boxRc, brushPickBg
-            invoke FrameRect, hdcBack, addr boxRc, brushMortar
-            invoke SelectObject, hdcBack, penIcon
-            mov penOld2, eax
-            mov eax, skillPage        ; tp = page（page1..9 对应技能 1..9）
-            invoke DrawPickupIcon, hdcBack, 223, 243, eax, 3
-            invoke SelectObject, hdcBack, penOld2
+            invoke SelectObject, hdcBack, brushP1
+            invoke DrawTank, hdcBack, 250, 330, DIR_RIGHT
+            mov eax, demoPh
+            .if eax < 2
+                invoke SelectObject, hdcBack, brushP2
+                invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
+            .else
+                mov eax, demoT
+                and eax, 8
+                .if eax == 0
+                    invoke SelectObject, hdcBack, brushP2
+                    invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
+                .endif
+                invoke SelectObject, hdcBack, menuFont
+                mov eax, 300
+                sub eax, demoPt
+                .if eax < 240
+                    mov eax, 240
+                .endif
+                invoke UiTextZ, hdcBack, 655, eax, offset szPlus1, 0000E0E0h
+            .endif
             invoke SelectObject, hdcBack, menuFont
-            mov eax, skillPage
-            dec eax
-            mov edx, skNmEn[eax*4]
-            mov eax, skillPage
-            dec eax
-            mov ecx, skNmCn[eax*4]
-            invoke UiTextL, hdcBack, 320, 240, edx, ecx, colDark
-            invoke SelectObject, hdcBack, fontSmall
-            mov eax, skillPage
-            dec eax
-            mov edx, skDsEn[eax*4]
-            mov eax, skillPage
-            dec eax
-            mov ecx, skDsCn[eax*4]
-            invoke UiTextL, hdcBack, 230, 330, edx, ecx, colGray
-            invoke SelectObject, hdcBack, menuFont
+            mov eax, demoPh
+            .if eax >= 2
+                invoke UiTextZ, hdcBack, 420, 180, offset szScore1, colDark
+            .else
+                invoke UiTextZ, hdcBack, 420, 180, offset szScore0, colDark
+            .endif
         .endif
-        ; 页码 "n / 10"
+        invoke SelectObject, hdcBack, menuFont
+        invoke SelectObject, hdcBack, fontSmall
+        mov eax, demoPage
+        mov edx, dDemoEn[eax*4]
+        mov eax, demoPage
+        mov ecx, dDemoCn[eax*4]
+        invoke UiTextL, hdcBack, 230, 420, edx, ecx, colGray
+        invoke SelectObject, hdcBack, menuFont
         lea edi, uiBuf
-        mov eax, skillPage
+        mov eax, demoPage
         inc eax
-        xor edx, edx
-        mov ecx, 10
-        div ecx
-        .if eax > 0
-            add al, '0'
-            mov [edi], al
-            inc edi
-        .endif
-        add dl, '0'
-        mov [edi], dl
-        inc edi
-        mov byte ptr [edi], ' '
-        mov byte ptr [edi+1], '/'
-        mov byte ptr [edi+2], ' '
-        mov byte ptr [edi+3], '1'
-        mov byte ptr [edi+4], '0'
+        add al, '0'
+        mov [edi], al
+        mov byte ptr [edi+1], ' '
+        mov byte ptr [edi+2], '/'
+        mov byte ptr [edi+3], ' '
+        mov byte ptr [edi+4], '6'
         mov byte ptr [edi+5], 0
         invoke UiTextZ, hdcBack, 470, 165, offset uiBuf, colDark
-        ; 底部提示
-        invoke UiTextL, hdcBack, 350, 570, offset szSkHint, offset CN_SKHINT, colGray
+        invoke UiTextL, hdcBack, 360, 560, offset szSkHint, offset CN_SKHINT, colGray
     .endif
 
 UR_Done:

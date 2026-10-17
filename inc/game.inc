@@ -64,7 +64,7 @@ TANK_SPEED  equ 4                   ; 每 tick 基础移动像素（偶 tick）
 TANK_SPEED_HI equ 5                 ; 奇 tick（4/5 交替 = 平均 4.5，比子弹慢 25%）
 DIRT_SPEED  equ 2                   ; 泥土上每 tick 移动像素（减速）
 TANK_HP     equ 3
-LIVES_INIT  equ 1                   ; 每辆坦克初始命数（一命制：击中即淘汰）
+LIVES_INIT  equ 3                   ; 每辆坦克初始命数
 RESPAWN_TICKS equ 90                ; 阵亡后 1.5s 重生
 SPAWN_PROT_TICKS equ 150            ; 重生保护 2.5s（免伤+闪烁）
 FIRE_CD     equ 20                  ; 开火冷却 tick（§3）

@@ -34,6 +34,9 @@ extern gameState :dword
 extern netMode   :dword
 extern pauseMode :dword
 extern volumeLvl :dword
+extern clickEvt  :dword
+extern clickPX   :dword
+extern clickPY   :dword
 SndInit    PROTO
 SndBgmStart PROTO
 SndVolume  PROTO :DWORD
@@ -66,6 +69,15 @@ SndVolume  PROTO :DWORD
 WndProc proc hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
     .if uMsg == WM_DESTROY
         invoke PostQuitMessage, NULL
+        xor eax, eax
+    .elseif uMsg == 201h                  ; WM_LBUTTONDOWN：点击坐标入队
+        mov eax, lParam                   ; 客户区虚拟化坐标（DPI/多屏恒正确）
+        and eax, 0FFFFh
+        mov clickPX, eax
+        mov eax, lParam
+        shr eax, 16
+        mov clickPY, eax
+        mov clickEvt, 1
         xor eax, eax
     .elseif uMsg == WM_PAINT
         invoke BeginPaint, hWin, addr ps

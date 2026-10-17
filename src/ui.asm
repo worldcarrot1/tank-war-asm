@@ -34,6 +34,9 @@ public countT
 public volumeLvl
 public sfxOn
 public themeNight
+public clickEvt
+public clickPX
+public clickPY
 public UiInit
 public UiTick
 public UiRender
@@ -108,6 +111,13 @@ RST_H      equ 30
     mouseX      dd 0
     mouseY      dd 0
     rebindSlot  dd -1                  ; 人数页改键：正在等待新键的槽位（slot*5+动作），-1=无
+    rebindCool  dd 0                   ; 改键进入等待的防误捕冷却 tick
+    dbgRet      dd 999                 ; 最近一次 NumSelHitTest 返回（临时诊断）
+    dbgMX       dd 0                   ; DBG: HitTest 输入 x
+    dbgMY       dd 0                   ; DBG: HitTest 输入 y
+    clickEvt    dd 0                   ; 1=本帧有待处理的鼠标点击（WndProc 置位）
+    clickPX     dd 0                   ; 点击客户区坐标（消息 lParam）
+    clickPY     dd 0
     blinkTick   dd 0                   ; 改键闪烁计数
     discTimer   dd 0
     discBuf     db "TWNET01"
@@ -170,7 +180,7 @@ RST_H      equ 30
     szOff2      db "OFF", 0
     szNight     db "NIGHT MODE", 0
     szReset     db "RESET ALL KEYS", 0
-    szReb2      db "PRESS ANY KEY ... (ESC = CANCEL)", 0
+    szReb2      db "PRESS ANY KEY (EN IME! ESC=CANCEL)", 0
     szSetT      db "KEY SETTINGS", 0
     szSetH      db "ENTER: REBIND   ESC: BACK", 0
     szRebind    db " <- PRESS ANY KEY", 0
@@ -203,7 +213,7 @@ RST_H      equ 30
     CN_OFF2     dw 5173h, 0                                    ; 关
     CN_NIGHT    dw 6DF1h,591Ch,6A21h,5F0Fh, 0                  ; 深夜模式
     CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
-    CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0ff08h,0045h,0073h,0063h,0020h,003dh,0020h,53d6h,6d88h,0ff09h, 0 ; 请按任意键（Esc = 取消）
+    CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0FF08h,5148h,5207h,82f1h,6587h,8f93h,5165h,6cd5h,0FF09h, 0 ; 请按任意键（先切英文输入法）
     CN_KEYS dw 952eh,4f4dh, 0                                            ; 键位
     CN_SETT dw 6309h,952eh,8bbeh,7f6eh, 0
     CN_SETH dw 56deh,8f66h,0ff1ah,6539h,952eh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
@@ -550,6 +560,46 @@ NHT_Next:
     jmp NHT_Box
 NumSelHitTest endp
 
+; 带符号十进制写 pBuf，返回长度（临时诊断用）
+DbgW proc uses ebx ecx edi pBuf: dword, val: dword
+    mov eax, val
+    mov edi, pBuf
+    test eax, eax
+    jns DW_Pos
+    mov byte ptr [edi], '-'
+    inc edi
+    neg eax
+DW_Pos:
+    xor ebx, ebx                       ; 位数
+    mov ecx, 10
+    .if eax == 0
+        mov byte ptr [edi], '0'
+        inc edi
+        jmp DW_Done
+    .endif
+DW_Div:
+    xor edx, edx
+    div ecx
+    add dl, '0'
+    push edx
+    inc ebx
+    .if eax > 0
+        jmp DW_Div
+    .endif
+DW_Pop:
+    pop eax
+    mov [edi], al
+    inc edi
+    dec ebx
+    .if ebx > 0
+        jmp DW_Pop
+    .endif
+DW_Done:
+    mov eax, edi
+    sub eax, pBuf
+    ret
+DbgW endp
+
 ; ------------------------------------------------------------
 ; UT_QuitToMenu -- 从暂停/对局退出到主菜单（联机时断开重置）
 ; ------------------------------------------------------------
@@ -574,15 +624,24 @@ UiTick proc uses ebx esi edi
     local enE:dword, esE:dword, scanVk:dword
     local lbE:dword
 
-    ; ---- 鼠标采样（暂停菜单也用）：客户区坐标 + 左键点击边沿 ----
+    ; ---- 鼠标采样 ----
+    ; hover 位置用 GetCursorPos（尽力而为，多屏 DPI 下仅作视觉提示）；
+    ; 点击判定用 WndProc 的 WM_LBUTTONDOWN 消息坐标（DPI/多屏恒正确）
     invoke GetCursorPos, addr mousePt
     invoke ScreenToClient, hWnd, addr mousePt
     mov eax, mousePt.x
     mov mouseX, eax
     mov eax, mousePt.y
     mov mouseY, eax
-    invoke KeyEdge, VK_LBUTTON, addr prevLBtn
+    mov eax, clickEvt
     mov lbE, eax
+    mov clickEvt, 0
+    .if lbE != 0
+        mov eax, clickPX
+        mov mouseX, eax
+        mov eax, clickPY
+        mov mouseY, eax
+    .endif
 
     invoke KeyEdge, VK_UP, addr prevUp
     mov upE, eax
@@ -743,10 +802,10 @@ UT_MMouseDone:
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
         ; ---- 玩家名编辑：点击容器标题进入；字符输入；Enter/Esc 确认 ----
+        ; （Enter 用采样变量 enE——KeyEdge 边沿已被开头采样消费，二次调用恒 0）
         .if editSlot != -1
             inc blinkTick
-            invoke KeyEdge, VK_RETURN, addr prevEnter
-            .if eax != 0
+            .if enE != 0
                 mov editSlot, -1
             .else
                 invoke GetAsyncKeyState, VK_ESCAPE
@@ -823,12 +882,28 @@ UTN_ScanDone:
             .if esE != 0
                 mov rebindSlot, -1
             .else
-                ; 扫描 0x08..0xFF（含 Enter/方向键；跳过 Esc；鼠标键 < 0x08 不会误触）
+                ; 改键扫描：0x8000 电平（0x1 边沿位在焦点切换时不可靠），
+                ; 范围收窄 0x08..0x5A / 0x60..0x87 / 0xA0..0xA5 —— 排除
+                ; 鼠标键、Win/IME 保留区（0x85 误绑问题），Esc=取消专用；
+                ; 进入等待后 3 tick 冷却（rebindCool）防点击残键误捕获
+                .if rebindCool > 0
+                    dec rebindCool
+                    jmp UT_Scan2Done
+                .endif
                 mov scanVk, 08h
 UT_Scan2:
                 mov eax, scanVk
-                .if eax >= 100h
+                .if eax > 0A5h
                     jmp UT_Scan2Done
+                .endif
+                .if eax == 1Bh                 ; Esc = 取消专用，不捕获
+                    jmp UT_Scan2Next
+                .endif
+                .if eax > 5Ah && eax < 60h     ; Win 键区跳过
+                    jmp UT_Scan2Next
+                .endif
+                .if eax > 87h && eax < 0A0h    ; 保留/IME 区跳过
+                    jmp UT_Scan2Next
                 .endif
                 invoke GetAsyncKeyState, eax
                 and eax, 8000h
@@ -853,17 +928,24 @@ UT_Conf:
                     inc ebx
                     jmp UT_Conf
                 .endif
+UT_Scan2Next:
                 inc scanVk
                 jmp UT_Scan2
 UT_Scan2Done:
             .endif
             ; 等待中允许点击其他键位行切换目标 / 点重置按钮
             .if lbE != 0
+                mov eax, mouseX
+                mov dbgMX, eax
+                mov eax, mouseY
+                mov dbgMY, eax
                 invoke NumSelHitTest
+                mov dbgRet, eax                   ; DBG
                 test eax, eax
                 js UTW_Next                ; 负值（重置/标题）不走切换
                 .if eax != rebindSlot
                     mov rebindSlot, eax
+                    mov rebindCool, 3      ; 切换目标：冷却防残键误捕
                 .endif
 UTW_Next:
                 .if eax == -2
@@ -899,10 +981,16 @@ UTW_Next:
             .endif
             ; ---- 鼠标：键位容器改键 / 重置 / << >> 调人数与局数 / 数字区开始 ----
             .if lbE != 0
+                mov eax, mouseX
+                mov dbgMX, eax
+                mov eax, mouseY
+                mov dbgMY, eax
                 invoke NumSelHitTest
+                mov dbgRet, eax                   ; DBG
                 test eax, eax
                 js NHT_NegRet              ; 负值：重置/改名（勿写 >= 0：恒真）
                 mov rebindSlot, eax        ; 点击键位 -> 闪烁等待新键
+                mov rebindCool, 3          ; 冷却防点击残键误捕
                 jmp NHT_Done
 NHT_NegRet:
                 .if eax == -2
@@ -996,16 +1084,25 @@ SS_Vl2:
             .endif
         .endif
         .if rebindWait != 0
-            invoke KeyEdge, VK_ESCAPE, addr prevEsc
-            .if eax != 0
+            .if esE != 0
                 mov rebindWait, 0
             .else
-                ; 扫描 0x20..0xFF 找新按下键
+                ; 扫描同人数页：0x8000 电平 + 收窄范围（排 Esc/Win/IME/鼠标）；
+                ; 进入重绑由回车触发，起点 0x20 已排除 Enter，无需冷却
                 mov scanVk, 20h
 UT_Scan:
                 mov eax, scanVk
-                .if eax >= 100h
+                .if eax > 0A5h
                     jmp UT_ScanDone
+                .endif
+                .if eax == 1Bh
+                    jmp UT_ScanNext
+                .endif
+                .if eax > 5Ah && eax < 60h
+                    jmp UT_ScanNext
+                .endif
+                .if eax > 87h && eax < 0A0h
+                    jmp UT_ScanNext
                 .endif
                 invoke GetAsyncKeyState, eax
                 and eax, 8000h
@@ -1016,6 +1113,7 @@ UT_Scan:
                     mov rebindWait, 0
                     jmp UT_ScanDone
                 .endif
+UT_ScanNext:
                 inc scanVk
                 jmp UT_Scan
 UT_ScanDone:

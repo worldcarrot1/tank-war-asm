@@ -57,6 +57,11 @@ DIR_DOWN    equ 90
 DIR_LEFT    equ 180
 DIR_UP      equ 270
 TURN_SPEED  equ 4                   ; 每 tick 转向度数（左右键旋转）
+; MoveTank 动作码（与 DIR_* 角度值区分）
+MV_FWD      equ 0                   ; 前进
+MV_BACK     equ 1                   ; 后退
+MV_TL       equ 2                   ; 左转
+MV_TR       equ 3                   ; 右转
 
 ; ---- 坦克 ----
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）

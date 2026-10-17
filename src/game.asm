@@ -57,6 +57,9 @@ public maxRounds
 public roundsPlayed
 public shakeT
 public cosTBL
+public dbgTurn
+public dbgFire
+public spawnX
 public sinTBL
 public pickupType
 public pickupX
@@ -90,6 +93,8 @@ public prevTank
     c180        dd 180
     k1000       dd 1024
     tval        dd ?
+    dbgTurn     dd 0
+    dbgFire     dd 0                   ; DBG: 转向执行计数
     tval2       dd ?
     testNoShuffle dd 0               ; 自测置 1：不换图/不随机出生（保持 ARENA1 确定性）
     arenaBag    dd ARENA_COUNT dup (?) ; 本场比赛的地图洗牌袋（索引到 arenaTable）
@@ -947,14 +952,10 @@ RT_Spawn:
     mov eax, esi
     mov eax, spawnY[eax*4]
     mov (TANK ptr [edi]).y, eax
-    mov esi, ebx
-    .if numPlayers == 2 && ebx == 1
-        mov esi, 3
-    .endif
-    mov eax, esi
+    mov eax, ebx
     mov eax, spawnX[eax*4]
     mov (TANK ptr [edi]).spawnX, eax     ; 记录本回合出生点（重生用）
-    mov eax, esi
+    mov eax, ebx
     mov eax, spawnY[eax*4]
     mov (TANK ptr [edi]).spawnY, eax
     ; 朝向按出生位半场：上半场朝下、下半场朝上（随机出生点适用）
@@ -2124,7 +2125,34 @@ T23KillDone:
     invoke LogNum, tanks[1*SIZEOF TANK].hp         ; expect 3（满血）
     invoke LogStr, offset stT23d, 27
     invoke LogNum, tanks[1*SIZEOF TANK].protT      ; expect 120（保护剩余）
-    mov testLives, 1                               ; 恢复（保险）
+    mov testLives, 1
+    call ResetTanks
+    invoke LogStr, offset stT23a, 25               ; T24: P2 lives
+    invoke LogNum, tanks[1*SIZEOF TANK].lives
+    invoke LogStr, offset stT23b, 27               ; T24: P2 alive
+    invoke LogNum, tanks[1*SIZEOF TANK].alive
+    invoke LogStr, offset stT23c, 24               ; T24: P2 x px
+    invoke LogNum, tanks[1*SIZEOF TANK].x
+    invoke LogStr, offset stT23d, 27               ; T24: P2 y px
+    invoke LogStr, offset stT23e, 25               ; T24: P2 hp
+    invoke LogNum, tanks[1*SIZEOF TANK].hp
+    invoke LogStr, offset stT23f, 25               ; T24: P2 protT
+    invoke LogNum, tanks[1*SIZEOF TANK].protT
+    invoke LogStr, offset stT23d, 27               ; T24: P2 dir
+    invoke LogStr, offset stT23e, 25               ; T24: P2 hp via lea
+    mov eax, SIZEOF TANK
+    add eax, 12
+    add eax, offset tanks
+    mov eax, [eax]
+    invoke LogNum, eax
+    invoke LogStr, offset stT23f, 25               ; T24: P2 protT via lea
+    mov eax, SIZEOF TANK
+    add eax, 92
+    add eax, offset tanks
+    mov eax, [eax]
+    invoke LogNum, eax
+    invoke LogNum, tanks[1*SIZEOF TANK].dir
+    invoke LogNum, tanks[1*SIZEOF TANK].y
     call ResetTanks
     invoke LogNum, tanks[1*SIZEOF TANK].hp
 
@@ -3577,6 +3605,7 @@ SlotFound:
     add eax, tval
     sub eax, (BULLET_SIZE_PX)/2
     mov (BULLET ptr [esi]).y, eax
+    inc dbgFire
     mov (BULLET ptr [esi]).owner, edi
     mov (BULLET ptr [esi]).active, 1
     mov (BULLET ptr [esi]).bounces, 0
@@ -3663,7 +3692,8 @@ MoveTank proc ownerIdx: dword, wantDir: dword
     mov dirL, eax
     ; 360 度转向：左键逆时针、右键顺时针（转向 tick 不位移）
     mov ecx, ptank
-    .if dirL == 2
+    .if dirL == MV_TL
+
         mov eax, (TANK ptr [ecx]).dir
         sub eax, TURN_SPEED
         .if eax < 0
@@ -3671,7 +3701,7 @@ MoveTank proc ownerIdx: dword, wantDir: dword
         .endif
         mov (TANK ptr [ecx]).dir, eax
         ret
-    .elseif dirL == 3
+    .elseif dirL == MV_TR
         mov eax, (TANK ptr [ecx]).dir
         add eax, TURN_SPEED
         .if eax >= 360
@@ -3717,7 +3747,7 @@ MT_SpdEven:
     ; dirL==0 前进（moveF=1）、dirL==1 后退（moveF=-1）
     mov eax, dirL
     mov moveF, 1
-    .if eax == 1
+    .if eax == MV_BACK
         mov moveF, -1
     .endif
     mov ecx, ptank                 ; 速度段破坏了 ecx，重载
@@ -3932,19 +3962,19 @@ GU_Slot:
     mov dirWanted, -1
     mov eax, inputTable[esi]
     .if eax != 0
-        mov dirWanted, DIR_UP
+        mov dirWanted, MV_FWD           ; 上=前进
     .else
         mov eax, inputTable[esi+4]
         .if eax != 0
-            mov dirWanted, DIR_DOWN
+            mov dirWanted, MV_BACK      ; 下=后退
         .else
             mov eax, inputTable[esi+8]
             .if eax != 0
-                mov dirWanted, DIR_LEFT
+                mov dirWanted, MV_TL    ; 左=左转
             .else
                 mov eax, inputTable[esi+12]
                 .if eax != 0
-                    mov dirWanted, DIR_RIGHT
+                    mov dirWanted, MV_TR ; 右=右转
                 .endif
             .endif
         .endif
@@ -3961,7 +3991,7 @@ GU_Slot:
         mov eax, (TANK ptr [edx]).slide
         .if eax > 0
             dec (TANK ptr [edx]).slide
-            mov eax, (TANK ptr [edx]).sdir
+                        mov eax, MV_FWD             ; 冰面滑行=沿当前朝向前进
             invoke MoveTank, ebx, eax
         .endif
     .endif

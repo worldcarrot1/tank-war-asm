@@ -52,6 +52,8 @@ extern langFlag    :dword          ; 0=英 1=中（ui.asm）
 extern menuFont    :dword          ; 菜单大字体（ui.asm）
 extern fontSmall   :dword          ; 小字体（ui.asm）
 extern fontBig     :dword          ; 倒计时大数字（ui.asm）
+extern inputTable :dword         ; 输入快照（game.asm）
+extern spawnX     :dword         ; 出生点数组（game.asm）
 extern cosTBL     :dword          ; 三角表（game.asm）
 extern sinTBL     :dword
 extern playerName  :byte           ; 玩家名（ui.asm，每人 16 字节）
@@ -163,7 +165,7 @@ GfxInit proc
     mov brushDirtDark, eax
     invoke CreateSolidBrush, 0028781Ah       ; P1 深绿 RGB(26,120,40)
     mov brushP1, eax
-    invoke CreateSolidBrush, 00A0461Eh       ; P2 深蓝 RGB(30,70,160)
+    invoke CreateSolidBrush, 00DC783Ch       ; P2 亮蓝 RGB(60,120,220)
     mov brushP2, eax
     invoke CreateSolidBrush, 003030C0h       ; P3 深红 RGB(192,48,48)
     mov brushP3, eax
@@ -294,21 +296,7 @@ DH_NameDone:
     mov eax, esi
     add eax, MAP_W/4 - 60
     invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, 5
-    ; DBG: P2 坐标诊断（临时）
-    lea edi, scoreBuf
-    mov eax, tanks[1*SIZEOF TANK].x
-    shr eax, 5
-    add al, '0'
-    mov [edi], al
-    mov eax, tanks[1*SIZEOF TANK].y
-    shr eax, 5
-    add al, '0'
-    mov [edi+1], al
-    mov eax, tanks[1*SIZEOF TANK].alive
-    add al, '0'
-    mov [edi+2], al
-    mov byte ptr [edi+3], 0
-    invoke TextOutA, hdcBack, 500, 610, offset scoreBuf, 3
+
     inc ebx
     jmp DH_Slot
 DrawHud endp

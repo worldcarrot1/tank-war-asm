@@ -254,6 +254,16 @@ MARK=311
 T31_TRIG_TABLE(expect4)=4
  want 4
  OK
+MARK=312
+
+T32_TURN_DRIVE(expect3)=3
+ want 3
+ OK
+MARK=313
+
+T33_TERR_EDGE(expect2)=2
+ want 2
+ OK
 MARK=320
 
 ST_FAILS=0

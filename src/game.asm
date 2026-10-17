@@ -701,6 +701,10 @@ arenaTable dd ARENA1,
     stT30L  equ ($ - stT30)
     stT31   db "T31_TRIG_TABLE(expect4)="
     stT31L  equ ($ - stT31)
+    stT32   db "T32_TURN_DRIVE(expect3)="
+    stT32L  equ ($ - stT32)
+    stT33   db "T33_TERR_EDGE(expect2)="
+    stT33L  equ ($ - stT33)
     stWntS  db " want "
     stWntSL equ ($ - stWntS)
     stOKS   db " OK", 13, 10
@@ -2611,6 +2615,136 @@ ST31C:
 ST31D:
     invoke Chk, offset stT31, stT31L, lPass, 4
 
+    ; ==== T32 边走边转（会话 20 操作手感回归）：同一 tick 内转向通道
+    ;      与驾驶通道同时生效。引擎层本就并行（GameUpdate 先转向后驾驶），
+    ;      "两键不同时生效"的元凶是主循环吞 tick（main.asm 已修），
+    ;      此条守引擎层不回退。清出上部净空区，P1 从 (96,96) dir=45
+    ;      按住 前进+右转 10 tick：dir=45+4*10=85，且车沿转过的弧线走了 ====
+    invoke Mark, 312
+    mov ecx, MAX_BULLETS*(SIZEOF BULLET)/4
+    mov edi, offset bullets
+    xor eax, eax
+    rep stosd
+    call ResetTanks
+    ; 清空 cols2..13 x rows2..12（行车净空）
+    mov ebx, 2
+T32ClrRow:
+    mov eax, ebx
+    imul eax, eax, COLS
+    add eax, 2
+    mov ecx, 12
+T32ClrCol:
+    mov byte ptr mapData[eax], TILE_EMPTY
+    inc eax
+    dec ecx
+    jnz T32ClrCol
+    inc ebx
+    cmp ebx, 12
+    jbe T32ClrRow
+    ; P2 输入清零（防前序用例残留）
+    mov dword ptr inputTable[24], 0
+    mov dword ptr inputTable[28], 0
+    mov dword ptr inputTable[32], 0
+    mov dword ptr inputTable[36], 0
+    mov dword ptr inputTable[40], 0
+    mov dword ptr inputTable[44], 0
+    ; P1 摆位
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 96
+    mov tanks[0*SIZEOF TANK].dir, 45
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].effOn, 0
+    ; 前进 + 右转 同按 10 tick
+    mov inputTable[0], 1
+    mov inputTable[12], 1
+    invoke AdvanceTicks, 10
+    mov inputTable[0], 0
+    mov inputTable[12], 0
+    mov lPass, 0
+    ; a) 转向照常累计：dir == 85（驾驶没吞转向）
+    mov eax, tanks[0*SIZEOF TANK].dir
+    cmp eax, 85
+    jne T32A
+    inc lPass
+T32A:
+    ; b) 驾驶同步推进 dx 理论~17，容差 [8,26]
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, 96
+    cmp eax, 8
+    jb T32B
+    cmp eax, 26
+    ja T32B
+    inc lPass
+T32B:
+    ; c) dy 理论~40，容差 [30,52]（转向没把车钉在原地）
+    mov eax, tanks[0*SIZEOF TANK].y
+    sub eax, 96
+    cmp eax, 30
+    jb T32C
+    cmp eax, 52
+    ja T32C
+    inc lPass
+T32C:
+    invoke Chk, offset stT32, stT32L, lPass, 3
+
+    ; ==== T33 地形边缘判定（会话 20 地形残留回归）：车身一半出了地形
+    ;      格就不应再有地形效果。把 P1 摆在 (3,13) 骑右缘位置（中心像素
+    ;      仍在格内 —— 旧的中心单点判定会误触发效果） ====
+    invoke Mark, 313
+    mov byte ptr mapData[13*COLS+3], TILE_DIRT
+    mov byte ptr mapData[13*COLS+4], TILE_EMPTY
+    call ResetTanks
+    mov dword ptr inputTable[24], 0
+    mov dword ptr inputTable[28], 0
+    mov dword ptr inputTable[32], 0
+    mov dword ptr inputTable[36], 0
+    mov dword ptr inputTable[40], 0
+    mov dword ptr inputTable[44], 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].x, 115
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].effOn, 0
+    mov inputTable[0], 1
+    invoke GameUpdate
+    mov inputTable[0], 0
+    mov lPass, 0
+    ; a) 半个车身在泥上：dx>=4（正常速下限）；旧判定中心在泥 -> dx=2
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, 115
+    cmp eax, 4
+    jb T33A
+    inc lPass
+T33A:
+    ; b) 泥格换冰格，起点 (109,416)：走 1 tick 后中心仍在冰格、车身已
+    ;    半出冰面 -> 不得触发滑行（旧判定会得到 slide>=6）
+    mov byte ptr mapData[13*COLS+3], TILE_ICE
+    mov tanks[0*SIZEOF TANK].x, 109
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov inputTable[0], 1
+    invoke GameUpdate
+    mov inputTable[0], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    cmp eax, 109                     ; 意外被挡则本条作废（不误加 lPass）
+    jbe T33B
+    mov eax, tanks[0*SIZEOF TANK].slide
+    test eax, eax
+    jnz T33B
+    inc lPass
+T33B:
+    mov byte ptr mapData[13*COLS+3], TILE_EMPTY
+    invoke Chk, offset stT33, stT33L, lPass, 2
+
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
     invoke Mark, 320
     cld
@@ -2675,6 +2809,62 @@ TileAtPx proc uses ebx px: dword, py: dword
     movzx eax, mapData[eax]
     ret
 TileAtPx endp
+
+; ------------------------------------------------------------
+; TankTerrMajority —— 地形"四象限全点"判定（会话 20）
+; 旧版用坦克中心单像素判泥土减速/冰面滑行：25px 车身骑在 32px 格上时，
+; 车身早已视觉离开该格而中心点还留在格内，效果"赖着不走"（用户点名：
+; 不在地形内效果依然会保留）。
+; 新规则：在车身四个象限中心 (x+6/x+18, y+6/y+18) 各放一个采样点，
+; 4 点全部落在指定地形类型（多格同类型地形按"区域"合并计）才算
+; "站在该地形上"。阈值取 4 而非 2：若只要求 >=2，坦克中心仍跨在
+; 格内时旧病依旧（半辆车身在格外仍减速/滑行）。四格全中意味着车身
+; 核心 12x12 区域完整位于地形内（单格地形时车身重叠 >=76%），
+; 与肉眼"踩在上面"一致。坦克摆正单格内时 4 点同格，与旧中心判定
+; 等价（自测摆位全部在格原点，语义不变）。
+; 水域保持"覆盖任一格即阻挡"——车身边缘碰到水就应停下，不放行。
+; ------------------------------------------------------------
+TankTerrMajority proc uses ebx esi edi tankP: dword, tileType: dword
+    local px0:dword, px1:dword, py0:dword, py1:dword, cnt:dword
+    mov esi, tankP
+    mov eax, (TANK ptr [esi]).x
+    add eax, TANK_SIZE/4
+    mov px0, eax
+    mov eax, (TANK ptr [esi]).x
+    add eax, TANK_SIZE*3/4
+    mov px1, eax
+    mov eax, (TANK ptr [esi]).y
+    add eax, TANK_SIZE/4
+    mov py0, eax
+    mov eax, (TANK ptr [esi]).y
+    add eax, TANK_SIZE*3/4
+    mov py1, eax
+    mov cnt, 0
+    invoke TileAtPx, px0, py0
+    .if eax == tileType
+        inc cnt
+    .endif
+    invoke TileAtPx, px0, py1
+    .if eax == tileType
+        inc cnt
+    .endif
+    invoke TileAtPx, px1, py0
+    .if eax == tileType
+        inc cnt
+    .endif
+    invoke TileAtPx, px1, py1
+    .if eax == tileType
+        inc cnt
+    .endif
+    mov eax, cnt
+    cmp eax, 4
+    jb TTM_No
+    mov eax, 1
+    ret
+TTM_No:
+    xor eax, eax
+    ret
+TankTerrMajority endp
 
 ; ------------------------------------------------------------
 ; IsWallCell —— 格子是否为实体墙（钢/砖）
@@ -4241,8 +4431,9 @@ MuzzlePoint endp
 ; ------------------------------------------------------------
 ; MoveTank —— 坦克移动（水/钢/砖实心，冰/泥/空地可通行）
 ; 会话 19：沿航向角 moveF 前进(1)/后退(-1)，16.16 定点进位位移；
-; 冰面：位移成功且中心格是冰 -> 刷新滑行 tick 并冻结当前航向角
-; 泥土：中心格泥土 -> 本 tick 速度 DIRT_SPEED，否则 4/5 交替
+; 冰面：位移成功且四象限全在冰格 -> 刷新滑行 tick 并冻结当前航向角
+; 泥土：四象限全在泥格 -> 本 tick 速度 DIRT_SPEED，否则 4/5 交替
+; （会话 20：中心单点判定改为 TankTerrMajority 全点判定）
 ; 本函数绝不写 dir（旧 360 版致命 bug1：把动作码 mov 进 dir 清零航向）
 ; ------------------------------------------------------------
 MoveTank proc ownerIdx: dword, moveF: dword, ang: dword
@@ -4255,13 +4446,9 @@ MoveTank proc ownerIdx: dword, moveF: dword, ang: dword
     add ecx, offset tanks
     mov ptank, ecx
 
-    ; 泥土减速：坦克中心格地形决定本 tick 速度
-    mov eax, (TANK ptr [ecx]).x
-    add eax, TANK_SIZE/2
-    mov edx, (TANK ptr [ecx]).y
-    add edx, TANK_SIZE/2
-    invoke TileAtPx, eax, edx
-    .if eax == TILE_DIRT
+    ; 泥土减速：四象限全点判定（会话 20：中心单点会"车已离泥仍减速"）
+    invoke TankTerrMajority, ptank, TILE_DIRT
+    .if eax != 0
         mov eax, DIRT_SPEED
     .else
         ; 4/5 交替（平均 4.5 = 子弹 6 的 75%）：奇数 tick 用 HI
@@ -4389,14 +4576,9 @@ MT_AfterBlock:
                 .endif
             .endif
         .endif
-        mov ecx, ptank                 ; 恢复坦克指针（后续冰面判定依赖 ecx）
-        ; 冰面判定：坦克中心格
-        mov eax, (TANK ptr [ecx]).x
-        add eax, TANK_SIZE/2
-        mov edx, (TANK ptr [ecx]).y
-        add edx, TANK_SIZE/2
-        invoke TileAtPx, eax, edx
-        .if eax == TILE_ICE
+        ; 冰面判定：四象限全点（会话 20：与泥土同因，车已离冰不应再滑行）
+        invoke TankTerrMajority, ptank, TILE_ICE
+        .if eax != 0
             invoke RngBelow, ICE_SLIDE_RNG   ; 0..4
             add eax, ICE_SLIDE_MIN           ; 6..15 tick
             mov ecx, ptank

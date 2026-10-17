@@ -148,7 +148,13 @@ WinMain proc
     mov nextTick, eax
 
 MainLoop:
-    ; 处理所有待处理消息（不阻塞）
+    ; ---- 全量抽取消息队列（会话 20 修复）----
+    ; 旧版每轮只处理 1 条消息并 jmp Render，当轮逻辑 tick 被整轮跳过。
+    ; 同时按住两键时按键自动重复约 60 条消息/秒（WM_KEYDOWN+WM_CHAR），
+    ; 16ms 的 tick 近半被吞，表现为"转向+前进不能同时生效"。
+    ; 输入本就由 GetAsyncKeyState 电平轮询（不依赖消息队列），
+    ; tick 不被吞后多键并行自然恢复。
+ML_Pump:
     invoke PeekMessageA, addr msg, NULL, 0, 0, PM_REMOVE
     .if eax != 0
         .if msg.message == WM_QUIT
@@ -156,13 +162,16 @@ MainLoop:
         .endif
         invoke TranslateMessage, addr msg
         invoke DispatchMessageA, addr msg
-        jmp Render
+        jmp ML_Pump
     .endif
 
     ; 到达下一逻辑 tick 才推进游戏状态
     invoke GetTickCount
     .if eax >= nextTick
         add nextTick, TICK_MS
+        .if eax > nextTick            ; 落后过多（渲染卡顿等）：基准直接跳到
+            mov nextTick, eax         ; 当前时刻，不逐 tick 快进追帧
+        .endif
         invoke UiTick              ; 1. 界面状态机（菜单/联机/对局切换）
         .if gameState == ST_PLAY   ; 2. 仅对局状态推进玩法（暂停时冻结）
             mov eax, pauseMode

@@ -82,6 +82,9 @@ public prevTank
     gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
     shakeT      dd 0                 ; 坦克爆炸震屏剩余 tick
     testLives   dd LIVES_INIT        ; 自测时置 1（击杀即淘汰，保持旧断言）
+    testNoShuffle dd 0               ; 自测置 1：不换图/不随机出生（保持 ARENA1 确定性）
+    arenaBag    dd ARENA_COUNT dup (?) ; 本场比赛的地图洗牌袋（索引到 arenaTable）
+    arenaBagPos dd ARENA_COUNT       ; 袋内游标（>=COUNT 触发重洗）
     maxRounds   dd 11                ; 比赛局数（11..51，人数页可调）
     roundsPlayed dd 0                 ; 已完成局数
     matchOver   dd 0                  ; 1=打满局数，显示胜者等待回菜单
@@ -697,10 +700,143 @@ ColLoop2:
 ParseArena endp
 
 ; ------------------------------------------------------------
+; NextArena -- 本场比赛内不重复抽图：Fisher-Yates 洗牌后依次取；
+; 袋子取空（局数 > 地图数）重新洗牌开始新一轮
+; 返回 eax = arenaTable 索引
+; ------------------------------------------------------------
+NextArena proc uses ebx ecx edx esi edi
+    mov eax, arenaBagPos
+    .if eax >= ARENA_COUNT
+        ; 重洗：bag[i] = i；从尾向前与随机位交换
+        xor ebx, ebx
+NA_Fill:
+        mov arenaBag[ebx*4], ebx
+        inc ebx
+        .if ebx < ARENA_COUNT
+            jmp NA_Fill
+        .endif
+        mov ecx, ARENA_COUNT          ; i = COUNT..1
+NA_Shuf:
+        .if ecx <= 1
+            jmp NA_ShufDone
+        .endif
+        dec ecx
+        mov eax, ecx
+        inc eax
+        invoke RngBelow, eax          ; j = RngBelow(i+1)
+        mov edi, eax                  ; j
+        mov esi, ecx                  ; i
+        mov eax, arenaBag[esi*4]
+        mov edx, arenaBag[edi*4]
+        mov arenaBag[esi*4], edx
+        mov arenaBag[edi*4], eax
+        jmp NA_Shuf
+NA_ShufDone:
+        mov arenaBagPos, 0
+    .endif
+    mov eax, arenaBagPos
+    mov ecx, arenaBag[eax*4]
+    inc arenaBagPos
+    mov eax, ecx
+    ret
+NextArena endp
+
+; ------------------------------------------------------------
+; PickRandomSpawns -- 每局随机出生点：从空地格随机挑 numPlayers 个，
+; 两两曼哈顿距离 >= 6 格（避免开局贴脸），500 次重试后放弃
+; （保留 ParseArena 的原出生点作兜底）
+; ------------------------------------------------------------
+PickRandomSpawns proc uses ebx ecx edx esi edi
+    local picked:dword, tries:dword, cand:dword, cx0:dword, cy0:dword
+    mov picked, 0
+    mov tries, 0
+PRS_Try:
+    mov eax, picked
+    .if eax >= numPlayers
+        jmp PRS_Done
+    .endif
+    mov eax, tries
+    .if eax >= 500
+        jmp PRS_Done                  ; 放弃：保留 ParseArena 原出生点
+    .endif
+    inc tries
+    invoke RngBelow, COLS*ROWS
+    mov cand, eax
+    mov ebx, eax
+    movzx eax, mapData[ebx]
+    .if eax != TILE_EMPTY
+        jmp PRS_Try                   ; 只允许空地格
+    .endif
+    mov eax, cand
+    xor edx, edx
+    mov ecx, COLS
+    div ecx                           ; eax=行 edx=列
+    .if eax < 1 || eax >= ROWS-1
+        jmp PRS_Try                   ; 边界内缩 1 格
+    .endif
+    .if edx < 1 || edx >= COLS-1
+        jmp PRS_Try
+    .endif
+    mov cy0, eax
+    mov cx0, edx
+    ; 与已选出生点两两距离 >= 6 格
+    xor ebx, ebx
+PRS_Dist:
+    .if ebx >= picked
+        jmp PRS_DistOk
+    .endif
+    mov eax, spawnY[ebx*4]
+    add eax, TANK_SIZE/2
+    shr eax, 5
+    sub eax, cy0
+    .if eax < 0
+        neg eax
+    .endif
+    mov ecx, eax
+    mov eax, spawnX[ebx*4]
+    add eax, TANK_SIZE/2
+    shr eax, 5
+    sub eax, cx0
+    .if eax < 0
+        neg eax
+    .endif
+    add ecx, eax
+    .if ecx < 6
+        jmp PRS_Try                   ; 太近：重挑
+    .endif
+    inc ebx
+    jmp PRS_Dist
+PRS_DistOk:
+    mov eax, picked
+    mov ecx, cx0
+    imul ecx, ecx, CELL
+    add ecx, (CELL-TANK_SIZE)/2
+    mov spawnX[eax*4], ecx
+    mov ecx, cy0
+    imul ecx, ecx, CELL
+    add ecx, (CELL-TANK_SIZE)/2
+    mov spawnY[eax*4], ecx
+    inc picked
+    jmp PRS_Try
+PRS_Done:
+    ret
+PickRandomSpawns endp
+
+; ------------------------------------------------------------
 ; ResetTanks -- reset all tank slots, place tank0/tank1 at spawns,
 ; clear bullet pool (shared by GameInit and SelfTest)
+; 每局换图（本场不重复）+ 随机出生点；自测模式保持 ARENA1 固定
 ; ------------------------------------------------------------
 ResetTanks proc uses ebx esi edi
+    mov eax, testNoShuffle
+    .if eax == 0
+        invoke NextArena
+        mov mapIndex, eax
+        mov spawnCount, 0
+        mov ecx, arenaTable[eax*4]
+        invoke ParseArena, ecx
+        invoke PickRandomSpawns
+    .endif
     lea esi, tanks
     xor ebx, ebx
 RTLoop:
@@ -781,13 +917,17 @@ RT_Spawn:
     mov eax, esi
     mov eax, spawnY[eax*4]
     mov (TANK ptr [edi]).spawnY, eax
-    mov (TANK ptr [edi]).dir, DIR_DOWN
-    mov (TANK ptr [edi]).spawnDir, DIR_DOWN
-    mov (TANK ptr [edi]).alive, 1
-    .if esi >= 2
-        mov (TANK ptr [edi]).dir, DIR_UP      ; 下半出生点朝上
+    ; 朝向按出生位半场：上半场朝下、下半场朝上（随机出生点适用）
+    mov eax, (TANK ptr [edi]).spawnY
+    add eax, TANK_SIZE/2
+    .if eax < MAP_H/2
+        mov (TANK ptr [edi]).dir, DIR_DOWN
+        mov (TANK ptr [edi]).spawnDir, DIR_DOWN
+    .else
+        mov (TANK ptr [edi]).dir, DIR_UP
         mov (TANK ptr [edi]).spawnDir, DIR_UP
     .endif
+    mov (TANK ptr [edi]).alive, 1
     ; 出生保护：出生位嵌墙/出界 -> 挪到最近开放格（防卡边界）
     mov eax, ebx
     imul eax, eax, SIZEOF TANK
@@ -1069,6 +1209,7 @@ CountOwnBullets endp
 SelfTestRun proc uses ebx esi edi
     call InitKeyDefaults             ; 无头路径不经过 UiInit，补默认键位
     mov testLives, 1                 ; 旧断言基于"击杀即淘汰"，自测固定单命
+    mov testNoShuffle, 1             ; 自测固定 ARENA1 + 原出生点（确定性）
     ; 固定 ARENA1 保证确定性
     mov rngState, 1
     mov spawnCount, 0
@@ -1257,6 +1398,16 @@ T9Loop:
     jmp T9Loop
 T9Done:
     mov inputTable[16], 0
+    ; 单命制下流弹会误伤 P1 导致判分统计为 0 —— 清空弹池
+    mov edi, offset bullets
+    xor ecx, ecx
+T9ClrB:
+    mov (BULLET ptr [edi]).active, 0
+    add edi, SIZEOF BULLET
+    inc ecx
+    .if ecx < MAX_BULLETS
+        jmp T9ClrB
+    .endif
     invoke LogStr, offset stT9a, 19
     invoke LogNum, esi                             ; kill tick (<300)
     invoke LogStr, offset stT9b, 21
@@ -1907,13 +2058,8 @@ GameInit proc uses ebx esi edi
         invoke GetTickCount
         mov rngState, eax
     .endif
-    ; pick a random arena
-    invoke RngBelow, ARENA_COUNT
-    mov mapIndex, eax
-    mov spawnCount, 0
-    mov ecx, arenaTable[eax*4]
-    invoke ParseArena, ecx
-    call ResetTanks
+    mov arenaBagPos, ARENA_COUNT    ; 新比赛：重置洗牌袋（首局触发重洗）
+    call ResetTanks                  ; 选图(不重复)+随机出生点+布坦克
     ; 键位默认值改由 UiInit 启动时设一次；
     ; 此处不再重置，避免人数页自定义键位每局被洗掉
     mov tanks[0*SIZEOF TANK].score, 0
@@ -4120,7 +4266,7 @@ GU_MineDone:
             xor esi, esi
             xor ebx, ebx
 SCJ_Alive:
-            .if ebx >= MAX_PLAYERS
+            .if ebx >= numPlayers          ; 只统计激活槽位（slot2/3 的 lives 不算在场）
                 jmp SCJ_Done
             .endif
             mov edx, ebx
@@ -4161,7 +4307,7 @@ SCJ_Done:
     xor esi, esi                        ; esi = 幸存者槽位
     xor ebx, ebx
 SC_Alive:
-    .if ebx >= MAX_PLAYERS
+    .if ebx >= numPlayers                 ; 只统计激活槽位
         jmp SC_AliveDone
     .endif
     mov edx, ebx

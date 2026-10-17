@@ -15,6 +15,12 @@ include win32.inc
 include game.inc
 
 public hdcBack                    ; ui.asm 菜单界面复用后台 DC
+public DrawPickupIcon             ; 技能说明页复用图标绘制
+public brushPickBg                ; 说明页图标底色
+public brushIcon                  ; 图标白色填充
+public penIcon                    ; 图标白色笔
+public penOld2                    ; 说明页恢复用
+public brushMortar                ; 图标深色描边
 extern hWnd        :dword          ; main.asm 里的主窗口句柄
 extern numPlayers  :dword          ; ui.asm（当前玩家数）
 extern mapData     :byte           ; game.asm 里的地图数组
@@ -257,10 +263,21 @@ DH_NameDone:
     lea edi, scoreBuf
     mov [edi], al
     mov [edi+1], dl
-    mov byte ptr [edi+2], 0
+    mov byte ptr [edi+2], ' '
+    mov byte ptr [edi+3], 'x'
+    mov eax, ebx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov eax, (TANK ptr [eax]).lives
+    .if eax > 9
+        mov eax, 9
+    .endif
+    add al, '0'
+    mov [edi+4], al
+    mov byte ptr [edi+5], 0
     mov eax, esi
-    add eax, MAP_W/4 - 44
-    invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, 2
+    add eax, MAP_W/4 - 60
+    invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, 5
     inc ebx
     jmp DH_Slot
 DrawHud endp
@@ -322,33 +339,38 @@ PickLine proc hdc: dword, x1: dword, y1: dword, x2: dword, y2: dword
 PickLine endp
 
 ; 坐标先算进寄存器再 invoke（px+const 在参数里会被当内存寻址！）
+; 坐标 = (px + off*sc, py + off*sc)，sc 为缩放（拾取物 1，说明页大图 3）
 PK_LINE MACRO hx, x1, y1, x2, y2
-    mov eax, gfxX
-    add eax, x1
-    mov ecx, gfxY
-    add ecx, y1
-    mov edx, gfxX
-    add edx, x2
-    mov ebx, gfxY
-    add ebx, y2
+    mov eax, x1
+    imul eax, sc
+    add eax, px
+    mov ecx, y1
+    imul ecx, sc
+    add ecx, py
+    mov edx, x2
+    imul edx, sc
+    add edx, px
+    mov ebx, y2
+    imul ebx, sc
+    add ebx, py
     invoke PickLine, hx, eax, ecx, edx, ebx
 ENDM
 PK_FILL MACRO hx, what, x1, y1, x2, y2
-    mov eax, gfxX
-    add eax, x1
-    mov ecx, gfxY
-    add ecx, y1
-    mov edx, gfxX
-    add edx, x2
-    mov ebx, gfxY
-    add ebx, y2
+    mov eax, x1
+    imul eax, sc
+    add eax, px
+    mov ecx, y1
+    imul ecx, sc
+    add ecx, py
+    mov edx, x2
+    imul edx, sc
+    add edx, px
+    mov ebx, y2
+    imul ebx, sc
+    add ebx, py
     invoke what, hx, eax, ecx, edx, ebx
 ENDM
-DrawPickupIcon proc uses ebx edi hdc: dword, px: dword, py: dword, tp: dword
-    mov eax, px
-    mov gfxX, eax
-    mov eax, py
-    mov gfxY, eax
+DrawPickupIcon proc uses ebx edi hdc: dword, px: dword, py: dword, tp: dword, sc: dword
     mov eax, tp
     .if eax == SK_ICE_SHIELD
         invoke SelectObject, hdcBack, brushIcon
@@ -862,7 +884,7 @@ BR_Done:
         mov eax, pickupX
         mov ecx, pickupY
         mov eax, pickupType
-        invoke DrawPickupIcon, hdcBack, pickupX, pickupY, pickupType
+        invoke DrawPickupIcon, hdcBack, pickupX, pickupY, pickupType, 1
         invoke SelectObject, hdcBack, penOld2
     .endif
 
@@ -872,6 +894,14 @@ BR_Done:
 TankLoop:
     mov eax, (TANK ptr [esi]).alive
     .if eax != 0
+        ; 重生保护期闪烁：暗相跳过绘制
+        mov eax, (TANK ptr [esi]).protT
+        .if eax > 0
+            and eax, 8
+            .if eax == 0
+                jmp TankSkip
+            .endif
+        .endif
         push ebx
         mov eax, ebx
         .if eax == 0
@@ -904,6 +934,7 @@ TankLoop:
         pop ebx
 TP_NoPh:
     .endif
+TankSkip:
     add esi, SIZEOF TANK
     inc ebx
     .if ebx < MAX_PLAYERS

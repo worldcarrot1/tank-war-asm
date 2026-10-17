@@ -81,6 +81,7 @@ public prevTank
     prevUse     dd MAX_PLAYERS dup (0)  ; 技能键上帧状态（边沿检测）
     gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
     shakeT      dd 0                 ; 坦克爆炸震屏剩余 tick
+    testLives   dd LIVES_INIT        ; 自测时置 1（击杀即淘汰，保持旧断言）
     maxRounds   dd 11                ; 比赛局数（11..51，人数页可调）
     roundsPlayed dd 0                 ; 已完成局数
     matchOver   dd 0                  ; 1=打满局数，显示胜者等待回菜单
@@ -605,6 +606,10 @@ arenaTable dd ARENA1,
     stT22d db "T22_HIT_PH(expect1)="       ; 20 字符
     stT22e db "T22_2ND(expect1)="          ; 17 字符
     stT22f db "T22_CLEAR(expect1)="        ; 19 字符
+    stT23a db "T23_LIVES_AFTER(expect2)="  ; 25 字符
+    stT23b db "T23_ALIVE_RESPAWN(expect1)=" ; 27 字符
+    stT23c db "T23_HP_RESPAWN(expect3)="   ; 24 字符
+    stT23d db "T23_PROT_AFTER(expect120)=" ; 27 字符
 
 .code
 
@@ -717,6 +722,10 @@ RTLoop:
     mov (TANK ptr [esi]).phantomX, 0
     mov (TANK ptr [esi]).phantomY, 0
     mov (TANK ptr [esi]).phantomUses, 0
+    mov eax, testLives
+    mov (TANK ptr [esi]).lives, eax
+    mov (TANK ptr [esi]).respawnT, 0
+    mov (TANK ptr [esi]).protT, 0
     add esi, SIZEOF TANK
     inc ebx
     .if ebx < MAX_PLAYERS
@@ -762,10 +771,22 @@ RT_Spawn:
     mov eax, esi
     mov eax, spawnY[eax*4]
     mov (TANK ptr [edi]).y, eax
+    mov esi, ebx
+    .if numPlayers == 2 && ebx == 1
+        mov esi, 3
+    .endif
+    mov eax, esi
+    mov eax, spawnX[eax*4]
+    mov (TANK ptr [edi]).spawnX, eax     ; 记录本回合出生点（重生用）
+    mov eax, esi
+    mov eax, spawnY[eax*4]
+    mov (TANK ptr [edi]).spawnY, eax
     mov (TANK ptr [edi]).dir, DIR_DOWN
+    mov (TANK ptr [edi]).spawnDir, DIR_DOWN
     mov (TANK ptr [edi]).alive, 1
     .if esi >= 2
         mov (TANK ptr [edi]).dir, DIR_UP      ; 下半出生点朝上
+        mov (TANK ptr [edi]).spawnDir, DIR_UP
     .endif
     ; 出生保护：出生位嵌墙/出界 -> 挪到最近开放格（防卡边界）
     mov eax, ebx
@@ -1047,6 +1068,7 @@ CountOwnBullets endp
 ; ------------------------------------------------------------
 SelfTestRun proc uses ebx esi edi
     call InitKeyDefaults             ; 无头路径不经过 UiInit，补默认键位
+    mov testLives, 1                 ; 旧断言基于"击杀即淘汰"，自测固定单命
     ; 固定 ARENA1 保证确定性
     mov rngState, 1
     mov spawnCount, 0
@@ -1838,6 +1860,39 @@ T22fOk:
     invoke LogStr, offset stT22f, 19
     invoke LogNum, logVal                ; expect 1（收回+清空）
 T22Done:
+    ; T23: 多命制 —— 3 命击杀后 1.5s 原地重生（满血+保护），命尽才淘汰
+    mov testLives, 3
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[1*SIZEOF TANK].x, 160
+    mov tanks[1*SIZEOF TANK].y, 416
+    mov tanks[1*SIZEOF TANK].hp, TANK_HP
+    mov tanks[1*SIZEOF TANK].alive, 1
+    mov inputTable[16], 1
+    xor esi, esi
+T23Kill:
+    .if esi >= 300
+        jmp T23KillDone
+    .endif
+    invoke GameUpdate
+    inc esi
+    cmp tanks[1*SIZEOF TANK].alive, 0
+    je T23KillDone
+    jmp T23Kill
+T23KillDone:
+    mov inputTable[16], 0
+    invoke LogStr, offset stT23a, 25
+    invoke LogNum, tanks[1*SIZEOF TANK].lives      ; expect 2（扣一命）
+    invoke AdvanceTicks, 120                       ; 1.5s 重生 + 30 tick 保护
+    invoke LogStr, offset stT23b, 27
+    invoke LogNum, tanks[1*SIZEOF TANK].alive      ; expect 1（已重生）
+    invoke LogStr, offset stT23c, 24
+    invoke LogNum, tanks[1*SIZEOF TANK].hp         ; expect 3（满血）
+    invoke LogStr, offset stT23d, 27
+    invoke LogNum, tanks[1*SIZEOF TANK].protT      ; expect 120（保护剩余）
+    mov testLives, 1                               ; 恢复（保险）
     call CloseLog
     ret
 SelfTestRun endp
@@ -2229,21 +2284,73 @@ TB_CNext:
     jmp TB_Col
 TankBlocked endp
 
+; ------------------------------------------------------------
+; ShiftToOpen -- 坦克重生位嵌墙时，迁移到最近的开放格（复用出生保护逻辑）
+; ------------------------------------------------------------
+ShiftToOpen proc uses ebx ecx edx esi edi slotIdx: dword
+    mov esi, slotIdx
+    imul esi, esi, SIZEOF TANK
+    add esi, offset tanks
+    mov ecx, (TANK ptr [esi]).y
+    add ecx, TANK_SIZE/2
+    shr ecx, 5
+    imul ecx, ecx, COLS
+    mov edx, (TANK ptr [esi]).x
+    add edx, TANK_SIZE/2
+    shr edx, 5
+    add ecx, edx
+    invoke FindOpenNeighbor, ecx
+    .if nbIdx != 99
+        mov eax, nbIdx
+        xor edx, edx
+        mov ecx, COLS
+        div ecx                        ; eax=行 edx=列
+        imul eax, eax, CELL
+        add eax, (CELL-TANK_SIZE)/2
+        mov (TANK ptr [esi]).y, eax
+        mov eax, edx
+        imul eax, eax, CELL
+        add eax, (CELL-TANK_SIZE)/2
+        mov (TANK ptr [esi]).x, eax
+    .endif
+    ret
+ShiftToOpen endp
+
 ; ============================================================
 ; 技能系统
 ; ============================================================
 
 ; ------------------------------------------------------------
-; DamageTankRaw -- 真实扣血（无任何免疫；虚影被击中时用）
+; DamageTankRaw -- 真实扣血（无任何免疫；虚影被击中/子弹直接命中）
+; 多命制：血尽 -> lives-1 进入重生倒计时；lives 用尽彻底淘汰。
+; 重生保护期（protT>0）完全免伤。
 ; ------------------------------------------------------------
 DamageTankRaw proc uses ebx slotIdx: dword
     mov ebx, slotIdx
     imul ebx, ebx, SIZEOF TANK
     add ebx, offset tanks
+    mov eax, (TANK ptr [ebx]).protT
+    .if eax > 0
+        ret                          ; 重生保护期：免伤
+    .endif
     dec (TANK ptr [ebx]).hp
     mov eax, (TANK ptr [ebx]).hp
     .if eax <= 0
         mov (TANK ptr [ebx]).alive, 0
+        dec (TANK ptr [ebx]).lives
+        mov eax, RESPAWN_TICKS
+        mov (TANK ptr [ebx]).respawnT, eax
+        ; 死亡清技能/效果（重生后重新拾取）
+        mov (TANK ptr [ebx]).skill, SKILL_NONE
+        mov (TANK ptr [ebx]).effOn, 0
+        mov (TANK ptr [ebx]).shieldT, 0
+        mov (TANK ptr [ebx]).effT, 0
+        mov (TANK ptr [ebx]).wallPass, 0
+        mov (TANK ptr [ebx]).swapBul, -1
+        mov (TANK ptr [ebx]).aimT, 0
+        mov (TANK ptr [ebx]).aimSkill, SKILL_NONE
+        mov (TANK ptr [ebx]).lastCell, -1
+        mov (TANK ptr [ebx]).phantomUses, 0
         invoke SndPlay, 2            ; 坦克被击败：爆炸音
         mov shakeT, 15               ; 震屏 0.25s
     .endif
@@ -3509,6 +3616,44 @@ GU_Slot:
     .if ebx >= numPlayers
         jmp GU_SlotsDone
     .endif
+    ; ---- 多命制：重生倒计时 / 重生保护递减 ----
+    mov esi, ebx
+    imul esi, esi, SIZEOF TANK
+    add esi, offset tanks
+    mov eax, (TANK ptr [esi]).protT
+    .if eax > 0
+        dec (TANK ptr [esi]).protT
+    .endif
+    mov eax, (TANK ptr [esi]).alive
+    .if eax == 0
+        mov eax, (TANK ptr [esi]).lives
+        .if eax > 0
+            dec (TANK ptr [esi]).respawnT
+            mov eax, (TANK ptr [esi]).respawnT
+            .if eax <= 0
+                ; 重生：回出生点，满血+保护
+                mov eax, (TANK ptr [esi]).spawnX
+                mov (TANK ptr [esi]).x, eax
+                mov eax, (TANK ptr [esi]).spawnY
+                mov (TANK ptr [esi]).y, eax
+                mov eax, (TANK ptr [esi]).spawnDir
+                mov (TANK ptr [esi]).dir, eax
+                mov eax, TANK_HP
+                mov (TANK ptr [esi]).hp, eax
+                mov (TANK ptr [esi]).alive, 1
+                mov eax, SPAWN_PROT_TICKS
+                mov (TANK ptr [esi]).protT, eax
+                mov (TANK ptr [esi]).respawnT, 0
+                mov (TANK ptr [esi]).fireCd, 0
+                mov (TANK ptr [esi]).slide, 0
+                ; 出生位嵌墙（本回合墙型变化）-> 就近迁移
+                invoke TankBlocked, (TANK ptr [esi]).x, (TANK ptr [esi]).y
+                .if eax != 0
+                    invoke ShiftToOpen, ebx
+                .endif
+            .endif
+        .endif
+    .endif
     mov esi, ebx
     imul esi, esi, KEY_PER*4           ; esi = slot*KEY_PER*4（输入表字节偏移）
     ; 方向选择
@@ -3985,6 +4130,12 @@ SCJ_Alive:
             .if ecx != 0
                 inc eax
                 mov esi, ebx
+            .else
+                mov ecx, (TANK ptr [edx]).lives
+                .if ecx > 0
+                    inc eax                 ; 待复活的坦克也算在场
+                    mov esi, ebx
+                .endif
             .endif
             inc ebx
             jmp SCJ_Alive
@@ -4020,6 +4171,12 @@ SC_Alive:
     .if ecx != 0
         inc eax
         mov esi, ebx
+    .else
+        mov ecx, (TANK ptr [edx]).lives
+        .if ecx > 0
+            inc eax                     ; 待复活的坦克也算在场
+            mov esi, ebx
+        .endif
     .endif
     inc ebx
     jmp SC_Alive

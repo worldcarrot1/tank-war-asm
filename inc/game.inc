@@ -28,6 +28,7 @@ ST_NUMSEL   equ 1                   ; 人数选择
 ST_SET      equ 2                   ; 按键设置
 ST_LAN      equ 3                   ; 联机大厅
 ST_PLAY     equ 4                   ; 对局中
+ST_SKILL    equ 5                   ; 技能说明页
 
 ; ---- 游戏节奏 ----
 TICK_MS     equ 16                  ; 约 60 tick/秒
@@ -62,6 +63,9 @@ TANK_SPEED  equ 4                   ; 每 tick 基础移动像素（偶 tick）
 TANK_SPEED_HI equ 5                 ; 奇 tick（4/5 交替 = 平均 4.5，比子弹慢 25%）
 DIRT_SPEED  equ 2                   ; 泥土上每 tick 移动像素（减速）
 TANK_HP     equ 3
+LIVES_INIT  equ 3                   ; 每辆坦克初始命数
+RESPAWN_TICKS equ 90                ; 阵亡后 1.5s 重生
+SPAWN_PROT_TICKS equ 150            ; 重生保护 2.5s（免伤+闪烁）
 FIRE_CD     equ 20                  ; 开火冷却 tick（§3）
 PLAYER_SELF equ 0
 PLAYER_PEER equ 1
@@ -159,6 +163,12 @@ TANK STRUCT
     phantomX dd ?                    ; 虚影左上角 x（定格术）
     phantomY dd ?                    ; 虚影左上角 y
     phantomUses dd ?                 ; 虚影剩余次数（0..2）
+    lives   dd ?                     ; 剩余命数（0=淘汰）
+    respawnT dd ?                    ; 重生倒计时 tick（0=无）
+    protT   dd ?                     ; 重生保护剩余 tick（免伤+闪烁）
+    spawnX  dd ?                     ; 本回合出生点（重生用）
+    spawnY  dd ?
+    spawnDir dd ?                    ; 本回合出生朝向
 TANK ENDS
 
 ; 子弹（全场固定池 bullets[MAX_BULLETS]）

@@ -49,6 +49,12 @@ extern hdcBack   :dword
 extern keyTable  :dword
 extern maxRounds :dword
 extern matchOver :dword
+extern brushPickBg :dword        ; gfx：图标深色底
+extern brushIcon   :dword        ; gfx：图标白填充
+extern penIcon     :dword        ; gfx：图标白笔
+extern penOld2     :dword        ; gfx：笔恢复
+extern brushMortar :dword        ; gfx：深色描边
+DrawPickupIcon PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 GameInit  PROTO
 InitKeyDefaults PROTO
 GfxRender PROTO
@@ -139,6 +145,57 @@ RST_H      equ 30
     bcastAddr   sockaddr_in <>
     oneVal      dd 1
     aTab        dd aUp, aDn, aLt, aRt, aFire, aUse
+
+    ; ---- 技能说明页数据（9 技能：名/描述，中英双语）----
+    skillPage   dd 0                   ; 当前页 0..SKILL_COUNT-1
+    skNmEn      dd sKN1,sKN2,sKN3,sKN4,sKN5,sKN6,sKN7,sKN8,sKN9
+    skNmCn      dd kCN1,kCN2,kCN3,kCN4,kCN5,kCN6,kCN7,kCN8,kCN9
+    skDsEn      dd sKD1,sKD2,sKD3,sKD4,sKD5,sKD6,sKD7,sKD8,sKD9
+    skDsCn      dd kCD1,kCD2,kCD3,kCD4,kCD5,kCD6,kCD7,kCD8,kCD9
+    sKN1        db "ICE SHIELD", 0
+    sKD1        db "7s shield: immune to bullets, freezes 2x2 tiles nearby", 0
+    sKN2        db "LASER", 0
+    sKD2        db "0.7s aim, then a wall-piercing laser beam", 0
+    sKN3        db "BOUNCE LASER", 0
+    sKD3        db "preview bouncing path 0.7s, the whole path deals damage", 0
+    sKN4        db "GHOST", 0
+    sKD4        db "drive through walls up to 3 times within 4s", 0
+    sKN5        db "MINE", 0
+    sKD5        db "plant a mine at your feet, arms in 2s (you can trigger it too)", 0
+    sKN6        db "NITRO", 0
+    sKD6        db "+50% speed for 5s, stacks with terrain", 0
+    sKN7        db "SWAP", 0
+    sKD7        db "after firing, swap positions with your flying bullet", 0
+    sKN8        db "WATER WALK", 0
+    sKD8        db "drive on water for 6s", 0
+    sKN9        db "PHANTOM", 0
+    sKD9        db "leave 2 decoys, body immune 6s; a bullet hitting a decoy hurts you", 0
+    kCN1        dw 051B0h,076FEh, 0
+    kCD1        dw 089E6h,053D1h,0540Eh,00020h,00037h,00020h,079D2h,062A4h,076FEh,073AFh,07ED5h,0FF0Ch,0671Fh,095F4h,0514Dh,075ABh,05B50h,05F39h,04F24h,05BB3h,0FF0Ch,05E76h,05728h,08EABh,08FB9h,094FAh,05F00h,00020h,00032h,00078h,00032h,00020h,051B0h,09762h, 0
+    kCN2        dw 06FC0h,05149h,070AEh, 0
+    kCD2        dw 07784h,051C6h,00020h,00030h,0002Eh,00037h,00020h,079D2h,0540Eh,053D1h,05C04h,07A7Fh,05899h,076F4h,07EBFh,06FC0h,05149h,0FF0Ch,07A7Fh,0900Fh,04E00h,05207h,05899h,04F53h,04E0Eh,05766h,0514Bh, 0
+    kCN3        dw 053CDh,05C04h,06FC0h,05149h, 0
+    kCD3        dw 09884h,089C8h,053CDh,05F39h,08DEFh,05F84h,00020h,00030h,0002Eh,00037h,00020h,079D2h,0FF0Ch,0968Fh,0540Eh,06574h,06761h,08DEFh,05F84h,0540Ch,065F6h,09020h,06210h,04F24h,05BB3h, 0
+    kCN4        dw 07A7Fh,05899h,0672Fh, 0
+    kCD4        dw 00034h,00020h,079D2h,05185h,053EFh,07A7Fh,08D8Ah,05899h,04F53h,0884Ch,09A76h,0FF0Ch,06700h,0591Ah,07A7Fh,08D8Ah,00020h,00033h,00020h,06B21h, 0
+    kCN5        dw 05730h,096F7h, 0
+    kCD5        dw 05728h,0811Ah,04E0Bh,057CBh,096F7h,0FF0Ch,00032h,00020h,079D2h,0540Eh,0751Fh,06548h,0FF08h,081EAh,05DF1h,078BEh,04E0Ah,04E5Fh,04F1Ah,070B8h,0FF09h, 0
+    kCN6        dw 071C3h,06CB9h,052A0h,0901Fh, 0
+    kCD6        dw 00035h,00020h,079D2h,05185h,079FBh,052A8h,0901Fh,05EA6h,00020h,0002Bh,00035h,00030h,00025h,0FF0Ch,053EFh,04E0Eh,051B0h,09762h,0002Fh,06CE5h,05730h,06548h,0679Ch,053E0h,052A0h, 0
+    kCN7        dw 06362h,04F4Dh,0672Fh, 0
+    kCD7        dw 05F00h,0706Bh,0540Eh,06309h,06280h,080FDh,0952Eh,0FF0Ch,04E0Eh,098DEh,0884Ch,04E2Dh,07684h,05B50h,05F39h,04EA4h,06362h,04F4Dh,07F6Eh, 0
+    kCN8        dw 09A6Dh,06C34h,0672Fh, 0
+    kCD8        dw 00036h,00020h,079D2h,05185h,053EFh,05728h,06C34h,09762h,04E0Ah,0884Ch,09A76h, 0
+    kCN9        dw 05B9Ah,0683Ch,0672Fh, 0
+    kCD9        dw 0539Fh,05730h,07559h,04E0Bh,00020h,00032h,00020h,053EAh,0865Ah,05F71h,0FF0Ch,0672Ch,04F53h,0514Dh,04F24h,00020h,00036h,00020h,079D2h,0FF1Bh,05B50h,05F39h,06253h,04E2Dh,0865Ah,05F71h,04F1Ah,08BA9h,0672Ch,04F53h,06389h,08840h, 0
+    szSkT       db "SKILLS", 0
+    szItemSk    db "SKILL GUIDE", 0
+    CN_SKT      dw 06280h,080FDh,08BF4h,0660Eh, 0
+    CN_SKILLMENU dw 06280h,080FDh,08BF4h,0660Eh, 0
+    szSkHint    db "ESC: BACK   <- ->: PAGE", 0
+    CN_SKHINT   dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,07FFBh,09875h, 0
+    szSkPage    db " / %d", 0
+
     aUp         db "UP", 0
     aDn         db "DOWN", 0
     aLt         db "LEFT", 0
@@ -338,10 +395,13 @@ MenuActivate proc
         mov rebindSlot, -1          ; 进入人数页清改键状态
         mov gameState, ST_NUMSEL
     .elseif menuSel == 1
+        mov skillPage, 0
+        mov gameState, ST_SKILL
+    .elseif menuSel == 2
         mov setSel, 0
         mov rebindWait, 0
         mov gameState, ST_SET
-    .elseif menuSel == 2
+    .elseif menuSel == 3
         mov gameState, ST_LAN
         invoke NetShutdown
         invoke NetInit
@@ -349,7 +409,7 @@ MenuActivate proc
         mov discTimer, 0
         invoke setsockopt, hSock, SOL_SOCKET, SO_BROADCAST,
                addr oneVal, 4
-    .elseif menuSel == 3
+    .elseif menuSel == 4
         invoke PostQuitMessage, NULL
     .else
         xor langFlag, 1              ; 语言切换
@@ -761,13 +821,13 @@ PS_VlOk:
     .if gameState == ST_MENU
         .if dnE != 0
             inc menuSel
-            .if menuSel > 4
+            .if menuSel > 5
                 mov menuSel, 0
             .endif
         .endif
         .if upE != 0
             .if menuSel == 0
-                mov menuSel, 4
+                mov menuSel, 5
             .else
                 dec menuSel
             .endif
@@ -935,10 +995,6 @@ UT_Scan2Done:
             .endif
             ; 等待中允许点击其他键位行切换目标 / 点重置按钮
             .if lbE != 0
-                mov eax, mouseX
-                mov dbgMX, eax
-                mov eax, mouseY
-                mov dbgMY, eax
                 invoke NumSelHitTest
                 mov dbgRet, eax                   ; DBG
                 test eax, eax
@@ -981,10 +1037,6 @@ UTW_Next:
             .endif
             ; ---- 鼠标：键位容器改键 / 重置 / << >> 调人数与局数 / 数字区开始 ----
             .if lbE != 0
-                mov eax, mouseX
-                mov dbgMX, eax
-                mov eax, mouseY
-                mov dbgMY, eax
                 invoke NumSelHitTest
                 mov dbgRet, eax                   ; DBG
                 test eax, eax
@@ -1178,6 +1230,40 @@ UT_ScanDone:
             mov peerKnown, 0
             mov gameState, ST_MENU
         .endif
+
+    ; ---------- 技能说明页：左右翻页 ----------
+    .elseif gameState == ST_SKILL
+        .if ltE != 0
+            .if skillPage > 0
+                dec skillPage
+            .endif
+        .endif
+        .if rtE != 0
+            mov eax, skillPage
+            .if eax < SKILL_COUNT-1
+                inc skillPage
+            .endif
+        .endif
+        .if esE != 0
+            mov gameState, ST_MENU
+        .endif
+        .if lbE != 0
+            ; 左箭头 130..210, 260..340 / 右箭头 778..858
+            mov eax, mouseY
+            .if eax >= 260 && eax < 340
+                mov eax, mouseX
+                .if eax >= 130 && eax < 210
+                    .if skillPage > 0
+                        dec skillPage
+                    .endif
+                .elseif eax >= 778 && eax < 858
+                    mov eax, skillPage
+                    .if eax < SKILL_COUNT-1
+                        inc skillPage
+                    .endif
+                .endif
+            .endif
+        .endif
     .endif
 UT_Done:
     ret
@@ -1243,17 +1329,19 @@ UM_Items:
         .if eax == 0
             invoke UiTextL, hdcBack, 440, rowY, offset szItem1, offset CN_START, edx
         .elseif eax == 1
-            invoke UiTextL, hdcBack, 440, rowY, offset szItem2, offset CN_SET, edx
+            invoke UiTextL, hdcBack, 440, rowY, offset szItemSk, offset CN_SKILLMENU, edx
         .elseif eax == 2
-            invoke UiTextL, hdcBack, 440, rowY, offset szItem3, offset CN_LAN, edx
+            invoke UiTextL, hdcBack, 440, rowY, offset szItem2, offset CN_SET, edx
         .elseif eax == 3
+            invoke UiTextL, hdcBack, 440, rowY, offset szItem3, offset CN_LAN, edx
+        .elseif eax == 4
             invoke UiTextL, hdcBack, 440, rowY, offset szItem4, offset CN_EXIT, edx
         .else
             invoke UiTextL, hdcBack, 440, rowY, offset szLangEN, offset CN_LANG, edx
         .endif
         pop ebx
         inc ebx
-        .if ebx < 5
+        .if ebx < 6
             jmp UM_Items
         .endif
 
@@ -1553,6 +1641,70 @@ SS_Done:
             invoke UiTextL, hdcBack, 350, 280, offset szLanN, offset CN_LANN, colGray
         .endif
         invoke UiTextL, hdcBack, 350, 360, offset szLanS, offset CN_LANS, colDark
+
+    ; ---------- 技能说明页 ----------
+    .elseif gameState == ST_SKILL
+        invoke UiTextL, hdcBack, 430, 60, offset szSkT, offset CN_SKT, colDark
+        ; 外框容器
+        mov boxRc.left, 130
+        mov boxRc.top, 140
+        mov boxRc.right, 858
+        mov boxRc.bottom, 490
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        ; 左右箭头（边界置灰）
+        invoke SelectObject, hdcBack, fontSmall
+        mov edx, colDark
+        .if skillPage == 0
+            mov edx, colGray
+        .endif
+        invoke UiTextZ, hdcBack, 155, 285, offset szNumL, edx
+        mov edx, colDark
+        mov eax, skillPage
+        .if eax >= SKILL_COUNT-1
+            mov edx, colGray
+        .endif
+        invoke UiTextZ, hdcBack, 815, 285, offset szNumR, edx
+        ; 图标：深色底 + 放大 3 倍特性图形（60x60 内 54px 图形）
+        mov boxRc.left, 220
+        mov boxRc.top, 240
+        mov boxRc.right, 280
+        mov boxRc.bottom, 300
+        invoke FillRect, hdcBack, addr boxRc, brushPickBg
+        invoke FrameRect, hdcBack, addr boxRc, brushMortar
+        invoke SelectObject, hdcBack, penIcon
+        mov penOld2, eax
+        mov eax, skillPage
+        inc eax
+        invoke DrawPickupIcon, hdcBack, 223, 243, eax, 3
+        invoke SelectObject, hdcBack, penOld2
+        invoke SelectObject, hdcBack, menuFont
+        ; 技能名（大字）+ 描述（小字，双语表查当前页）
+        mov eax, skillPage
+        mov edx, skNmEn[eax*4]
+        mov eax, skillPage
+        mov ecx, skNmCn[eax*4]
+        invoke UiTextL, hdcBack, 320, 240, edx, ecx, colDark
+        invoke SelectObject, hdcBack, fontSmall
+        mov eax, skillPage
+        mov edx, skDsEn[eax*4]
+        mov eax, skillPage
+        mov ecx, skDsCn[eax*4]
+        invoke UiTextL, hdcBack, 230, 330, edx, ecx, colGray
+        invoke SelectObject, hdcBack, menuFont
+        ; 页码 "n / 9"
+        lea edi, uiBuf
+        mov eax, skillPage
+        inc eax
+        add al, '0'
+        mov [edi], al
+        mov byte ptr [edi+1], ' '
+        mov byte ptr [edi+2], '/'
+        mov byte ptr [edi+3], ' '
+        mov byte ptr [edi+4], '0'+SKILL_COUNT
+        mov byte ptr [edi+5], 0
+        invoke UiTextZ, hdcBack, 470, 410, offset uiBuf, colDark
+        ; 底部提示
+        invoke UiTextL, hdcBack, 350, 570, offset szSkHint, offset CN_SKHINT, colGray
     .endif
 
 UR_Done:

@@ -54,6 +54,12 @@ extern brushIcon   :dword        ; gfx：图标白填充
 extern penIcon     :dword        ; gfx：图标白笔
 extern penOld2     :dword        ; gfx：笔恢复
 extern brushMortar :dword        ; gfx：深色描边
+extern brushP1    :dword
+extern brushP2    :dword
+extern brushBullet :dword
+extern brushBrick :dword
+
+DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD
 DrawPickupIcon PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 GameInit  PROTO
 InitKeyDefaults PROTO
@@ -147,7 +153,8 @@ RST_H      equ 30
     aTab        dd aUp, aDn, aLt, aRt, aFire, aUse
 
     ; ---- 技能说明页数据（9 技能：名/描述，中英双语）----
-    skillPage   dd 0                   ; 当前页 0..SKILL_COUNT-1
+    skillPage   dd 0                   ; 当前页 0..SKILL_COUNT（0=玩法演示，1..9=技能）
+    demoT       dd 0                   ; 玩法演示动画 tick（page==0 时推进）
     skNmEn      dd sKN1,sKN2,sKN3,sKN4,sKN5,sKN6,sKN7,sKN8,sKN9
     skNmCn      dd kCN1,kCN2,kCN3,kCN4,kCN5,kCN6,kCN7,kCN8,kCN9
     skDsEn      dd sKD1,sKD2,sKD3,sKD4,sKD5,sKD6,sKD7,sKD8,sKD9
@@ -193,10 +200,23 @@ RST_H      equ 30
     szItemSk    db "SKILL GUIDE", 0
     CN_SKT      dw 06280h,080FDh,08BF4h,0660Eh, 0
     CN_SKILLMENU dw 06280h,080FDh,08BF4h,0660Eh, 0
+    szMenuHint  db "UP/DOWN: SELECT   ENTER: CONFIRM   CLICK TO PICK", 0
+    CN_MENUHINT dw 04E0Ah,04E0Bh,0952Eh,09009h,062E9h,03000h,056DEh,08F66h,0786Eh,08BA4h,03000h,09F20h,06807h,070B9h,051FBh,076F4h,08FBEh, 0
     szSkHint    db "ESC: BACK   <- ->: PAGE", 0
     szSetHint   db "ESC: BACK   LEFT/RIGHT: VOLUME", 0
     CN_SETHINT  dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,08C03h,08282h,097F3h,091CFh, 0
     CN_SKHINT   dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,07FFBh,09875h, 0
+    skDemoEn    dd sDE0, sDE1, sDE2, sDE3
+    skDemoCn    dd kDM0, kDM1, kDM2, kDM3
+    sDE0        db "1. Move your tank with arrow keys / WASD", 0
+    sDE1        db "2. Grab the skill box, press your skill key to use it", 0
+    sDE2        db "3. Fire! Every hit drains 1 HP from the enemy", 0
+    sDE3        db "4. Deplete all enemy lives to win the round", 0
+    kDM0        dw 00031h,0002Eh,00020h,07528h,065B9h,05411h,0952Eh,079FBh,052A8h,04F60h,07684h,05766h,0514Bh, 0
+    kDM1        dw 00032h,0002Eh,00020h,06361h,08D77h,06280h,080FDh,07BB1h,0FF0Ch,06309h,06280h,080FDh,0952Eh,053D1h,052A8h,06280h,080FDh, 0
+    kDM2        dw 00033h,0002Eh,00020h,05F00h,070AEh,0FF01h,06BCFh,06B21h,0547Dh,04E2Dh,06D88h,08017h,0654Ch,04EBAh,00020h,00031h,00020h,070B9h,08840h,091CFh, 0
+    kDM3        dw 00034h,0002Eh,00020h,06253h,07A7Ah,0654Ch,04EBAh,06240h,06709h,0547Dh,06570h,05373h,06DD8h,06C70h,0FF0Ch,08D62h,04E0Bh,056DEh,05408h,05F97h,05206h, 0
+    szKO        db "K.O.", 0
     szSkPage    db " / %d", 0
 
     aUp         db "UP", 0
@@ -260,10 +280,10 @@ RST_H      equ 30
                 dw 53F3h, 0             ; 右
                 dw 5F00h, 706Bh, 0      ; 开火
     CN_START dw 5f00h,59cbh,6e38h,620fh, 0
-    CN_SET dw 8bbeh,7f6eh, 0
+    CN_SET dw 06E38h,0620Fh,08BBEh,07F6Eh, 0
     CN_LAN dw 8054h,673ah,5bf9h,6218h, 0
-    CN_EXIT dw 9000h,51fah, 0
-    CN_LANG dw 8bedh,8a00h,0ff1ah,4e2dh,6587h, 0
+    CN_EXIT dw 09000h,051FAh,06E38h,0620Fh, 0
+    CN_LANG dw 05207h,06362h,08BEDh,08A00h, 0
     CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
     CN_ROUNDS dw 5c40h,6570h, 0                                          ; 局数
     CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
@@ -844,15 +864,15 @@ PS_VlOk:
         ; 菜单 5 项渲染矩形：x 440..660，y = 250+i*60 .. +34
         xor ebx, ebx
 UT_MMouse:
-        .if ebx >= 5
+        .if ebx >= 6
             jmp UT_MMouseDone
         .endif
         mov eax, ebx
-        imul eax, eax, 60
-        add eax, 250
+        imul eax, eax, 52
+        add eax, 190
         mov ecx, eax                     ; ecx = 项顶部 y
         add eax, 34                      ; eax = 项底部 y
-        .if mouseY >= ecx && mouseY < eax && mouseX >= 440 && mouseX < 660
+        .if mouseY >= ecx && mouseY < eax && mouseX >= 436 && mouseX < 660
             mov eax, ebx
             mov menuSel, eax             ; 悬停即选中（高亮联动）
             .if lbE != 0
@@ -1140,6 +1160,23 @@ SS_Vl1:
         ; ---- 点击：音效开关 / 深夜模式开关 ----
         .if lbE != 0
             mov eax, mouseY
+            .if eax >= 186 && eax < 222
+                mov eax, mouseX
+                .if eax >= 370 && eax < 418
+                    sub volumeLvl, 5
+                    cmp volumeLvl, 0
+                    jge SS_BtnL
+                    mov volumeLvl, 0
+SS_BtnL:
+                    invoke SndVolume, volumeLvl
+                .elseif eax >= 636 && eax < 684
+                    add volumeLvl, 5
+                    .if volumeLvl > 100
+                        mov volumeLvl, 100
+                    .endif
+                    invoke SndVolume, volumeLvl
+                .endif
+            .endif
             .if eax >= 290 && eax < 330
                 mov eax, mouseX
                 .if eax >= 500 && eax < 620
@@ -1195,8 +1232,12 @@ SS_Vl1:
             mov gameState, ST_MENU
         .endif
 
-    ; ---------- 技能说明页：左右翻页 ----------
+    ; ---------- 技能说明页：左右翻页（0=玩法演示 1..9=技能）----------
     .elseif gameState == ST_SKILL
+        mov eax, skillPage
+        .if eax == 0
+            inc demoT                  ; 推进玩法演示动画
+        .endif
         .if ltE != 0
             .if skillPage > 0
                 dec skillPage
@@ -1204,7 +1245,7 @@ SS_Vl1:
         .endif
         .if rtE != 0
             mov eax, skillPage
-            .if eax < SKILL_COUNT-1
+            .if eax < SKILL_COUNT      ; 0..9（玩法 + 9 技能）
                 inc skillPage
             .endif
         .endif
@@ -1222,7 +1263,7 @@ SS_Vl1:
                     .endif
                 .elseif eax >= 778 && eax < 858
                     mov eax, skillPage
-                    .if eax < SKILL_COUNT-1
+                    .if eax < SKILL_COUNT
                         inc skillPage
                     .endif
                 .endif
@@ -1244,6 +1285,9 @@ UiRender proc uses ebx esi edi
     local klen:dword
     local rowCol:dword
     local slotIdx:dword
+    local demoPh:dword
+    local demoPt:dword
+    local demoP1x:dword
 
     mov rc.left, 0
     mov rc.top, 0
@@ -1276,7 +1320,19 @@ UiRender proc uses ebx esi edi
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
-        invoke UiTextL, hdcBack, 385, 90, offset szTitle, offset CN_TITLE, colDark
+        ; 装饰：标题两侧各一辆坦克（车体色 + 深色描边由 DrawTank 自选）
+        invoke SelectObject, hdcBack, brushP1
+        invoke DrawTank, hdcBack, 230, 78, DIR_RIGHT
+        invoke SelectObject, hdcBack, brushP2
+        invoke DrawTank, hdcBack, 728, 78, DIR_LEFT
+        invoke UiTextL, hdcBack, 385, 84, offset szTitle, offset CN_TITLE, colDark
+        ; 标题下分隔线（画笔 penIcon 已由 DrawTank 恢复为 penDark 内部笔，重选白笔太亮——用 penDark 描边色画）
+        invoke SelectObject, hdcBack, brushMortar
+        mov boxRc.left, 220
+        mov boxRc.top, 148
+        mov boxRc.right, 768
+        mov boxRc.bottom, 152
+        invoke FillRect, hdcBack, addr boxRc, brushMortar
         mov ebx, 0
 UM_Items:
         .if ebx == menuSel
@@ -1285,29 +1341,33 @@ UM_Items:
             mov edx, colGray
         .endif
         mov eax, ebx
-        imul eax, eax, 60
-        add eax, 250
+        imul eax, eax, 52
+        add eax, 190
         mov rowY, eax
         push ebx
         mov eax, ebx
         .if eax == 0
-            invoke UiTextL, hdcBack, 440, rowY, offset szItem1, offset CN_START, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szItem1, offset CN_START, edx
         .elseif eax == 1
-            invoke UiTextL, hdcBack, 440, rowY, offset szItemSk, offset CN_SKILLMENU, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szItemSk, offset CN_SKILLMENU, edx
         .elseif eax == 2
-            invoke UiTextL, hdcBack, 440, rowY, offset szItem2, offset CN_SET, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szItem2, offset CN_SET, edx
         .elseif eax == 3
             invoke UiTextL, hdcBack, 440, rowY, offset szItem3, offset CN_LAN, edx
         .elseif eax == 4
-            invoke UiTextL, hdcBack, 440, rowY, offset szItem4, offset CN_EXIT, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szItem4, offset CN_EXIT, edx
         .else
-            invoke UiTextL, hdcBack, 440, rowY, offset szLangEN, offset CN_LANG, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szLangEN, offset CN_LANG, edx
         .endif
         pop ebx
         inc ebx
         .if ebx < 6
             jmp UM_Items
         .endif
+        ; 底部操作提示
+        invoke SelectObject, hdcBack, fontSmall
+        invoke UiTextL, hdcBack, 380, 560, offset szMenuHint, offset CN_MENUHINT, colGray
+        invoke SelectObject, hdcBack, menuFont
 
     ; ---------- 人数选择 ----------
     .elseif gameState == ST_NUMSEL
@@ -1473,6 +1533,9 @@ NS_BoxDone:
     .elseif gameState == ST_SET
         invoke UiTextL, hdcBack, 460, 50, offset szSetT, offset CN_SETT, colDark
         invoke UiTextL, hdcBack, 300, 196, offset szVol2, offset CN_VOL2, colDark
+        ; 音量调节按钮：← / →
+        invoke UiTextZ, hdcBack, 382, 190, offset szNumL, colDark
+        invoke UiTextZ, hdcBack, 648, 190, offset szNumR, colDark
         mov boxRc.left, 430
         mov boxRc.top, 191
         mov boxRc.right, 634
@@ -1561,49 +1624,176 @@ NS_BoxDone:
         invoke UiTextZ, hdcBack, 155, 285, offset szNumL, edx
         mov edx, colDark
         mov eax, skillPage
-        .if eax >= SKILL_COUNT-1
+        .if eax >= SKILL_COUNT
             mov edx, colGray
         .endif
         invoke UiTextZ, hdcBack, 815, 285, offset szNumR, edx
-        ; 图标：深色底 + 放大 3 倍特性图形（60x60 内 54px 图形）
-        mov boxRc.left, 220
-        mov boxRc.top, 240
-        mov boxRc.right, 280
-        mov boxRc.bottom, 300
-        invoke FillRect, hdcBack, addr boxRc, brushPickBg
-        invoke FrameRect, hdcBack, addr boxRc, brushMortar
-        invoke SelectObject, hdcBack, penIcon
-        mov penOld2, eax
-        mov eax, skillPage
-        inc eax
-        invoke DrawPickupIcon, hdcBack, 223, 243, eax, 3
-        invoke SelectObject, hdcBack, penOld2
-        invoke SelectObject, hdcBack, menuFont
-        ; 技能名（大字）+ 描述（小字，双语表查当前页）
-        mov eax, skillPage
-        mov edx, skNmEn[eax*4]
-        mov eax, skillPage
-        mov ecx, skNmCn[eax*4]
-        invoke UiTextL, hdcBack, 320, 240, edx, ecx, colDark
-        invoke SelectObject, hdcBack, fontSmall
-        mov eax, skillPage
-        mov edx, skDsEn[eax*4]
-        mov eax, skillPage
-        mov ecx, skDsCn[eax*4]
-        invoke UiTextL, hdcBack, 230, 330, edx, ecx, colGray
-        invoke SelectObject, hdcBack, menuFont
-        ; 页码 "n / 9"
+        .if skillPage == 0
+            ; ============ 第 0 页：对战玩法演示动画 ============
+            mov eax, demoT
+            xor edx, edx
+            mov ecx, 480
+            div ecx                       ; eax=周期 edx=ph
+            mov eax, edx
+            xor edx, edx
+            mov ecx, 120
+            div ecx                       ; eax=阶段 edi  edx=阶段内 tick
+            mov demoPh, eax
+            mov demoPt, edx
+            ; 地面线
+            invoke SelectObject, hdcBack, brushMortar
+            mov boxRc.left, 150
+            mov boxRc.top, 362
+            mov boxRc.right, 838
+            mov boxRc.bottom, 366
+            invoke FillRect, hdcBack, addr boxRc, brushMortar
+            ; P1 位置：阶段0 180->420（x2），阶段1 420->540，之后 540
+            mov eax, demoPh
+            .if eax == 0
+                mov eax, demoPt
+                .if eax > 120
+                    mov eax, 120
+                .endif
+                imul eax, eax, 2
+                add eax, 180
+                mov demoP1x, eax
+            .elseif eax == 1
+                mov eax, demoPt
+                add eax, 420
+                mov demoP1x, eax
+            .else
+                mov demoP1x, 540
+            .endif
+            ; 技能箱（阶段 1 显示，图标随周期轮换）
+            mov eax, demoPh
+            .if eax == 1
+                mov boxRc.left, 560
+                mov boxRc.top, 326
+                mov boxRc.right, 578
+                mov boxRc.bottom, 344
+                invoke FillRect, hdcBack, addr boxRc, brushPickBg
+                invoke FrameRect, hdcBack, addr boxRc, brushMortar
+                invoke SelectObject, hdcBack, penIcon
+                mov penOld2, eax
+                mov eax, demoT
+                xor edx, edx
+                mov ecx, 480
+                div ecx
+                xor edx, edx
+                mov ecx, 9
+                div ecx                   ; eax = 周期 % 9
+                inc eax                   ; 图标 1..9 轮换
+                invoke DrawPickupIcon, hdcBack, 562, 328, eax, 1
+                invoke SelectObject, hdcBack, penOld2
+            .endif
+            ; P2（阶段 3 被淘汰：闪烁淡出）
+            mov eax, demoPh
+            .if eax < 3
+                invoke SelectObject, hdcBack, brushP2
+                invoke DrawTank, hdcBack, 700, 330, DIR_LEFT
+            .else
+                mov eax, demoT
+                and eax, 8
+                .if eax == 0
+                    invoke SelectObject, hdcBack, brushP2
+                    invoke DrawTank, hdcBack, 700, 330, DIR_LEFT
+                .endif
+                ; 命中爆炸（阶段 3 前 40 tick 红光闪烁）
+                mov eax, demoPt
+                .if eax < 40
+                    mov eax, demoT
+                    and eax, 4
+                    .if eax == 0
+                        invoke SelectObject, hdcBack, brushBrick
+                        invoke Ellipse, hdcBack, 685, 315, 740, 370
+                    .endif
+                .endif
+                ; K.O.（阶段 3 后段）
+                mov eax, demoPt
+                .if eax >= 60
+                    invoke SelectObject, hdcBack, menuFont
+                    invoke UiTextZ, hdcBack, 688, 260, offset szKO, 0000E0E0h
+                .endif
+            .endif
+            ; 子弹（阶段 2：从 P1 炮口飞向 P2）
+            mov eax, demoPh
+            .if eax == 2
+                mov eax, demoPt
+                imul eax, eax, 115
+                xor edx, edx
+                mov ecx, 120
+                div ecx
+                add eax, 560
+                mov boxRc.left, eax
+                add eax, 8
+                mov boxRc.right, eax
+                mov boxRc.top, 336
+                mov boxRc.bottom, 344
+                invoke FillRect, hdcBack, addr boxRc, brushBullet
+            .endif
+            ; P1（最后画，压在上面）
+            invoke SelectObject, hdcBack, brushP1
+            invoke DrawTank, hdcBack, demoP1x, 330, DIR_RIGHT
+            invoke SelectObject, hdcBack, menuFont
+            ; 阶段解释词
+            mov eax, demoPh
+            mov edx, skDemoEn[eax*4]
+            mov eax, demoPh
+            mov ecx, skDemoCn[eax*4]
+            invoke UiTextL, hdcBack, 230, 420, edx, ecx, colDark
+        .else
+            ; ============ 第 1..9 页：技能图鉴 ============
+            mov boxRc.left, 220
+            mov boxRc.top, 240
+            mov boxRc.right, 280
+            mov boxRc.bottom, 300
+            invoke FillRect, hdcBack, addr boxRc, brushPickBg
+            invoke FrameRect, hdcBack, addr boxRc, brushMortar
+            invoke SelectObject, hdcBack, penIcon
+            mov penOld2, eax
+            mov eax, skillPage        ; tp = page（page1..9 对应技能 1..9）
+            invoke DrawPickupIcon, hdcBack, 223, 243, eax, 3
+            invoke SelectObject, hdcBack, penOld2
+            invoke SelectObject, hdcBack, menuFont
+            mov eax, skillPage
+            dec eax
+            mov edx, skNmEn[eax*4]
+            mov eax, skillPage
+            dec eax
+            mov ecx, skNmCn[eax*4]
+            invoke UiTextL, hdcBack, 320, 240, edx, ecx, colDark
+            invoke SelectObject, hdcBack, fontSmall
+            mov eax, skillPage
+            dec eax
+            mov edx, skDsEn[eax*4]
+            mov eax, skillPage
+            dec eax
+            mov ecx, skDsCn[eax*4]
+            invoke UiTextL, hdcBack, 230, 330, edx, ecx, colGray
+            invoke SelectObject, hdcBack, menuFont
+        .endif
+        ; 页码 "n / 10"
         lea edi, uiBuf
         mov eax, skillPage
         inc eax
-        add al, '0'
-        mov [edi], al
-        mov byte ptr [edi+1], ' '
-        mov byte ptr [edi+2], '/'
-        mov byte ptr [edi+3], ' '
-        mov byte ptr [edi+4], '0'+SKILL_COUNT
+        xor edx, edx
+        mov ecx, 10
+        div ecx
+        .if eax > 0
+            add al, '0'
+            mov [edi], al
+            inc edi
+        .endif
+        add dl, '0'
+        mov [edi], dl
+        inc edi
+        mov byte ptr [edi], ' '
+        mov byte ptr [edi+1], '/'
+        mov byte ptr [edi+2], ' '
+        mov byte ptr [edi+3], '1'
+        mov byte ptr [edi+4], '0'
         mov byte ptr [edi+5], 0
-        invoke UiTextZ, hdcBack, 470, 410, offset uiBuf, colDark
+        invoke UiTextZ, hdcBack, 470, 165, offset uiBuf, colDark
         ; 底部提示
         invoke UiTextL, hdcBack, 350, 570, offset szSkHint, offset CN_SKHINT, colGray
     .endif

@@ -21,6 +21,11 @@ public brushIcon                  ; 图标白色填充
 public penIcon                    ; 图标白色笔
 public penOld2                    ; 说明页恢复用
 public brushMortar                ; 图标深色描边
+public brushBrick                 ; 玩法演示爆炸色
+public DrawTank                   ; 主菜单装饰/玩法演示复用
+public brushP1                    ; 演示动画车体色
+public brushP2
+public brushBullet                ; 演示动画子弹
 extern hWnd        :dword          ; main.asm 里的主窗口句柄
 extern numPlayers  :dword          ; ui.asm（当前玩家数）
 extern mapData     :byte           ; game.asm 里的地图数组

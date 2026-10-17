@@ -59,6 +59,7 @@ public shakeT
 public cosTBL
 public dbgTurn
 public dbgFire
+public dbgMove
 public spawnX
 public sinTBL
 public pickupType
@@ -94,7 +95,8 @@ public prevTank
     k1000       dd 1024
     tval        dd ?
     dbgTurn     dd 0
-    dbgFire     dd 0                   ; DBG: 转向执行计数
+    dbgFire     dd 0
+    dbgMove     dd 0                   ; DBG: 转向执行计数
     tval2       dd ?
     testNoShuffle dd 0               ; 自测置 1：不换图/不随机出生（保持 ARENA1 确定性）
     arenaBag    dd ARENA_COUNT dup (?) ; 本场比赛的地图洗牌袋（索引到 arenaTable）
@@ -3682,6 +3684,7 @@ MoveTank proc ownerIdx: dword, wantDir: dword
     local nx:dword, ny:dword, solid:dword, ptank:dword, dirL:dword
     local moveF:dword
     local spd:dword
+    inc dbgMove
     ; ptank = &tanks[ownerIdx]（跨 invoke 保存，用局部变量存指针）
     mov eax, ownerIdx
     mov ecx, SIZEOF TANK

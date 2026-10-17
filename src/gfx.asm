@@ -299,6 +299,32 @@ DH_NameDone:
 
     inc ebx
     jmp DH_Slot
+    ; DBG: P1 x/y/dir 诊断（临时）
+    lea edi, scoreBuf
+    mov eax, tanks[0].x
+    shr eax, 4
+    add al, '0'
+    mov [edi], al
+    mov eax, tanks[0].x
+    shr eax, 1
+    and al, 15
+    add al, '0'
+    mov [edi+1], al
+    mov eax, tanks[0].y
+    shr eax, 4
+    add al, '0'
+    mov [edi+2], al
+    mov eax, tanks[0].y
+    shr eax, 1
+    and al, 15
+    add al, '0'
+    mov [edi+3], al
+    mov eax, tanks[0].dir
+    shr eax, 4
+    and al, 15
+    add al, '0'
+    mov [edi+4], al
+    mov byte ptr [edi+5], 0
 DrawHud endp
 
 ; ------------------------------------------------------------
@@ -553,7 +579,7 @@ ROTPT MACRO idx, lox, loy
     sub eax, ecx
     sar eax, 10
     add eax, px
-    mov pts[idx*2], eax
+    mov pts[idx*8], eax
     mov eax, lox
     imul eax, sa
     mov ecx, loy
@@ -561,76 +587,80 @@ ROTPT MACRO idx, lox, loy
     add eax, ecx
     sar eax, 10
     add eax, py
-    mov pts[idx*2+1], eax
+    mov pts[idx*8+4], eax
 ENDM
 
+; 坐标旋转宏：局部偏移 (lox,loy) 绕中心旋转后加 (px,py)
+ROTPT MACRO idx, lox, loy
+    mov eax, lox
+    imul eax, ca
+    mov ecx, loy
+    imul ecx, sa
+    sub eax, ecx
+    sar eax, 10
+    add eax, px
+    mov pts[idx*8], eax
+    mov eax, lox
+    imul eax, sa
+    mov ecx, loy
+    imul ecx, ca
+    add eax, ecx
+    sar eax, 10
+    add eax, py
+    mov pts[idx*8+4], eax
+ENDM
+
+; DrawTank —— 坦克动荡风格：正方形车体随角度旋转 + 旋转炮管 + 中心炮塔
+; hdc, px/py 左上角, dirV 角度 0..359, brushV 车体色
 DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword, brushV: dword
+    local pts[8]:dword
+    local ca:dword
+    local sa:dword
     local oldPen2:dword
     local oldBr:dword
+    local cx0:dword
+    local cy0:dword
+    mov eax, px
+    add eax, TANK_SIZE/2
+    mov cx0, eax                    ; 中心 x
+    mov eax, py
+    add eax, TANK_SIZE/2
+    mov cy0, eax                    ; 中心 y
     mov eax, dirV
     mov ecx, cosTBL[eax*4]
+    mov ca, ecx
     mov eax, dirV
     mov ecx, sinTBL[eax*4]
-    ; 1) 底盘：玩家色大圆（25px）+ 深色描边
+    mov sa, ecx
     invoke SelectObject, hdc, penDark
     mov oldPen2, eax
+    ; 1) 车体：旋转正方形 26x26（车体色 + 深描边）
+    ROTPT 0, 13, -13
+    ROTPT 1, 13, 13
+    ROTPT 2, -13, 13
+    ROTPT 3, -13, -13
     invoke SelectObject, hdc, brushV
     mov oldBr, eax
-    mov eax, px
-    mov ecx, py
-    mov edx, eax
-    add edx, TANK_SIZE
-    mov ebx, ecx
-    add ebx, TANK_SIZE
-    invoke Ellipse, hdc, eax, ecx, edx, ebx
-    ; 2) 履带：底盘外圈加深色描边（penDark 已选）+ 两侧履带点
-    ; 3) 炮管：粗笔沿角度从中心伸出
-    invoke SelectObject, hdc, penTube
-    mov eax, px
-    add eax, TANK_SIZE/2
-    mov ecx, py
-    add ecx, TANK_SIZE/2
-    invoke MoveToEx, hdc, eax, ecx, 0
-    mov eax, px
-    add eax, TANK_SIZE/2
-    mov edx, dirV
-    mov edx, cosTBL[edx*4]
-    imul edx, 26
-    sar edx, 10
-    add eax, edx
-    mov ecx, py
-    add ecx, TANK_SIZE/2
-    mov edx, dirV
-    mov edx, sinTBL[edx*4]
-    imul edx, 26
-    sar edx, 10
-    add ecx, edx
-    invoke LineTo, hdc, eax, ecx
-    ; 4) 炮塔：深色圆压在中心
-    invoke SelectObject, hdc, brushMortar
-    invoke SelectObject, hdc, penDark
-    mov eax, px
-    add eax, 6
-    mov ecx, py
-    add ecx, 6
-    mov edx, eax
-    add edx, 13
-    mov ebx, ecx
-    add ebx, 13
-    invoke Ellipse, hdc, eax, ecx, edx, ebx
-    ; 5) 炮塔中心亮点（玩家色小圆）
+    invoke Polygon, hdc, addr pts, 4
+    ; 2) 炮管：旋转长矩形 5x26 从中心向前伸出（深色）
+    ROTPT 0, 2, -25
+    ROTPT 1, -2, -25
+    ROTPT 2, -2, -3
+    ROTPT 3, 2, -3
+    invoke SelectObject, hdc, brushSteel
+    invoke Polygon, hdc, addr pts, 4
+    ; 3) 炮塔：中心圆 12px（车体色 + 深描边）
     invoke SelectObject, hdc, brushV
-    mov eax, px
-    add eax, 10
-    mov ecx, py
-    add ecx, 10
+    mov eax, cx0
+    sub eax, 6
+    mov ecx, cy0
+    sub ecx, 6
     mov edx, eax
-    add edx, 5
+    add edx, 12
     mov ebx, ecx
-    add ebx, 5
+    add ebx, 12
     invoke Ellipse, hdc, eax, ecx, edx, ebx
     invoke SelectObject, hdc, oldPen2
-    invoke SelectObject, hdc, oldBr
     ret
 DrawTank endp
 
@@ -1018,20 +1048,17 @@ TankLoop:
         push ebx
         mov eax, ebx
         .if eax == 0
-            invoke SelectObject, hdcBack, brushP1
-            mov brushSel, eax
+            mov ecx, brushP1
         .elseif eax == 1
-            invoke SelectObject, hdcBack, brushP2
-            mov brushSel, eax
+            mov ecx, brushP2
         .elseif eax == 2
-            invoke SelectObject, hdcBack, brushP3
-            mov brushSel, eax
+            mov ecx, brushP3
         .else
-            invoke SelectObject, hdcBack, brushP4
-            mov brushSel, eax
+            mov ecx, brushP4
         .endif
+        mov brushSel, ecx
+        invoke SelectObject, hdcBack, ecx
         pop ebx
-        mov eax, brushSel
         push ebx
         push esi
         mov ecx, (TANK ptr [esi]).x

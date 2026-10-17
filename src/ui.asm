@@ -54,6 +54,13 @@ extern brushIcon   :dword        ; gfx：图标白填充
 extern penIcon     :dword        ; gfx：图标白笔
 extern penOld2     :dword        ; gfx：笔恢复
 extern brushMortar :dword        ; gfx：深色描边
+extern brushBg     :dword        ; gfx：页面底色
+extern brushSteel  :dword        ; gfx：钢墙
+extern brushBrick  :dword        ; gfx：砖红（爆炸/血条）
+extern brushP1     :dword        ; gfx：P1 车体色（演示动画）
+extern brushP2     :dword        ; gfx：P2 车体色
+extern brushBullet :dword        ; gfx：子弹
+DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD
 extern brushP1    :dword
 extern brushP2    :dword
 extern brushBullet :dword
@@ -154,7 +161,13 @@ RST_H      equ 30
 
     ; ---- 技能说明页数据（9 技能：名/描述，中英双语）----
     skillPage   dd 0                   ; 当前页 0..SKILL_COUNT（0=玩法演示，1..9=技能）
-    demoT       dd 0                   ; 玩法演示动画 tick（page==0 时推进）
+    demoT       dd 0                   ; 玩法演示动画 tick
+    demoPage    dd 0                   ; 玩法演示页 0..5
+    demoP1y     dd 0                   ; 演示动画坦克 y
+    demoDir     dd 0                   ; 演示动画朝向
+    szPlus1     db "+1", 0
+    szScore0    db "P1 0 : 0 P2", 0
+    szScore1    db "P1 1 : 0 P2", 0
     skNmEn      dd sKN1,sKN2,sKN3,sKN4,sKN5,sKN6,sKN7,sKN8,sKN9
     skNmCn      dd kCN1,kCN2,kCN3,kCN4,kCN5,kCN6,kCN7,kCN8,kCN9
     skDsEn      dd sKD1,sKD2,sKD3,sKD4,sKD5,sKD6,sKD7,sKD8,sKD9
@@ -217,6 +230,23 @@ RST_H      equ 30
     kDM2        dw 00033h,0002Eh,00020h,05F00h,070AEh,0FF01h,06BCFh,06B21h,0547Dh,04E2Dh,06D88h,08017h,0654Ch,04EBAh,00020h,00031h,00020h,070B9h,08840h,091CFh, 0
     kDM3        dw 00034h,0002Eh,00020h,06253h,07A7Ah,0654Ch,04EBAh,06240h,06709h,0547Dh,06570h,05373h,06DD8h,06C70h,0FF0Ch,08D62h,04E0Bh,056DEh,05408h,05F97h,05206h, 0
     szKO        db "K.O.", 0
+    szDemT      db "GAMEPLAY", 0
+    CN_DEMOMENU dw 073A9h,06CD5h,06F14h,0793Ah, 0
+    CN_DEMOT    dw 073A9h,06CD5h,06F14h,0793Ah, 0
+    dDemoEn     dd dDE0, dDE1, dDE2, dDE3, dDE4, dDE5
+    dDemoCn     dd kDD0, kDD1, kDD2, kDD3, kDD4, kDD5
+    dDE0        db "MOVE: arrow keys / WASD; spawn faces half-map side", 0
+    dDE1        db "FIRE: each hit drains 1 HP; 3 HP and out", 0
+    dDE2        db "BOUNCE: bullets ricochet off walls (up to 10)", 0
+    dDE3        db "TERRAIN: mud slows, ice slides, water blocks", 0
+    dDE4        db "SKILLS: a box spawns every 10s; skill key fires it", 0
+    dDE5        db "SCORE: last survivor +1; most wins takes the match", 0
+    kDD0        dw 079FBh,052A8h,0FF1Ah,065B9h,05411h,0952Eh,06216h,00020h,00057h,00041h,00053h,00044h,0FF1Bh,051FAh,0751Fh,0671Dh,05411h,06309h,06240h,05728h,0534Ah,0573Ah,081EAh,052A8h,08BBEh,05B9Ah, 0
+    kDD1        dw 05C04h,051FBh,0FF1Ah,06BCFh,06B21h,0547Dh,04E2Dh,06263h,0654Ch,04EBAh,00020h,00031h,00020h,08840h,0FF1Bh,00033h,00020h,08840h,08017h,05C3Dh,05373h,06DD8h,06C70h, 0
+    kDD2        dw 053CDh,05F39h,0FF1Ah,05B50h,05F39h,0649Eh,05899h,04F1Ah,053CDh,05F39h,0FF08h,06700h,0591Ah,00020h,00031h,00030h,00020h,06B21h,0FF09h,0FF0Ch,053EFh,04EE5h,07ED5h,0540Eh,0653Bh,051FBh, 0
+    kDD3        dw 05730h,05F62h,0FF1Ah,06CE5h,05730h,051CFh,0901Fh,03001h,051B0h,09762h,06ED1h,0884Ch,03001h,06C34h,09762h,0963Bh,06321h,0FF08h,09A6Dh,06C34h,0672Fh,053EFh,0901Ah,08FC7h,0FF09h, 0
+    kDD4        dw 06280h,080FDh,0FF1Ah,05730h,056FEh,06BCFh,00020h,00031h,00030h,00020h,079D2h,05237h,04E00h,04E2Ah,06280h,080FDh,07BB1h,0FF0Ch,06309h,06280h,080FDh,0952Eh,053D1h,052A8h, 0
+    kDD5        dw 05F97h,05206h,0FF1Ah,056DEh,05408h,06700h,0540Eh,05B58h,06D3Bh,08005h,00020h,0002Bh,00031h,00020h,05206h,0FF1Bh,05C40h,06570h,06253h,06EE1h,0603Bh,05206h,06700h,09AD8h,08005h,083B7h,080DCh, 0
     szSkPage    db " / %d", 0
 
     aUp         db "UP", 0
@@ -420,13 +450,17 @@ MenuActivate proc
         mov rebindSlot, -1          ; 进入人数页清改键状态
         mov gameState, ST_NUMSEL
     .elseif menuSel == 1
+        mov demoPage, 0
+        mov demoT, 0
+        mov gameState, ST_DEMO
+    .elseif menuSel == 2
         mov skillPage, 0
         mov gameState, ST_SKILL
-    .elseif menuSel == 2
+    .elseif menuSel == 3
         mov setSel, 0
         mov rebindWait, 0
         mov gameState, ST_SET
-    .elseif menuSel == 3
+    .elseif menuSel == 4
         mov gameState, ST_LAN
         invoke NetShutdown
         invoke NetInit
@@ -434,7 +468,7 @@ MenuActivate proc
         mov discTimer, 0
         invoke setsockopt, hSock, SOL_SOCKET, SO_BROADCAST,
                addr oneVal, 4
-    .elseif menuSel == 4
+    .elseif menuSel == 5
         invoke PostQuitMessage, NULL
     .else
         xor langFlag, 1              ; 语言切换
@@ -846,13 +880,13 @@ PS_VlOk:
     .if gameState == ST_MENU
         .if dnE != 0
             inc menuSel
-            .if menuSel > 5
+            .if menuSel > 6
                 mov menuSel, 0
             .endif
         .endif
         .if upE != 0
             .if menuSel == 0
-                mov menuSel, 5
+                mov menuSel, 6
             .else
                 dec menuSel
             .endif
@@ -864,11 +898,11 @@ PS_VlOk:
         ; 菜单 5 项渲染矩形：x 440..660，y = 250+i*60 .. +34
         xor ebx, ebx
 UT_MMouse:
-        .if ebx >= 6
+        .if ebx >= 7
             jmp UT_MMouseDone
         .endif
         mov eax, ebx
-        imul eax, eax, 52
+        imul eax, eax, 46
         add eax, 190
         mov ecx, eax                     ; ecx = 项顶部 y
         add eax, 34                      ; eax = 项底部 y
@@ -1232,12 +1266,8 @@ SS_BtnL:
             mov gameState, ST_MENU
         .endif
 
-    ; ---------- 技能说明页：左右翻页（0=玩法演示 1..9=技能）----------
+    ; ---------- 技能说明页：左右翻页（9 技能）----------
     .elseif gameState == ST_SKILL
-        mov eax, skillPage
-        .if eax == 0
-            inc demoT                  ; 推进玩法演示动画
-        .endif
         .if ltE != 0
             .if skillPage > 0
                 dec skillPage
@@ -1245,7 +1275,7 @@ SS_BtnL:
         .endif
         .if rtE != 0
             mov eax, skillPage
-            .if eax < SKILL_COUNT      ; 0..9（玩法 + 9 技能）
+            .if eax < SKILL_COUNT-1
                 inc skillPage
             .endif
         .endif
@@ -1253,7 +1283,6 @@ SS_BtnL:
             mov gameState, ST_MENU
         .endif
         .if lbE != 0
-            ; 左箭头 130..210, 260..340 / 右箭头 778..858
             mov eax, mouseY
             .if eax >= 260 && eax < 340
                 mov eax, mouseX
@@ -1262,10 +1291,38 @@ SS_BtnL:
                         dec skillPage
                     .endif
                 .elseif eax >= 778 && eax < 858
-                    mov eax, skillPage
-                    .if eax < SKILL_COUNT
+                    .if skillPage < SKILL_COUNT-1
                         inc skillPage
                     .endif
+                .endif
+            .endif
+        .endif
+
+    ; ---------- 玩法演示页：6 段动画翻页 ----------
+    .elseif gameState == ST_DEMO
+        inc demoT
+        .if ltE != 0
+            .if demoPage > 0
+                dec demoPage
+            .endif
+        .endif
+        .if rtE != 0
+            mov eax, demoPage
+            .if eax < 5
+                inc demoPage
+            .endif
+        .endif
+        .if esE != 0
+            mov gameState, ST_MENU
+        .endif
+        .if lbE != 0
+            mov eax, mouseY
+            .if eax >= 260 && eax < 340
+                mov eax, mouseX
+                .if eax >= 130 && eax < 210 && demoPage > 0
+                    dec demoPage
+                .elseif eax >= 778 && eax < 858 && demoPage < 5
+                    inc demoPage
                 .endif
             .endif
         .endif
@@ -1341,7 +1398,7 @@ UM_Items:
             mov edx, colGray
         .endif
         mov eax, ebx
-        imul eax, eax, 52
+        imul eax, eax, 46
         add eax, 190
         mov rowY, eax
         push ebx
@@ -1349,19 +1406,21 @@ UM_Items:
         .if eax == 0
             invoke UiTextL, hdcBack, 436, rowY, offset szItem1, offset CN_START, edx
         .elseif eax == 1
-            invoke UiTextL, hdcBack, 436, rowY, offset szItemSk, offset CN_SKILLMENU, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szDemT, offset CN_DEMOMENU, edx
         .elseif eax == 2
-            invoke UiTextL, hdcBack, 436, rowY, offset szItem2, offset CN_SET, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szItemSk, offset CN_SKILLMENU, edx
         .elseif eax == 3
-            invoke UiTextL, hdcBack, 440, rowY, offset szItem3, offset CN_LAN, edx
+            invoke UiTextL, hdcBack, 436, rowY, offset szItem2, offset CN_SET, edx
         .elseif eax == 4
+            invoke UiTextL, hdcBack, 440, rowY, offset szItem3, offset CN_LAN, edx
+        .elseif eax == 5
             invoke UiTextL, hdcBack, 436, rowY, offset szItem4, offset CN_EXIT, edx
         .else
             invoke UiTextL, hdcBack, 436, rowY, offset szLangEN, offset CN_LANG, edx
         .endif
         pop ebx
         inc ebx
-        .if ebx < 6
+        .if ebx < 7
             jmp UM_Items
         .endif
         ; 底部操作提示

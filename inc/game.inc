@@ -29,6 +29,7 @@ ST_SET      equ 2                   ; 按键设置
 ST_LAN      equ 3                   ; 联机大厅
 ST_PLAY     equ 4                   ; 对局中
 ST_SKILL    equ 5                   ; 技能说明页
+ST_DEMO     equ 6                   ; 玩法演示页
 
 ; ---- 游戏节奏 ----
 TICK_MS     equ 16                  ; 约 60 tick/秒

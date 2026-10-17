@@ -22,6 +22,10 @@ public penIcon                    ; 图标白色笔
 public penOld2                    ; 说明页恢复用
 public brushMortar                ; 图标深色描边
 public brushBrick                 ; 玩法演示爆炸色
+public brushIce                   ; 玩法演示地形
+public brushWater                 ; 玩法演示地形
+public brushBg                    ; 玩法演示空地色
+public brushSteel                 ; 玩法演示挡板
 public DrawTank                   ; 主菜单装饰/玩法演示复用
 public brushP1                    ; 演示动画车体色
 public brushP2

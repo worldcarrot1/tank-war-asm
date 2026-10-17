@@ -180,6 +180,7 @@ BitBlt                  PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,
 Rectangle               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 RoundRect               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 Ellipse                 PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+Polygon                 PROTO stdcall :DWORD,:DWORD,:DWORD
 CreatePen               PROTO stdcall :DWORD,:DWORD,:DWORD
 CreateFontA             PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 GetStockObject          PROTO stdcall :DWORD

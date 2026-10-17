@@ -51,10 +51,12 @@ ARENA_COUNT equ 20                  ; 内置对战图 ARENA1..20（每局随机�
 WALL_THICK  equ 8                   ; 挡板厚度（像素），格内居中
 
 ; ---- 方向 ----
-DIR_UP      equ 0
-DIR_RIGHT   equ 1
-DIR_DOWN    equ 2
-DIR_LEFT    equ 3
+; ---- 方向（360 度角度制：0=朝右，90=朝下，180=朝左，270=朝上）----
+DIR_RIGHT   equ 0
+DIR_DOWN    equ 90
+DIR_LEFT    equ 180
+DIR_UP      equ 270
+TURN_SPEED  equ 4                   ; 每 tick 转向度数（左右键旋转）
 
 ; ---- 坦克 ----
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）

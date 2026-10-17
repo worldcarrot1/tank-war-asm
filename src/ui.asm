@@ -2079,7 +2079,7 @@ SS_Done:
             mov ecx, 100
             div ecx
             add eax, 160
-            invoke DrawTank, hdcBack, eax, 316, DIR_RIGHT
+            invoke DrawTank, hdcBack, eax, 325, DIR_RIGHT
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 4
             mov eax, demoPh

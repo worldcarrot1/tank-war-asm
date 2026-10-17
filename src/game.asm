@@ -56,6 +56,8 @@ public matchOver
 public maxRounds
 public roundsPlayed
 public shakeT
+public cosTBL
+public sinTBL
 public pickupType
 public pickupX
 public pickupY
@@ -82,6 +84,13 @@ public prevTank
     gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
     shakeT      dd 0                 ; 坦克爆炸震屏剩余 tick
     testLives   dd LIVES_INIT        ; 自测时置 1（击杀即淘汰，保持旧断言）
+    cosTBL      dd 360 dup (?)       ; cos(a*PI/180)*1024
+    sinTBL      dd 360 dup (?)       ; sin(a*PI/180)*1024
+    itmp        dd ?
+    c180        dd 180
+    k1000       dd 1024
+    tval        dd ?
+    tval2       dd ?
     testNoShuffle dd 0               ; 自测置 1：不换图/不随机出生（保持 ARENA1 确定性）
     arenaBag    dd ARENA_COUNT dup (?) ; 本场比赛的地图洗牌袋（索引到 arenaTable）
     arenaBagPos dd ARENA_COUNT       ; 袋内游标（>=COUNT 触发重洗）
@@ -592,8 +601,8 @@ arenaTable dd ARENA1,
     stT18a db "T18_ARM_HP(expect3)="       ; 20 字符
     stT18b db "T18_BOOM_HP(expect2)="      ; 21 字符
     stT18c db "T18_MINE_GONE(expect1)="    ; 23 字符
-    stT19a db "T19_NORM_DX(expect5)="      ; 21 字符
-    stT19b db "T19_BOOST_DX(expect7)="     ; 22 字符
+    stT19a db "T19_NORM_DX(expect4)="      ; 21 字符
+    stT19b db "T19_BOOST_DX(expect6)="     ; 22 字符
     stT19c db "T19_MUD_BOOST(expect4)="    ; 23 字符
     stT20a db "T20_SWAPPED(expect1)="      ; 21 字符
     stT20b db "T20_BUL_BACK(expect1)="     ; 22 字符
@@ -615,6 +624,36 @@ arenaTable dd ARENA1,
     stT23d db "T23_PROT_AFTER(expect120)=" ; 27 字符
 
 .code
+
+; ------------------------------------------------------------
+; InitTrig —— FPU 生成 360 项整数三角表（cos/sin * 1000）
+; ------------------------------------------------------------
+InitTrig proc
+    xor ecx, ecx
+IT_L:
+    mov itmp, ecx
+    fild itmp
+    fldpi
+    fmulp st(1), st(0)              ; a*pi
+    fdiv c180                     ; 弧度
+    fcos
+    fild k1000
+    fmulp st(1), st(0)
+    fistp cosTBL[ecx*4]
+    fild itmp
+    fldpi
+    fmulp st(1), st(0)
+    fdiv c180
+    fsin
+    fild k1000
+    fmulp st(1), st(0)
+    fistp sinTBL[ecx*4]
+    inc ecx
+    .if ecx < 360
+        jmp IT_L
+    .endif
+    ret
+InitTrig endp
 
 ; ------------------------------------------------------------
 ; RngNext —— xorshift32：x^=x<<13; x^=x>>17; x^=x<<5
@@ -1207,6 +1246,7 @@ CountOwnBullets endp
 ; Deterministic: fixed ARENA1, simulated inputs, results -> selftest.log
 ; ------------------------------------------------------------
 SelfTestRun proc uses ebx esi edi
+    call InitTrig                    ; 无头路径不经过 GameInit，补三角表
     call InitKeyDefaults             ; 无头路径不经过 UiInit，补默认键位
     mov testLives, 1                 ; 旧断言基于"击杀即淘汰"，自测固定单命
     mov testNoShuffle, 1             ; 自测固定 ARENA1 + 原出生点（确定性）
@@ -2053,6 +2093,7 @@ SelfTestRun endp
 ; tank0 = 出生点0（左上，朝下），tank1 = 出生点3（右下，朝上）
 ; ------------------------------------------------------------
 GameInit proc uses ebx esi edi
+    call InitTrig                   ; 三角表（每次初始化，幂等）
     ; xorshift32 seed (first time only)
     .if rngState == 0
         invoke GetTickCount
@@ -3455,53 +3496,43 @@ FindSlot:
 SlotFound:
     mov eax, ecx
     mov bulIdx, eax                 ; 先存槽索引（ecx 马上被 vy 候选占用）
-    ; 速度向量由朝向决定（vx/vy 只取 0 / ±BULLET_SPEED）
+    ; 任意角度：vx = cos(dir)*SPD/1000；vy = sin(dir)*SPD/1000
     mov eax, (TANK ptr [ebx]).dir
-    xor edx, edx                     ; vx 候选
-    xor ecx, ecx                     ; vy 候选
-    .if eax == DIR_UP
-        mov ecx, -BULLET_SPEED
-    .elseif eax == DIR_RIGHT
-        mov edx, BULLET_SPEED
-    .elseif eax == DIR_DOWN
-        mov ecx, BULLET_SPEED
-    .else
-        mov edx, -BULLET_SPEED
-    .endif
-    mov (BULLET ptr [esi]).vx, edx
-    mov (BULLET ptr [esi]).vy, ecx
-    ; 位置：炮口（坦克边缘之外 8px = 炮管尖端）—— 否则开启自伤后
-    ; 子弹出膛即命中自己
+    mov ecx, cosTBL[eax*4]
+    imul ecx, BULLET_SPEED
+    mov tval, ecx
+    mov ecx, sinTBL[eax*4]
+    imul ecx, BULLET_SPEED
+    mov tval2, ecx
+    mov eax, tval
+    sar eax, 10
+    mov (BULLET ptr [esi]).vx, eax
+    mov eax, tval2
+    sar eax, 10
+    mov (BULLET ptr [esi]).vy, eax
+    ; 炮口：坦克中心沿朝向前移 TANK_SIZE/2 + 4（炮管尖端）
+    mov eax, (TANK ptr [ebx]).x
+    add eax, TANK_SIZE/2
+    mov tval, eax                    ; 中心 x
     mov eax, (TANK ptr [ebx]).dir
-    .if eax == DIR_UP
-        mov eax, (TANK ptr [ebx]).x
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        sub eax, BULLET_SIZE_PX
-        mov (BULLET ptr [esi]).y, eax
-    .elseif eax == DIR_DOWN
-        mov eax, (TANK ptr [ebx]).x
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        add eax, TANK_SIZE
-        mov (BULLET ptr [esi]).y, eax
-    .elseif eax == DIR_LEFT
-        mov eax, (TANK ptr [ebx]).x
-        sub eax, BULLET_SIZE_PX
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).y, eax
-    .else
-        mov eax, (TANK ptr [ebx]).x
-        add eax, TANK_SIZE
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).y, eax
-    .endif
+    mov ecx, cosTBL[eax*4]
+    imul ecx, TANK_SIZE/2+4
+    sar ecx, 10
+    mov eax, ecx
+    add eax, tval
+    sub eax, (BULLET_SIZE_PX)/2
+    mov (BULLET ptr [esi]).x, eax
+    mov eax, (TANK ptr [ebx]).y
+    add eax, TANK_SIZE/2
+    mov tval, eax                    ; 中心 y
+    mov eax, (TANK ptr [ebx]).dir
+    mov ecx, sinTBL[eax*4]
+    imul ecx, TANK_SIZE/2+4
+    sar ecx, 10
+    mov eax, ecx
+    add eax, tval
+    sub eax, (BULLET_SIZE_PX)/2
+    mov (BULLET ptr [esi]).y, eax
     mov (BULLET ptr [esi]).owner, edi
     mov (BULLET ptr [esi]).active, 1
     mov (BULLET ptr [esi]).bounces, 0
@@ -3542,12 +3573,41 @@ BulletWallHit proc uses ebx pb: dword
 BulletWallHit endp
 
 ; ------------------------------------------------------------
+; TankTerrain —— 坦克所压地形（四角采样：任一角在泥/冰格即触发，
+; 与视觉一致——履带压上就算）；返回 TILE_DIRT/TILE_ICE/TILE_EMPTY
+; ------------------------------------------------------------
+cornerX    dd 2, TANK_SIZE-3, 2, TANK_SIZE-3
+cornerY    dd 2, 2, TANK_SIZE-3, TANK_SIZE-3
+TankTerrain proc uses ebx ecx edx esi slotIdx: dword
+    mov esi, slotIdx
+    imul esi, esi, SIZEOF TANK
+    add esi, offset tanks
+    xor ebx, ebx
+TT_L:
+    mov eax, (TANK ptr [esi]).x
+    add eax, cornerX[ebx*4]
+    mov ecx, (TANK ptr [esi]).y
+    add ecx, cornerY[ebx*4]
+    invoke TileAtPx, eax, ecx
+    .if eax == TILE_DIRT || eax == TILE_ICE
+        ret
+    .endif
+    inc ebx
+    .if ebx < 4
+        jmp TT_L
+    .endif
+    mov eax, TILE_EMPTY
+    ret
+TankTerrain endp
+
+; ------------------------------------------------------------
 ; MoveTank —— 坦克移动（水/钢/砖实心，冰/泥/空地可通行）
 ; 冰面：位移成功且中心格是冰 -> 刷新滑行 tick（6..10）与滑行方向
 ; 泥土：中心格是泥土 -> 本 tick 速度 DIRT_SPEED（1），否则 TANK_SPEED
 ; ------------------------------------------------------------
 MoveTank proc ownerIdx: dword, wantDir: dword
     local nx:dword, ny:dword, solid:dword, ptank:dword, dirL:dword
+    local moveF:dword
     local spd:dword
     ; ptank = &tanks[ownerIdx]（跨 invoke 保存，用局部变量存指针）
     mov eax, ownerIdx
@@ -3557,17 +3617,33 @@ MoveTank proc ownerIdx: dword, wantDir: dword
     mov ptank, ecx
     mov eax, wantDir
     mov dirL, eax
+    ; 360 度转向：左键逆时针、右键顺时针（转向 tick 不位移）
+    mov ecx, ptank
+    .if dirL == 2
+        mov eax, (TANK ptr [ecx]).dir
+        sub eax, TURN_SPEED
+        .if eax < 0
+            add eax, 360
+        .endif
+        mov (TANK ptr [ecx]).dir, eax
+        ret
+    .elseif dirL == 3
+        mov eax, (TANK ptr [ecx]).dir
+        add eax, TURN_SPEED
+        .if eax >= 360
+            sub eax, 360
+        .endif
+        mov (TANK ptr [ecx]).dir, eax
+        ret
+    .endif
 
     mov ecx, ptank
     mov edx, dirL
     mov (TANK ptr [ecx]).dir, edx            ; 转向即时生效
 
-    ; 泥土减速：坦克中心格地形决定本 tick 速度
-    mov eax, (TANK ptr [ecx]).x
-    add eax, TANK_SIZE/2
-    mov edx, (TANK ptr [ecx]).y
-    add edx, TANK_SIZE/2
-    invoke TileAtPx, eax, edx
+    ; 泥土减速：坦克四角任一压泥格即减速（视觉一致）
+    mov eax, ownerIdx
+    invoke TankTerrain, eax
     .if eax == TILE_DIRT
         mov eax, DIRT_SPEED
     .else
@@ -3593,20 +3669,29 @@ MT_SpdEven:
     mov nx, eax
     mov eax, (TANK ptr [ecx]).y
     mov ny, eax
+    ; 三角位移：nx += cos(dir)*spd*moveF/1000；ny += sin(dir)*spd*moveF/1000
+    ; dirL==0 前进（moveF=1）、dirL==1 后退（moveF=-1）
     mov eax, dirL
-    .if eax == DIR_UP
-        mov ecx, spd
-        sub ny, ecx
-    .elseif eax == DIR_DOWN
-        mov ecx, spd
-        add ny, ecx
-    .elseif eax == DIR_LEFT
-        mov ecx, spd
-        sub nx, ecx
-    .else
-        mov ecx, spd
-        add nx, ecx
+    mov moveF, 1
+    .if eax == 1
+        mov moveF, -1
     .endif
+    mov ecx, ptank                 ; 速度段破坏了 ecx，重载
+    mov eax, (TANK ptr [ecx]).dir
+    mov ecx, cosTBL[eax*4]
+    imul ecx, spd
+    mov edx, moveF
+    imul ecx, edx
+    sar ecx, 10
+    add nx, ecx
+    mov ecx, ptank                 ; nx 计算破坏了 ecx，重载
+    mov eax, (TANK ptr [ecx]).dir
+    mov ecx, sinTBL[eax*4]
+    imul ecx, spd
+    mov edx, moveF
+    imul ecx, edx
+    sar ecx, 10
+    add ny, ecx
 
     ; 硬边界保护：坦克整体必须在地图内。出界目标判为 solid=3
     ; （任何技能都不放行）——否则 ghost 在边界墙上被 clamp 恒判定命中，
@@ -3676,12 +3761,9 @@ MT_AfterBlock:
             .endif
         .endif
         mov ecx, ptank                 ; 恢复坦克指针（后续冰面判定依赖 ecx）
-        ; 冰面判定：坦克中心格
-        mov eax, (TANK ptr [ecx]).x
-        add eax, TANK_SIZE/2
-        mov edx, (TANK ptr [ecx]).y
-        add edx, TANK_SIZE/2
-        invoke TileAtPx, eax, edx
+        ; 冰面判定：四角采样
+        mov eax, ownerIdx
+        invoke TankTerrain, eax
         .if eax == TILE_ICE
             invoke RngBelow, ICE_SLIDE_RNG   ; 0..4
             add eax, ICE_SLIDE_MIN           ; 6..10 tick

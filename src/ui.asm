@@ -306,7 +306,7 @@ RST_H      equ 30
     CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
     CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0FF08h,5148h,5207h,82f1h,6587h,8f93h,5165h,6cd5h,0FF09h, 0 ; 请按任意键（先切英文输入法）
     CN_KEYS dw 952eh,4f4dh, 0                                            ; 键位
-    CN_SETT dw 6309h,952eh,8bbeh,7f6eh, 0
+    CN_SETT     dw 06E38h,0620Fh,08BBEh,07F6Eh, 0
     CN_SETH dw 56deh,8f66h,0ff1ah,6539h,952eh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
     CN_REBIND dw 0020h,003ch,002dh,0020h,8bf7h,6309h,4efbh,610fh,952eh, 0
     CN_LANT dw 8054h,673ah,5bf9h,6218h,0ff08h,5c40h,57dfh,7f51h,0ff09h, 0
@@ -1631,7 +1631,6 @@ NS_BoxDone:
     ; ---------- 按键设置 ----------
     .elseif gameState == ST_SET
         invoke UiTextL, hdcBack, 420, 36, offset szSetT, offset CN_SETT, colDark
-        invoke UiTextL, hdcBack, 380, 74, offset szSetH, offset CN_SETH, colGray
         ; ---- 快捷设置行（小字体，y 96）：音量 / 音效 / 深夜模式 ----
         invoke SelectObject, hdcBack, fontSmall
         ; 音量行（y 196）：标签 + << 按钮 + 进度条 + >> 按钮 + 数值
@@ -1699,96 +1698,6 @@ NS_BoxDone:
         invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
         invoke SelectObject, hdcBack, menuFont
 
-        xor ebx, ebx
-SS_Rows:
-        .if ebx >= MAX_PLAYERS*KEY_PER
-            jmp SS_Done
-        .endif
-        ; 行文本（宽字符）: "P<p+1> <ACTION> : <KEY>"
-        lea edi, wBuf
-        mov word ptr [edi], 'P'
-        mov eax, ebx
-        xor edx, edx
-        mov ecx, KEY_PER
-        div ecx
-        add al, '1'
-        mov [edi+2], ax                 ; '1'..'4'（宽）
-        mov word ptr [edi+4], ' '
-        add edi, 6
-        .if langFlag == 0
-            mov esi, aTab[edx*4]        ; 英文动作名（ASCII -> 宽）
-SS_CopyAct:
-            mov al, [esi]
-            .if al == 0
-                jmp SS_CopyDone
-            .endif
-            movzx eax, al
-            mov [edi], ax
-            inc esi
-            add edi, 2
-            jmp SS_CopyAct
-SS_CopyDone:
-        .else
-            mov esi, cnActT[edx*4]      ; 中文动作名（等长指针表，0 结尾）
-CN_CopyAct:
-            mov ax, [esi]
-            .if ax == 0
-                jmp SS_CopyDone2
-            .endif
-            mov [edi], ax
-            add esi, 2
-            add edi, 2
-            jmp CN_CopyAct
-SS_CopyDone2:
-        .endif
-        mov word ptr [edi], ' '
-        mov word ptr [edi+2], ':'
-        mov word ptr [edi+4], ' '
-        add edi, 6
-        ; 键名：VkName 生成 ASCII 到 uiBuf，再转宽
-        mov eax, ebx
-        mov eax, keyTable[eax*4]
-        invoke VkName, eax, offset uiBuf
-        mov klen, eax
-        xor ecx, ecx
-KN_Loop:
-        .if ecx >= klen
-            jmp KN_Done
-        .endif
-        movzx eax, byte ptr uiBuf[ecx]
-        mov [edi], ax
-        inc ecx
-        add edi, 2
-        jmp KN_Loop
-KN_Done:
-        ; 重绑提示（仅选中行）
-        .if rebindWait != 0 && ebx == setSel
-            .if langFlag == 0
-                invoke StrCopy, offset szRebind, edi, 17
-                mov word ptr [edi+17], 0
-                add edi, 18
-            .else
-                invoke StrCopy, offset CN_REBIND, edi, 18
-                mov word ptr [edi+18], 0
-                add edi, 20
-            .endif
-        .endif
-        mov word ptr [edi], 0
-        ; 颜色与行坐标
-        mov eax, ebx
-        .if eax == setSel
-            mov edx, colHi
-        .else
-            mov edx, colGray
-        .endif
-        mov eax, ebx
-        imul eax, eax, 26                 ; 行高 26（20 行 110..614 不溢出）
-        add eax, 110
-        mov rowY, eax
-        invoke UiTextW, hdcBack, 380, rowY, offset wBuf, edx
-        inc ebx
-        jmp SS_Rows
-SS_Done:
 
     ; ---------- 联机大厅 ----------
     .elseif gameState == ST_LAN

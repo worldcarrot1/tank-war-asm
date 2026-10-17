@@ -293,6 +293,21 @@ DH_NameDone:
     mov eax, esi
     add eax, MAP_W/4 - 60
     invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, 5
+    ; DBG: P2 坐标诊断（临时）
+    lea edi, scoreBuf
+    mov eax, tanks[1*SIZEOF TANK].x
+    shr eax, 5
+    add al, '0'
+    mov [edi], al
+    mov eax, tanks[1*SIZEOF TANK].y
+    shr eax, 5
+    add al, '0'
+    mov [edi+1], al
+    mov eax, tanks[1*SIZEOF TANK].alive
+    add al, '0'
+    mov [edi+2], al
+    mov byte ptr [edi+3], 0
+    invoke TextOutA, hdcBack, 500, 610, offset scoreBuf, 3
     inc ebx
     jmp DH_Slot
 DrawHud endp
@@ -549,7 +564,7 @@ ROTPT MACRO idx, lox, loy
     sub eax, ecx
     sar eax, 10
     add eax, px
-    mov pts[idx*8], eax
+    mov pts[idx*2], eax
     mov eax, lox
     imul eax, sa
     mov ecx, loy
@@ -557,66 +572,76 @@ ROTPT MACRO idx, lox, loy
     add eax, ecx
     sar eax, 10
     add eax, py
-    mov pts[idx*8+4], eax
+    mov pts[idx*2+1], eax
 ENDM
 
 DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
-    local pts[16]:dword
-    local ca:dword
-    local sa:dword
     local oldPen2:dword
+    local oldBr:dword
     mov eax, dirV
     mov ecx, cosTBL[eax*4]
-    mov ca, ecx
     mov eax, dirV
     mov ecx, sinTBL[eax*4]
-    mov sa, ecx
-    ; 履带底盘（旋转矩形 26x22，玩家色）
-    ROTPT 0, 13, -11
-    ROTPT 1, 13, 11
-    ROTPT 2, -13, 11
-    ROTPT 3, -13, -11
+    ; 1) 底盘：玩家色大圆（25px）+ 深色描边
     invoke SelectObject, hdc, penDark
     mov oldPen2, eax
-    invoke Polygon, hdc, addr pts, 4
-    ; 炮管（沿角度，粗笔，先画再压车体）
+    invoke SelectObject, hdc, brushP1
+    mov oldBr, eax
+    mov eax, px
+    mov ecx, py
+    mov edx, eax
+    add edx, TANK_SIZE
+    mov ebx, ecx
+    add ebx, TANK_SIZE
+    invoke Ellipse, hdc, eax, ecx, edx, ebx
+    ; 2) 履带：底盘外圈加深色描边（penDark 已选）+ 两侧履带点
+    ; 3) 炮管：粗笔沿角度从中心伸出
     invoke SelectObject, hdc, penTube
     mov eax, px
     add eax, TANK_SIZE/2
-    invoke MoveToEx, hdc, eax, 0, 0
+    mov ecx, py
+    add ecx, TANK_SIZE/2
+    invoke MoveToEx, hdc, eax, ecx, 0
     mov eax, px
     add eax, TANK_SIZE/2
-    mov ecx, TANK_SIZE/2+14
-    mov edx, ca
-    imul edx, ecx
+    mov edx, dirV
+    mov edx, cosTBL[edx*4]
+    imul edx, 26
     sar edx, 10
     add eax, edx
     mov ecx, py
     add ecx, TANK_SIZE/2
-    mov edx, sa
-    imul edx, TANK_SIZE/2+14
+    mov edx, dirV
+    mov edx, sinTBL[edx*4]
+    imul edx, 26
     sar edx, 10
     add ecx, edx
     invoke LineTo, hdc, eax, ecx
-    ; 车体（旋转矩形 20x16，深色）
-    ROTPT 0, 10, -8
-    ROTPT 1, 10, 8
-    ROTPT 2, -10, 8
-    ROTPT 3, -10, -8
+    ; 4) 炮塔：深色圆压在中心
     invoke SelectObject, hdc, brushMortar
-    invoke Polygon, hdc, addr pts, 4
-    ; 炮塔（中心圆 10px，玩家色）
     invoke SelectObject, hdc, penDark
     mov eax, px
-    add eax, 7
+    add eax, 6
     mov ecx, py
-    add ecx, 7
+    add ecx, 6
     mov edx, eax
-    add edx, 10
+    add edx, 13
+    mov ebx, ecx
+    add ebx, 13
+    invoke Ellipse, hdc, eax, ecx, edx, ebx
+    ; 5) 炮塔中心亮点（当前刷=brushMortar 深色，换回玩家色小圆）
+    invoke SelectObject, hdc, brushP1
+    mov eax, px
+    add eax, 10
+    mov ecx, py
     add ecx, 10
-    sub ecx, 10
-    invoke Ellipse, hdc, eax, ecx, edx, ecx
+    mov edx, eax
+    add edx, 5
+    mov ebx, ecx
+    add ebx, 5
+    invoke Ellipse, hdc, eax, ecx, edx, ebx
     invoke SelectObject, hdc, oldPen2
+    invoke SelectObject, hdc, oldBr
     ret
 DrawTank endp
 

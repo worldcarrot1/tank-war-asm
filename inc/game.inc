@@ -70,7 +70,7 @@ TANK_SIZE   equ 25                  ; 坦克碰撞/绘制边长（21 的 1.2 倍
 TANK_SPEED  equ 4                   ; 每 tick 基础移动像素（偶 tick）
 TANK_SPEED_HI equ 5                 ; 奇 tick（4/5 交替 = 平均 4.5，比子弹慢 25%）
 DIRT_SPEED  equ 2                   ; 泥土上每 tick 移动像素（减速）
-TANK_HP     equ 3
+TANK_HP     equ 1                   ; 一滴血（用户要求：命中即淘汰）
 LIVES_INIT  equ 1                   ; 每辆坦克初始命数
 RESPAWN_TICKS equ 90                ; 阵亡后 1.5s 重生
 SPAWN_PROT_TICKS equ 150            ; 重生保护 2.5s（免伤+闪烁）

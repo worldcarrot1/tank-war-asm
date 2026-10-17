@@ -175,7 +175,7 @@ RST_H      equ 30
     dDE4        db "SKILLS: a box spawns every 10s; skill key fires it", 0
     dDE5        db "SCORE: last survivor +1; most wins takes the match", 0
     kDD0        dw 079FBh,052A8h,0FF1Ah,065B9h,05411h,0952Eh,06216h,00020h,00057h,00041h,00053h,00044h,0FF1Bh,051FAh,0751Fh,0671Dh,05411h,06309h,06240h,05728h,0534Ah,0573Ah,081EAh,052A8h,08BBEh,05B9Ah, 0
-    kDD1        dw 05C04h,051FBh,0FF1Ah,06BCFh,06B21h,0547Dh,04E2Dh,06263h,0654Ch,04EBAh,00020h,00031h,00020h,08840h,0FF1Bh,00033h,00020h,08840h,08017h,05C3Dh,05373h,06DD8h,06C70h, 0
+    kDD1        dw 05C04h,051FBh,0FF1Ah,0547Dh,04E2Dh,05373h,06DD8h,06C70h,0FF08h,04E00h,06EF4h,08840h,0FF09h, 0
     kDD2        dw 053CDh,05F39h,0FF1Ah,05B50h,05F39h,0649Eh,05899h,04F1Ah,053CDh,05F39h,0FF08h,06700h,0591Ah,00020h,00031h,00030h,00020h,06B21h,0FF09h,0FF0Ch,053EFh,04EE5h,07ED5h,0540Eh,0653Bh,051FBh, 0
     kDD3        dw 05730h,05F62h,0FF1Ah,06CE5h,05730h,051CFh,0901Fh,03001h,051B0h,09762h,06ED1h,0884Ch,03001h,06C34h,09762h,0963Bh,06321h,0FF08h,09A6Dh,06C34h,0672Fh,053EFh,0901Ah,08FC7h,0FF09h, 0
     kDD4        dw 06280h,080FDh,0FF1Ah,05730h,056FEh,06BCFh,00020h,00031h,00030h,00020h,079D2h,05237h,04E00h,04E2Ah,06280h,080FDh,07BB1h,0FF0Ch,06309h,06280h,080FDh,0952Eh,053D1h,052A8h, 0
@@ -250,7 +250,7 @@ RST_H      equ 30
     vkEnN       db "ENTER", 0
     vkRsN       db "RSH", 0
     vkLsN       db "LSH", 0
-    szTitle     db "T A N K   W A R   A S M", 0
+    szTitle     db "TANK WAR v1.2", 0
     szKeysLbl   db "KEYS (CLICK A KEY TO CHANGE)", 0
     szItem1     db "START GAME", 0
     szItem2     db "SETTINGS", 0
@@ -1976,24 +1976,15 @@ SS_Done:
                     mov boxRc.bottom, 344
                     invoke FillRect, hdcBack, addr boxRc, brushBullet
                 .endif
-            .endif
-            mov eax, 3
-            sub eax, demoPh
-            .if eax > 0
-                mov esi, eax
+            ; P2 血条：一滴血（第一发即淘汰）
+            mov eax, demoPh
+            .if eax == 0
                 mov boxRc.left, 640
                 mov boxRc.top, 296
+                mov boxRc.right, 660
                 mov boxRc.bottom, 304
-                mov eax, 640
-                mov ecx, esi
-                imul ecx, ecx, 20
-                add eax, ecx
-                mov boxRc.right, eax
                 invoke FillRect, hdcBack, addr boxRc, brushBrick
             .endif
-            invoke SelectObject, hdcBack, menuFont
-        .elseif eax == 2
-            invoke SelectObject, hdcBack, brushSteel
             mov boxRc.left, 596
             mov boxRc.top, 240
             mov boxRc.right, 604
@@ -2164,6 +2155,7 @@ SS_Done:
         mov byte ptr [edi+5], 0
         invoke UiTextZ, hdcBack, 470, 165, offset uiBuf, colDark
         invoke UiTextL, hdcBack, 360, 560, offset szSkHint, offset CN_SKHINT, colGray
+    .endif
     .endif
 
 UR_Done:

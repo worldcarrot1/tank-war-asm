@@ -29,9 +29,11 @@ EndPhantom   PROTO :DWORD
 SndPlay      PROTO :DWORD
 WallRectsHit PROTO :DWORD,:DWORD,:DWORD,:DWORD
 TankBlocked  PROTO :DWORD,:DWORD
+MuzzlePoint  PROTO :DWORD          ; 炮口分离偏移（eax=offx edx=offy）
 SpawnBullet  PROTO :DWORD
 DamageTank   PROTO :DWORD
 SpawnIce2x2  PROTO :DWORD
+SimReflectPath PROTO :DWORD,:DWORD,:DWORD,:DWORD
 
 ; ---- 输入快照（本模块定义，input.asm / ui.asm 写入）----
 public keyTable
@@ -42,6 +44,8 @@ extern numPlayers :dword               ; ui.asm（当前玩家数 2..4）
 ; ---- 游戏状态（本模块定义，gfx.asm / net.asm 读取）----
 public tanks
 public bullets
+public cosTBL                      ; gfx.asm 旋转渲染读取（会话 19 整车旋转）
+public sinTBL
 public mapData
 public mapIndex
 public SpawnBullet
@@ -69,6 +73,7 @@ public prevY
 public prevTank
 
 .data
+    include trig.inc               ; 360 度整度三角表 x1024（tools/gen_trig.py 生成）
     tanks       TANK MAX_PLAYERS dup (<>)
     bullets     BULLET MAX_BULLETS dup (<>)
     mapData     db COLS*ROWS dup(TILE_EMPTY)
@@ -76,7 +81,7 @@ public prevTank
     spawnY      dd 4 dup (0)
     spawnCount  dd 0
     mapIndex    dd 0                 ; 当前 ARENA 编号
-    keyTable    dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] VK 码: 0上1下2左3右4开火5技能
+    keyTable    dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] VK 码: 0前进1后退2左转3右转4开火5技能
     inputTable  dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] 每 tick 快照 0/1
     prevUse     dd MAX_PLAYERS dup (0)  ; 技能键上帧状态（边沿检测）
     gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
@@ -558,61 +563,158 @@ arenaTable dd ARENA1,
     t11y0       dd 0
     logBuf      db 64 dup (0)
     saveMap     db COLS*ROWS dup (0)
+    stFailN     dd 0
+    stHomeX     dd 0
+    stHomeY     dd 0
+    stBulIdx    dd 0
+    stBulX0     dd 0
+    stBulY0     dd 0
+    stVx0       dd 0
+    stVy0       dd 0
 
     nbRow       dd ?
     nbCol       dd ?
     nbIdx       dd ?
     nbDir       dd ?
-    stT1  db "T1_P1_X_ROW13(expect212)="
-    stT2  db "T2_ACTIVE_AFTER_FIRE="
-    stT3  db "T3_ACTIVE_AFTER_620TICKS="
-    stT4  db "T4_MAP_UNCHANGED(expect1)="
-    stT5  db "T5_NOT_ON_WATER(expect1)="
-    stT6  db "T6_SLIDE_ENGAGED(expect6-15)="
-    stT7  db "T7_P2_X(expect070)="
-    stT8  db "T8_BULLETS_AFTER_15FIRE(expect<=10)="
-    stT9a db "T9_P2_DEAD_AT_TICK="
-    stT9b db "T9_P2_ALIVE(expect0)="
-    stT9c db "T9_P2_HP(expect0)="
-    stT10 db "T10_P1_SCORE(expect1)="       ; 22 字符（勿多打 1 字节）
-    stT11 db "T11_DIRT_SLOW_DISP(expect4)="
-    stT12 db "T12_SELFKILL_HP(expect2)="    ; 25 字符
-    stT13a db "T13_SPAWN(expect1..8)="     ; 22 字符
-    stT13b db "T13_PICKUP(expect3)="       ; 20 字符
-    stT13c db "T13_USED(expect1)="         ; 18 字符
-    stT14a db "T14_SHIELD_HP(expect3)="    ; 23 字符
-    stT14b db "T14_ICE_CELLS(expect2)="    ; 23 字符
-    stT15a db "T15_LASER_HP(expect2)="     ; 22 字符
-    stT15b db "T15_LASER_PTS(expect2)="    ; 23 字符
-    stT16a db "T16_REFL_HP(expect2)="      ; 21 字符
-    stT16b db "T16_REFL_PTS(expect9)="     ; 22 字符
-    stT17a db "T17_BLOCKED(expect1)="      ; 21 字符
-    stT17b db "T17_PASSED(expect1)="       ; 20 字符
-    stT17c db "T17_USES_LEFT(expect2)="    ; 23 字符
-    stT18a db "T18_ARM_HP(expect3)="       ; 20 字符
-    stT18b db "T18_BOOM_HP(expect2)="      ; 21 字符
-    stT18c db "T18_MINE_GONE(expect1)="    ; 23 字符
-    stT19a db "T19_NORM_DX(expect5)="      ; 21 字符
-    stT19b db "T19_BOOST_DX(expect7)="     ; 22 字符
-    stT19c db "T19_MUD_BOOST(expect4)="    ; 23 字符
-    stT20a db "T20_SWAPPED(expect1)="      ; 21 字符
-    stT20b db "T20_BUL_BACK(expect1)="     ; 22 字符
-    stT20c db "T20_DIR(expect1)="          ; 17 字符
-    stT20d db "T20_UNBOUND(expect1)="      ; 21 字符
-    stT21a db "T21_WATER_BLOCK(expect1)="  ; 25 字符
-    stT21b db "T21_IN_WATER(expect1)="     ; 23 字符
-    stT21c db "T21_HOLD(expect1)="        ; 18 字符
-    stT21d db "T21_OFF(expect0)="          ; 17 字符
-    stT22a db "T22_PHANTOM_SET(expect1)="  ; 24 字符
-    stT22b db "T22_SPLIT(expect1)="        ; 19 字符
-    stT22c db "T22_IMMUNE(expect1)="       ; 20 字符
-    stT22d db "T22_HIT_PH(expect1)="       ; 20 字符
-    stT22e db "T22_2ND(expect1)="          ; 17 字符
-    stT22f db "T22_CLEAR(expect1)="        ; 19 字符
-    stT23a db "T23_LIVES_AFTER(expect2)="  ; 25 字符
-    stT23b db "T23_ALIVE_RESPAWN(expect1)=" ; 27 字符
-    stT23c db "T23_HP_RESPAWN(expect1)="   ; 24 字符
-    stT23d db "T23_PROT_AFTER(expect120)=" ; 27 字符
+    ; ---- 会话 19 自测字符串：长度用 ($ - 标签) 自动计算，无需手工数字节 ----
+    stT1    db "T1_FWD_DIR0_X(expect212)="
+    stT1L   equ ($ - stT1)
+    stT2    db "T2_ACTIVE_AFTER_FIRE(expect1)="
+    stT2L   equ ($ - stT2)
+    stT3    db "T3_ACTIVE_AFTER_620TICKS(expect0)="
+    stT3L   equ ($ - stT3)
+    stT4    db "T4_MAP_UNCHANGED(expect1)="
+    stT4L   equ ($ - stT4)
+    stT5    db "T5_NOT_ON_WATER(expect1)="
+    stT5L   equ ($ - stT5)
+    stT6    db "T6_SLIDE_6_15(expect1)="
+    stT6L   equ ($ - stT6)
+    stT7    db "T7_P2_WALKSTOP_X20(expect1)="
+    stT7L   equ ($ - stT7)
+    stT8    db "T8_15FIRE_QUOTA(expect10)="
+    stT8L   equ ($ - stT8)
+    stT9a   db "T9_KILLED_LT300(expect1)="
+    stT9aL  equ ($ - stT9a)
+    stT9b   db "T9_P2_ALIVE(expect0)="
+    stT9bL  equ ($ - stT9b)
+    stT9c   db "T9_P2_HP(expect0)="
+    stT9cL  equ ($ - stT9c)
+    stT10   db "T10_P1_SCORE(expect1)="
+    stT10L  equ ($ - stT10)
+    stT11   db "T11_DIRT_2T_DISP(expect4)="
+    stT11L  equ ($ - stT11)
+    stT12a  db "T12_SELFKILL_HP(expect0)="
+    stT12aL equ ($ - stT12a)
+    stT12b  db "T12_SELFKILL_DEAD(expect0)="
+    stT12bL equ ($ - stT12b)
+    stT13a  db "T13_SPAWN_1_8(expect1)="
+    stT13aL equ ($ - stT13a)
+    stT13b  db "T13_PICKUP_SKILL(expect3)="
+    stT13bL equ ($ - stT13b)
+    stT13c  db "T13_SHIELD_ON(expect1)="
+    stT13cL equ ($ - stT13c)
+    stT14a  db "T14_SHIELD_BLOCK(expect1)="
+    stT14aL equ ($ - stT14a)
+    stT14b  db "T14_2ND_LETHAL(expect0)="
+    stT14bL equ ($ - stT14b)
+    stT14c  db "T14_ICE_CELLS(expect2)="
+    stT14cL equ ($ - stT14c)
+    stT15a  db "T15_LASER_KILL(expect0)="
+    stT15aL equ ($ - stT15a)
+    stT15b  db "T15_LASER_PTS(expect2)="
+    stT15bL equ ($ - stT15b)
+    stT15c  db "T15_SHOOTER_ALIVE(expect1)="
+    stT15cL equ ($ - stT15c)
+    stT16a  db "T16_REFL_KILL(expect0)="
+    stT16aL equ ($ - stT16a)
+    stT16b  db "T16_REFL_PTS(expect9)="
+    stT16bL equ ($ - stT16b)
+    stT16c  db "T16_CASTER_SUICIDE(expect0)="
+    stT16cL equ ($ - stT16c)
+    stT17a  db "T17_STEEL_BLOCK(expect1)="
+    stT17aL equ ($ - stT17a)
+    stT17b  db "T17_GHOST_PASSED(expect1)="
+    stT17bL equ ($ - stT17b)
+    stT17c  db "T17_USES_LEFT(expect2)="
+    stT17cL equ ($ - stT17c)
+    stT18a  db "T18_PREARM_HP(expect1)="
+    stT18aL equ ($ - stT18a)
+    stT18b  db "T18_BOOM_DEAD(expect0)="
+    stT18bL equ ($ - stT18b)
+    stT18c  db "T18_MINE_GONE(expect1)="
+    stT18cL equ ($ - stT18c)
+    stT19a  db "T19_NORM_DX(expect4or5)="
+    stT19aL equ ($ - stT19a)
+    stT19b  db "T19_BOOST_DX(expect+2)="
+    stT19bL equ ($ - stT19b)
+    stT19c  db "T19_MUD_BOOST(expect4)="
+    stT19cL equ ($ - stT19c)
+    stT20a  db "T20_SWAPPED(expect1)="
+    stT20aL equ ($ - stT20a)
+    stT20b  db "T20_BUL_BACK(expect1)="
+    stT20bL equ ($ - stT20b)
+    stT20c  db "T20_DIR_INHERIT(expect1)="
+    stT20cL equ ($ - stT20c)
+    stT20d  db "T20_UNBOUND(expect1)="
+    stT20dL equ ($ - stT20d)
+    stT21a  db "T21_WATER_BLOCK(expect1)="
+    stT21aL equ ($ - stT21a)
+    stT21b  db "T21_IN_WATER(expect1)="
+    stT21bL equ ($ - stT21b)
+    stT21c  db "T21_WATER_HOLD(expect1)="
+    stT21cL equ ($ - stT21c)
+    stT21d  db "T21_WATER_OFF(expect0)="
+    stT21dL equ ($ - stT21d)
+    stT22a  db "T22_PHANTOM_SET(expect1)="
+    stT22aL equ ($ - stT22a)
+    stT22b  db "T22_SPLIT(expect1)="
+    stT22bL equ ($ - stT22b)
+    stT22c  db "T22_REAL_IMMUNE(expect1)="
+    stT22cL equ ($ - stT22c)
+    stT22d  db "T22_PH_HIT_LETHAL(expect1)="
+    stT22dL equ ($ - stT22d)
+    stT22e  db "T22_REINIT_2T1USE(expect1)="
+    stT22eL equ ($ - stT22e)
+    stT22f  db "T22_RECALL_CLEAR(expect1)="
+    stT22fL equ ($ - stT22f)
+    stT23a  db "T23_LIVES_AFTER(expect2)="
+    stT23aL equ ($ - stT23a)
+    stT23b  db "T23_RESPAWN_ALIVE(expect1)="
+    stT23bL equ ($ - stT23b)
+    stT23c  db "T23_RESPAWN_HP(expect1)="
+    stT23cL equ ($ - stT23c)
+    stT23d  db "T23_PROT_LEFT(expect120)="
+    stT23dL equ ($ - stT23d)
+    stT24   db "T24_ANGLE_WRAP(expect1)="
+    stT24L  equ ($ - stT24)
+    stT25   db "T25_DIR_PURE45(expect1)="
+    stT25L  equ ($ - stT25)
+    stT26   db "T26_MUZZLE_GEOM(expect5)="
+    stT26L  equ ($ - stT26)
+    stT27   db "T27_45DEG_BALLISTIC(expect1)="
+    stT27L  equ ($ - stT27)
+    stT28   db "T28_TDIR_QUANT(expect13)="
+    stT28L  equ ($ - stT28)
+    stT29   db "T29_45DEG_BOUNCE(expect1)="
+    stT29L  equ ($ - stT29)
+    stT30   db "T30_SLIDE_TURN(expect1)="
+    stT30L  equ ($ - stT30)
+    stT31   db "T31_TRIG_TABLE(expect4)="
+    stT31L  equ ($ - stT31)
+    stWntS  db " want "
+    stWntSL equ ($ - stWntS)
+    stOKS   db " OK", 13, 10
+    stOKSL  equ ($ - stOKS)
+    stBadS  db " ***FAIL***", 13, 10
+    stBadSL equ ($ - stBadS)
+    stMarkS db "MARK="
+    stMarkSL equ ($ - stMarkS)
+    stFails db "ST_FAILS="
+    stFailsL equ ($ - stFails)
+    stDone  db 13, 10, "SELFTEST_DONE", 13, 10
+    stDoneL equ ($ - stDone)
+    ; T28 量化采样角（含临界 0/1/355/359 与四轴/45 度系）
+    stAngTbl dd 0,1,44,45,89,90,135,180,225,270,313,355,359
 
 .code
 
@@ -845,6 +947,8 @@ RTLoop:
     mov (TANK ptr [esi]).fireCd, 0
     mov (TANK ptr [esi]).slide, 0
     mov (TANK ptr [esi]).sdir, 0
+    mov (TANK ptr [esi]).subpxX, 0      ; 会话 19：定点余量必须清零
+    mov (TANK ptr [esi]).subpxY, 0      ; （否则换局/自测传送后首步被旧余量偏置）
     ; 技能状态清零
     mov (TANK ptr [esi]).skill, SKILL_NONE
     mov (TANK ptr [esi]).effOn, 0
@@ -1124,7 +1228,9 @@ FindOpenNeighbor proc uses ebx ecx edx cellIdx: dword
 FindOpenNeighbor endp
 
 ; ------------------------------------------------------------
-; SetDirInput -- 按方向码设置 P1 输入（99 = 全部清零）
+; SetDirInput -- 按动作码设置 P1 输入（99 = 全部清零）
+; 会话 19 语义：0=前进(槽0) 1=右转(槽3) 2=后退(槽1) 3=左转(槽2)
+; （码值沿用旧方向码顺序，测试代码只改语义不改调用位）
 ; ------------------------------------------------------------
 SetDirInput proc dir: dword
     mov inputTable[0], 0
@@ -1147,7 +1253,8 @@ SetDirInput endp
 ; ------------------------------------------------------------
 ; InitKeyDefaults -- 默认键位表（设置界面/人数页容器可覆盖）
 ; P1 WASD+空格+Q  P2 方向键+Enter+右Shift  P3 IJKL+U+O  P4 TFGH+B+V
-; 动作顺序：0上 1下 2左 3右 4开火 5技能
+; 动作顺序（会话 19）：0前进 1后退 2左转 3右转 4开火 5技能
+; 物理键位不变：W/S=前进/后退，A/D=逆时针/顺时针旋转
 ; ------------------------------------------------------------
 InitKeyDefaults proc
     mov keyTable[0],  VK_W
@@ -1203,18 +1310,71 @@ CB2Done:
 CountOwnBullets endp
 
 ; ------------------------------------------------------------
-; SelfTestRun -- M1 headless acceptance test (run with: tankwar selftest)
+; Chk -- 自测断言输出：NAME=got want X OK/FAIL；FAIL 计数 stFailN++
+;   必须保持 ebx/esi/edi（LogNum 会踩 edi）
+; ------------------------------------------------------------
+Chk proc uses esi edi pName: dword, pLen: dword, got: dword, want: dword
+    invoke LogStr, pName, pLen
+    mov eax, got
+    invoke LogNum, eax
+    invoke LogStr, offset stWntS, stWntSL
+    mov eax, want
+    invoke LogNum, eax
+    mov eax, got
+    cmp eax, want
+    je ChkOK
+    inc stFailN
+    invoke LogStr, offset stBadS, stBadSL
+    ret
+ChkOK:
+    invoke LogStr, offset stOKS, stOKSL
+    ret
+Chk endp
+
+; ------------------------------------------------------------
+; Mark -- 自测阶段标记 "MARK=n"：崩溃时 log 末行即最后到达阶段
+; ------------------------------------------------------------
+Mark proc uses edi n: dword
+    invoke LogStr, offset stMarkS, stMarkSL
+    invoke LogNum, n
+    invoke LogStr, offset nlStr, 2
+    ret
+Mark endp
+
+; ------------------------------------------------------------
+; ToAngle -- FindOpenNeighbor 方向码(0上/1右/2下/3左) -> 角度(度)
+; ------------------------------------------------------------
+ToAngle proc dc: dword
+    mov eax, dc
+    .if eax == 0
+        mov eax, DIR_UP
+    .elseif eax == 1
+        mov eax, DIR_RIGHT
+    .elseif eax == 2
+        mov eax, DIR_DOWN
+    .else
+        mov eax, DIR_LEFT
+    .endif
+    ret
+ToAngle endp
+
+
+; ------------------------------------------------------------
+; SelfTestRun -- 会话19 新语义自测：31 组方泑论断言（含 4 个回滚故障回归锁 + 6 项 360° 新增）
 ; Deterministic: fixed ARENA1, simulated inputs, results -> selftest.log
 ; ------------------------------------------------------------
 SelfTestRun proc uses ebx esi edi
+    local lX0:dword, lY0:dword, lGot:dword, lWant:dword, lIdx:dword
+    local lPass:dword, lTmp:dword
     call InitKeyDefaults             ; 无头路径不经过 UiInit，补默认键位
-    mov testLives, 1                 ; 旧断言基于"击杀即淘汰"，自测固定单命
-    mov testNoShuffle, 1             ; 自测固定 ARENA1 + 原出生点（确定性）
-    ; 固定 ARENA1 保证确定性
+    mov testLives, 1                 ; 自测固定单命：击杀即淘汰（确定性）
+    mov testNoShuffle, 1             ; 固定 ARENA1 + 原出生点
     mov rngState, 1
     mov spawnCount, 0
+    mov stFailN, 0
+    mov numPlayers, 2                ; 双人激活（槽循环/ResetTanks 依赖）
     invoke ParseArena, offset ARENA1
-    ; 自测专用：清空第 13 行做水平测试走廊（T1/T7/T9 依赖）
+    ; 自测专用：清空第 13 行做水平测试走廊
     mov ecx, 13*COLS+1
 STClear13:
     mov mapData[ecx], TILE_EMPTY
@@ -1223,6 +1383,12 @@ STClear13:
         jmp STClear13
     .endif
     call ResetTanks
+    ; 记录 P1 出生位：T2~T4 期间把 P1 停回出生位。1HP 规则下走廊
+    ; 乒乓弹若打到停靠坦克会提前死亡并污染后续滑行/水域测试
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov stHomeX, eax
+    mov eax, tanks[0*SIZEOF TANK].y
+    mov stHomeY, eax
     ; 地图快照（验证墙体不可摧毁）
     cld
     mov esi, offset mapData
@@ -1231,136 +1397,190 @@ STClear13:
     rep movsb
     call OpenLog
 
-    ; T1: P1 沿第 13 行走廊右移 40 tick（32 -> 112）
+    ; ==== T1 dir=0 前进 40 tick：32+180=212（4/5 交替 40 tick 恰 180px） ====
+    invoke Mark, 10
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
-    invoke SetDirInput, 1
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    invoke SetDirInput, 0
     invoke AdvanceTicks, 40
     invoke SetDirInput, 99
-    invoke LogStr, offset stT1, 25
-    invoke LogNum, tanks[0*SIZEOF TANK].x          ; expect 112
+    invoke Chk, offset stT1, stT1L, tanks[0*SIZEOF TANK].x, 212
 
-    ; T2: 开火 -> 一颗弹在飞
+    ; ==== T2 开火 -> 一颗弹在飞 ====
+    invoke Mark, 20
+    mov tanks[0*SIZEOF TANK].fireCd, 0
     mov inputTable[16], 1
     invoke GameUpdate
     mov inputTable[16], 0
     invoke CountOwnBullets, 0
-    mov logVal, eax
-    invoke LogStr, offset stT2, 21
-    invoke LogNum, logVal                          ; expect 1
+    mov lGot, eax
+    invoke Chk, offset stT2, stT2L, lGot, 1
+    ; P1 停回出生位（乒乓弹带 y=424 触不到上下半场出生点）
+    mov eax, stHomeX
+    mov tanks[0*SIZEOF TANK].x, eax
+    mov eax, stHomeY
+    mov tanks[0*SIZEOF TANK].y, eax
 
-    ; T3: 620 tick 后弹全部消亡（反弹耗尽或超时）
+    ; ==== T3 620 tick 后弹全部消亡（BULLET_LIFE=600 先到） ====
+    invoke Mark, 30
     invoke AdvanceTicks, 620
     invoke CountOwnBullets, 0
-    mov logVal, eax
-    invoke LogStr, offset stT3, 25
-    invoke LogNum, logVal                          ; expect 0
+    mov lGot, eax
+    invoke Chk, offset stT3, stT3L, lGot, 0
 
-    ; T4: 墙体不可摧毁 —— 轰一炮再跑 900 tick，地图逐字节不变
-    mov inputTable[16], 1
-    invoke GameUpdate
-    mov inputTable[16], 0
+    ; ==== T4 注入乒乓弹轰 900 tick：地图逐字节不变（墙体不可摧毁） ====
+    ; 注入 owner=2（非在场玩家）：1HP 下不殃及停放坦克，纯轰墙
+    invoke Mark, 40
+    lea edi, bullets
+    add edi, SIZEOF BULLET
+    mov (BULLET ptr [edi]).x, 500
+    mov (BULLET ptr [edi]).y, 424
+    mov (BULLET ptr [edi]).vx, BULLET_SPEED*FIX_ONE
+    mov (BULLET ptr [edi]).vy, 0
+    mov (BULLET ptr [edi]).owner, 2
+    mov (BULLET ptr [edi]).active, 1
+    mov (BULLET ptr [edi]).bounces, 0
+    mov (BULLET ptr [edi]).age, 0
+    mov (BULLET ptr [edi]).subpxX, 0
+    mov (BULLET ptr [edi]).subpxY, 0
+    mov (BULLET ptr [edi]).fireAng, 0
     invoke AdvanceTicks, 900
     cld
     mov esi, offset mapData
     mov edi, offset saveMap
     mov ecx, COLS*ROWS
     repe cmpsb
-    mov logVal, 0
+    mov lGot, 0
     .if ZERO?
-        mov logVal, 1
+        mov lGot, 1
     .endif
-    invoke LogStr, offset stT4, 26
-    invoke LogNum, logVal                          ; expect 1
+    invoke Chk, offset stT4, stT4L, lGot, 1
 
-    ; T5: 水域挡坦克 —— 找第一个 '~'，从开放邻居向水推进 30 tick，
-    ;     坦克中心格必须不是水
+    ; ==== T5 水域挡坦克：从开放邻居朝水推进 30 tick，中心格必须非水 ====
+    invoke Mark, 50
     xor esi, esi
 T5Find:
-    .if esi >= COLS*ROWS
-        mov logVal, 99
-        invoke LogStr, offset stT5, 25
-        invoke LogNum, logVal
-        ; 直接落入 T6 段
-    .endif
     cmp mapData[esi], TILE_WATER
     je T5Found
     inc esi
-    jmp T5Find
+    .if esi < COLS*ROWS
+        jmp T5Find
+    .endif
+    mov lGot, 1                      ; 无水格：视为通过（真实地图必不会出现）
+    jmp T5Log
 T5Found:
     invoke FindOpenNeighbor, esi
-    mov ebx, eax                                   ; dirCode（邻居相对水格的方向）
+    .if eax == 99
+        mov lGot, 1
+        jmp T5Log
+    .endif
+    add eax, 2                       ; 邻居方向取反 = 从邻居格瞄准水格
+    cmp eax, 4
+    jb T5Opp
+    sub eax, 4
+T5Opp:
+    invoke ToAngle, eax
+    mov tanks[0*SIZEOF TANK].dir, eax
     mov eax, nbIdx
     xor edx, edx
     mov ecx, COLS
     div ecx
-    mov ecx, edx
-    imul ecx, ecx, CELL
-    mov tanks[0*SIZEOF TANK].x, ecx
     imul eax, eax, CELL
     mov tanks[0*SIZEOF TANK].y, eax
-    invoke SetDirInput, ebx                        ; 朝水推进
+    imul edx, edx, CELL
+    mov tanks[0*SIZEOF TANK].x, edx
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    invoke SetDirInput, 0
     invoke AdvanceTicks, 30
-    invoke SetDirInput, 99                         ; 清输入
+    invoke SetDirInput, 99
     mov eax, tanks[0*SIZEOF TANK].x
-    add eax, CELL/2
+    add eax, TANK_SIZE/2
     mov ecx, tanks[0*SIZEOF TANK].y
-    add ecx, CELL/2
+    add ecx, TANK_SIZE/2
     invoke TileAtPx, eax, ecx
-    mov logVal, 1
+    mov lGot, 1
     .if eax == TILE_WATER
-        mov logVal, 0                              ; 坦克中心在水上 = 失败
+        mov lGot, 0                  ; 中心入水 = 挡水失效
     .endif
-    invoke LogStr, offset stT5, 25
-    invoke LogNum, logVal                          ; expect 1
+T5Log:
+    invoke Chk, offset stT5, stT5L, lGot, 1
 
-    ; T6: 冰面滑行 —— 站上第一个 '-'，向开放邻居方向走 1 tick，
-    ;     slide 应被置为 6..10
+    ; ==== T6 冰面滑行：站上冰格向开放邻居驱动 1 tick，slide 应落在 6..15 ====
+    invoke Mark, 60
     xor esi, esi
 T6Find:
-    .if esi >= COLS*ROWS
-        mov logVal, 99
-        invoke LogStr, offset stT6, 29
-        invoke LogNum, logVal
-        jmp T7Start
-    .endif
     cmp mapData[esi], TILE_ICE
     je T6Found
     inc esi
-    jmp T6Find
+    .if esi < COLS*ROWS
+        jmp T6Find
+    .endif
+    mov lGot, 0
+    jmp T6Log
 T6Found:
     invoke FindOpenNeighbor, esi
-    mov ebx, eax
-    mov eax, esi                       ; 传送目标是冰面格本身
+    .if eax == 99
+        mov lGot, 0
+        jmp T6Log
+    .endif
+    invoke ToAngle, eax              ; 冰格 -> 开放邻居方向
+    mov tanks[0*SIZEOF TANK].dir, eax
+    mov eax, esi
     xor edx, edx
     mov ecx, COLS
     div ecx
-    mov ecx, edx
-    imul ecx, ecx, CELL
-    mov tanks[0*SIZEOF TANK].x, ecx
     imul eax, eax, CELL
     mov tanks[0*SIZEOF TANK].y, eax
-    invoke SetDirInput, ebx
+    imul edx, edx, CELL
+    mov tanks[0*SIZEOF TANK].x, edx
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    invoke SetDirInput, 0
     invoke GameUpdate
     invoke SetDirInput, 99
-    invoke LogStr, offset stT6, 29
-    invoke LogNum, tanks[0*SIZEOF TANK].slide      ; expect 6..10
+    mov eax, tanks[0*SIZEOF TANK].slide
+    mov lGot, 0
+    cmp eax, 6
+    jb T6Bad
+    cmp eax, 15
+    ja T6Bad
+    mov lGot, 1
+T6Bad:
+T6Log:
+    invoke Chk, offset stT6, stT6L, lGot, 1
 
-    ; T7: P2 方向键 —— 第 13 行走廊左移 20 tick（160 -> 120）
-    ; （KEY_PER=6 后 slot1 左键 = 24 + 2*4 = 32）
-T7Start:
+    ; ==== T7 P2 驾驶：dir=180 + 前进键（槽24），40 tick 后停于细边界墙 x=20 ====
+    invoke Mark, 70
     call ResetTanks
     mov tanks[1*SIZEOF TANK].x, 160
     mov tanks[1*SIZEOF TANK].y, 416
-    mov tanks[1*SIZEOF TANK].alive, 1
-    mov inputTable[32], 1
-    invoke AdvanceTicks, 20
-    mov inputTable[32], 0
-    invoke LogStr, offset stT7, 19
-    invoke LogNum, tanks[1*SIZEOF TANK].x          ; expect 120
+    mov tanks[1*SIZEOF TANK].dir, 180
+    mov tanks[1*SIZEOF TANK].subpxX, 0
+    mov tanks[1*SIZEOF TANK].subpxY, 0
+    mov inputTable[24], 1
+    invoke AdvanceTicks, 40
+    mov inputTable[24], 0
+    mov eax, tanks[1*SIZEOF TANK].x
+    mov lGot, 0
+    ; 会话 18 全部细墙后：左边界钢条几何 x∈[12,20)，车头恰停在 x=20
+    cmp eax, 20
+    jne T7Bad
+    mov lGot, 1
+T7Bad:
+    invoke Chk, offset stT7, stT7L, lGot, 1
 
-    ; T8: 每坦同屏 <=10 发（15 次快速开火 -> 场上 10 颗）
+    ; ==== T8 同屏配额：连开 15 枪 -> 恰好 10 颗（MAX_PER_TANK） ====
+    invoke Mark, 80
     call ResetTanks
+    mov tanks[0*SIZEOF TANK].dir, 0
     mov ebx, 15
 T8Loop:
     mov tanks[0*SIZEOF TANK].fireCd, 0
@@ -1372,19 +1592,19 @@ T8Loop:
         jmp T8Loop
     .endif
     invoke CountOwnBullets, 0
-    mov logVal, eax
-    invoke LogStr, offset stT8, 36
-    invoke LogNum, logVal                          ; expect 10
+    mov lGot, eax
+    invoke Chk, offset stT8, stT8L, lGot, 10
 
-    ; T9: 反弹/直射击杀 —— 第 13 行同走廊，3 发命中判负
+    ; ==== T9/T10 走廊射杀：1HP 下 P2 中弹即淘汰，P1 记 1 分 ====
+    invoke Mark, 90
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
-    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov tanks[1*SIZEOF TANK].x, 160
     mov tanks[1*SIZEOF TANK].y, 416
-    mov tanks[1*SIZEOF TANK].hp, TANK_HP
-    mov tanks[1*SIZEOF TANK].alive, 1
     mov inputTable[16], 1
     xor esi, esi
 T9Loop:
@@ -1398,7 +1618,14 @@ T9Loop:
     jmp T9Loop
 T9Done:
     mov inputTable[16], 0
-    ; 单命制下流弹会误伤 P1 导致判分统计为 0 —— 清空弹池
+    mov lGot, 0
+    .if esi < 300
+        mov lGot, 1
+    .endif
+    invoke Chk, offset stT9a, stT9aL, lGot, 1
+    invoke Chk, offset stT9b, stT9bL, tanks[1*SIZEOF TANK].alive, 0
+    invoke Chk, offset stT9c, stT9cL, tanks[1*SIZEOF TANK].hp, 0
+    ; 清空弹池：残余弹会在走廊乒乓，350 tick 判定期内可能流弹击毙 P1
     mov edi, offset bullets
     xor ecx, ecx
 T9ClrB:
@@ -1408,49 +1635,48 @@ T9ClrB:
     .if ecx < MAX_BULLETS
         jmp T9ClrB
     .endif
-    invoke LogStr, offset stT9a, 19
-    invoke LogNum, esi                             ; kill tick (<300)
-    invoke LogStr, offset stT9b, 21
-    invoke LogNum, tanks[1*SIZEOF TANK].alive      ; expect 0
-    invoke LogStr, offset stT9c, 18
-    invoke LogNum, tanks[1*SIZEOF TANK].hp         ; expect 0
-    invoke AdvanceTicks, 350                       ; 等 5s 判分定格结束（300 tick）开新一轮
-    invoke LogStr, offset stT10, 22
-    invoke LogNum, tanks[0*SIZEOF TANK].score      ; expect 1
+    invoke AdvanceTicks, 350         ; 判分定格（ROUND_JUDGE_TICKS=300）
+    invoke Chk, offset stT10, stT10L, tanks[0*SIZEOF TANK].score, 1
 
-    ; T11: 泥土减速 —— 找第一个 'd'，坦克置于其上，朝开放邻居方向推
-    ;      2 tick：泥上速度 1 -> 位移 2（普通地面会是 4）
+    ; ==== T11 泥土减速：泥格向开放邻居推 2 tick，位移 |dx|+|dy|=4 ====
+    invoke Mark, 110
     xor esi, esi
 T11Find:
-    .if esi >= COLS*ROWS
-        mov logVal, 99
-        invoke LogStr, offset stT11, 28
-        invoke LogNum, logVal
-        jmp T11Done
-    .endif
     cmp mapData[esi], TILE_DIRT
     je T11Found
     inc esi
-    jmp T11Find
+    .if esi < COLS*ROWS
+        jmp T11Find
+    .endif
+    mov lGot, 4                      ; 无泥格：跳过（视为通过）
+    jmp T11Log
 T11Found:
     invoke FindOpenNeighbor, esi
-    mov ebx, eax                          ; 方向代码（跨 invoke 存 ebx）
+    .if eax == 99
+        mov lGot, 4
+        jmp T11Log
+    .endif
+    invoke ToAngle, eax
+    mov tanks[0*SIZEOF TANK].dir, eax
     mov eax, esi
     xor edx, edx
     mov ecx, COLS
     div ecx
-    mov ecx, edx
-    imul ecx, ecx, CELL
-    mov t11x0, ecx
-    mov tanks[0*SIZEOF TANK].x, ecx
     imul eax, eax, CELL
     mov t11y0, eax
     mov tanks[0*SIZEOF TANK].y, eax
+    imul edx, edx, CELL
+    mov t11x0, edx
+    mov tanks[0*SIZEOF TANK].x, edx
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
     mov tanks[0*SIZEOF TANK].alive, 1
-    invoke SetDirInput, ebx
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    invoke SetDirInput, 0
     invoke AdvanceTicks, 2
     invoke SetDirInput, 99
-    ; 位移 = |dx| + |dy|（手写比较，不用 .if 的符号语义）
+    ; 位移 = |dx|+|dy|（手写取绝对值，规避 .if 符号语义）
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, t11x0
     cmp eax, 0
@@ -1465,70 +1691,66 @@ T11dxPos:
     neg eax
 T11dyPos:
     add eax, ecx
-    mov logVal, eax                      ; 中转（invoke 会破坏 eax）
-    invoke LogStr, offset stT11, 28
-    invoke LogNum, logVal                ; expect 2
-T11Done:
-    ; T12: 反弹自伤 —— P1 贴右侧边界墙朝右发射，出膛弹立即撞墙反弹
-    ;      回来命中自己 -> hp 3->2（Tank Trouble 核心规则：弹可自杀）
-    mov tanks[0*SIZEOF TANK].x, 947      ; 贴 col30 挡板（972..980），25px 车身
+    mov lGot, eax
+T11Log:
+    invoke Chk, offset stT11, stT11L, lGot, 4
+
+    ; ==== T12 反弹自伤：贴右钢界朝右出炮，出膛即撞墙反弹自击。
+    ;      会话 19 修正语义：1HP 下自伤 = 直接淘汰（旧标签 expect2 作废） ====
+    invoke Mark, 120
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 947
     mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov tanks[0*SIZEOF TANK].alive, 1
     mov tanks[0*SIZEOF TANK].hp, TANK_HP
     mov tanks[0*SIZEOF TANK].fireCd, 0
-    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
-    mov edi, offset bullets
-    xor ecx, ecx
-ST12ClrB:
-    mov (BULLET ptr [edi]).active, 0
-    add edi, SIZEOF BULLET
-    inc ecx
-    .if ecx < MAX_BULLETS
-        jmp ST12ClrB
-    .endif
     mov inputTable[16], 1
-    invoke GameUpdate                    ; 发射
+    invoke GameUpdate                ; 发射
     mov inputTable[16], 0
-    invoke AdvanceTicks, 30              ; 出膛->撞墙->反弹->自中
-    mov eax, tanks[0*SIZEOF TANK].hp
-    mov logVal, eax                      ; 中转（invoke 会破坏 eax）
-    invoke LogStr, offset stT12, 25
-    invoke LogNum, logVal                ; expect 2
-T12Done:
-    ; T13: 技能框架 —— 补给生成 / 拾取 / 技能键边沿发动
+    invoke AdvanceTicks, 30          ; 出膛->撞墙->回退出墙->反弹->自中
+    invoke Chk, offset stT12a, stT12aL, tanks[0*SIZEOF TANK].hp, 0
+    invoke Chk, offset stT12b, stT12bL, tanks[0*SIZEOF TANK].alive, 0
+
+    ; ==== T13 技能框架：补给生成 / 中心格拾取 / 使用键边沿发动 ====
+    invoke Mark, 130
     call ResetTanks
-    ; a) 生成：2 tick 后应出现 1..8 号拾取物
     mov pickupType, 0
     mov pickupTimer, 2
     invoke AdvanceTicks, 3
     mov eax, pickupType
-    mov logVal, eax
-    invoke LogStr, offset stT13a, 22
-    invoke LogNum, logVal                ; expect 1..8
-    ; b) 拾取：拾取物放到 P1 中心格 -> 1 tick 覆盖持有
+    mov lGot, 0
+    cmp eax, 1
+    jb T13Bad
+    cmp eax, 8
+    ja T13Bad
+    mov lGot, 1
+T13Bad:
+    invoke Chk, offset stT13a, stT13aL, lGot, 1
+    ; b) 拾取：补给移到 P1 中心格 -> 1 tick 覆盖持有
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov pickupX, 32+(CELL-PICKUP_SIZE)/2
     mov pickupY, 416+(CELL-PICKUP_SIZE)/2
-    mov pickupType, 3                    ; 反射激光
+    mov pickupType, 3                ; 反射激光
     invoke AdvanceTicks, 1
-    mov eax, tanks[0*SIZEOF TANK].skill
-    mov logVal, eax
-    invoke LogStr, offset stT13b, 20
-    invoke LogNum, logVal                ; expect 3
-    ; c) 使用键边沿：inputTable[20] 0->1 发动冰盾
+    invoke Chk, offset stT13b, stT13bL, tanks[0*SIZEOF TANK].skill, 3
+    ; c) 使用键边沿 0->1：冰盾发动（EFF_SHIELD=1）
     mov prevUse[0], 0
     mov tanks[0*SIZEOF TANK].skill, SK_ICE_SHIELD
     mov inputTable[20], 1
     invoke GameUpdate
     mov inputTable[20], 0
     invoke GameUpdate
-    mov eax, tanks[0*SIZEOF TANK].effOn
-    mov logVal, eax
-    invoke LogStr, offset stT13c, 18
-    invoke LogNum, logVal                ; expect 1 (EFF_SHIELD)
-T13cDone:
-    ; T14: 冰盾 —— 挡一次伤害 + 坦克周围生成 2x2 冰面
+    invoke Chk, offset stT13c, stT13cL, tanks[0*SIZEOF TANK].effOn, 1
+
+    ; ==== T14 冰盾：挡一次伤害 + 周围 2x2 冰面；会话 19 修正：盾碎后
+    ;      第二发即致命（1HP），正好锁死"盾只挡一次"语义 ====
+    invoke Mark, 140
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
@@ -1537,9 +1759,9 @@ T13cDone:
     mov tanks[0*SIZEOF TANK].skill, SK_ICE_SHIELD
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                    ; 发动冰盾
+    invoke GameUpdate                ; 发动冰盾（同 tick 生成 2x2 冰）
     mov inputTable[20], 0
-    ; 一颗弹压在 P1 身上（owner=P2）-> 冰盾应抵挡
+    ; 首发压在 P1 身上（owner=P2，vx=vy=0）-> 应被盾挡
     mov bullets[0].active, 1
     mov bullets[0].owner, 1
     mov eax, tanks[0*SIZEOF TANK].x
@@ -1550,12 +1772,19 @@ T13cDone:
     mov bullets[0].vy, 0
     mov bullets[0].bounces, 0
     mov bullets[0].age, 0
+    mov bullets[0].subpxX, 0
+    mov bullets[0].subpxY, 0
     invoke GameUpdate
-    mov eax, tanks[0*SIZEOF TANK].hp
-    mov logVal, eax
-    invoke LogStr, offset stT14a, 23
-    invoke LogNum, logVal                ; expect 3（被盾挡下）
-    ; 冰面：走廊行 (1,13)(2,13) 空地应变冰；(1,14)(2,14) 是墙不动
+    invoke Chk, offset stT14a, stT14aL, tanks[0*SIZEOF TANK].alive, 1
+    ; 盾已碎：同位再压一发 -> 直接击杀
+    mov bullets[0].active, 1
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov bullets[0].x, eax
+    mov eax, tanks[0*SIZEOF TANK].y
+    mov bullets[0].y, eax
+    invoke GameUpdate
+    invoke Chk, offset stT14b, stT14bL, tanks[0*SIZEOF TANK].alive, 0
+    ; 冰面：走廊行 (13,1)(13,2) 空地应已变冰
     xor eax, eax
     .if mapData[13*COLS+1] == TILE_ICE
         inc eax
@@ -1563,18 +1792,17 @@ T13cDone:
     .if mapData[13*COLS+2] == TILE_ICE
         inc eax
     .endif
-    mov logVal, eax
-    invoke LogStr, offset stT14b, 23
-    invoke LogNum, logVal                ; expect 2
-T14Done:
-    ; T15: 激光炮 —— 0.7s 后穿墙直线激光，路径上坦克（墙后也）受伤
+    mov lGot, eax
+    invoke Chk, offset stT14c, stT14cL, lGot, 2
+
+    ; ==== T15 激光炮：任意角射线穿墙直线伤害（会话 19 修正：1HP 即杀） ====
+    invoke Mark, 151
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
-    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].dir, 0
     mov tanks[0*SIZEOF TANK].alive, 1
-    ; 墙后目标：col10(x320..351) 放一堵钢墙，tank1 在 x=400
-    mov mapData[13*COLS+10], TILE_STEEL
+    mov mapData[13*COLS+10], TILE_STEEL   ; 墙后目标：col10 钢墙，P2 在 x=400
     mov tanks[1*SIZEOF TANK].x, 400
     mov tanks[1*SIZEOF TANK].y, 416
     mov tanks[1*SIZEOF TANK].alive, 1
@@ -1582,24 +1810,22 @@ T14Done:
     mov tanks[0*SIZEOF TANK].skill, SK_LASER
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                    ; 进入瞄准
+    invoke GameUpdate                ; 进入瞄准（aimT=42，本 tick 已减到 41）
     mov inputTable[20], 0
-    invoke AdvanceTicks, 41              ; 0.7s 到 -> 发射
-    mov eax, tanks[1*SIZEOF TANK].hp
-    mov logVal, eax
-    invoke LogStr, offset stT15a, 22
-    invoke LogNum, logVal                ; expect 2（穿墙击中）
-    mov eax, laserN
-    mov logVal, eax
-    invoke LogStr, offset stT15b, 23
-    invoke LogNum, logVal                ; expect 2（两点直线路径）
+    invoke Mark, 152
+    invoke AdvanceTicks, 41          ; 41 后 aimT=0 -> 发射
+    invoke Mark, 153
+    invoke Chk, offset stT15a, stT15aL, tanks[1*SIZEOF TANK].hp, 0
+    invoke Chk, offset stT15b, stT15bL, laserN, 2
+    invoke Chk, offset stT15c, stT15cL, tanks[0*SIZEOF TANK].alive, 1
     mov mapData[13*COLS+10], TILE_EMPTY  ; 还原走廊
-T15Done:
-    ; T16: 反射激光 —— 预览反弹路径，0.7s 后全路径伤害（含反弹段）
+
+    ; ==== T16 反射激光：预览/实弹同构的 16.16 进位反射路径（7 次反弹=9 点） ====
+    invoke Mark, 161
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
-    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].dir, 0
     mov tanks[0*SIZEOF TANK].alive, 1
     mov tanks[1*SIZEOF TANK].x, 200
     mov tanks[1*SIZEOF TANK].y, 416
@@ -1608,143 +1834,147 @@ T15Done:
     mov tanks[0*SIZEOF TANK].skill, SK_REFLASER
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                    ; 进入瞄准（预览生成）
+    invoke GameUpdate                ; 进入瞄准：本 tick 起每 tick 跑 SimReflectPath
     mov inputTable[20], 0
-    invoke AdvanceTicks, 41              ; 到时发射
-    mov eax, tanks[1*SIZEOF TANK].hp
-    mov logVal, eax
-    invoke LogStr, offset stT16a, 21
-    invoke LogNum, logVal                ; expect 2
-    mov eax, laserN
-    .if eax != 9                         ; 起点 + 7 反弹 + 终点 = 9
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT16b, 22
-    invoke LogNum, logVal                ; expect 1（9 折点 = 满 7 次反射）
-T16Done:
-    ; T17: 穿墙术 —— 无技能被墙挡；发动后穿过并计一次
+    invoke Mark, 162
+    invoke AdvanceTicks, 41          ; 到时发射
+    invoke Mark, 163
+    invoke Chk, offset stT16a, stT16aL, tanks[1*SIZEOF TANK].hp, 0
+    invoke Chk, offset stT16b, stT16bL, laserN, 9
+    invoke Chk, offset stT16c, stT16cL, tanks[0*SIZEOF TANK].alive, 0
+    invoke Mark, 164
+
+    ; ==== T17 穿墙术：无技能被钢墙挡死；发动后穿墙并计数 3->2 ====
+    invoke Mark, 171
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov tanks[0*SIZEOF TANK].alive, 1
-    mov mapData[13*COLS+6], TILE_STEEL   ; col6 挡路（x192..223）
-    ; a) 无技能：右移被挡
-    mov inputTable[12], 1
+    mov mapData[13*COLS+6], TILE_STEEL     ; col6 挡路（x192..223）
+    ; a) 无技能：前进被挡（应停在 167 附近：191-24）
+    mov inputTable[0], 1
     invoke AdvanceTicks, 40
-    mov inputTable[12], 0
+    mov inputTable[0], 0
     mov eax, tanks[0*SIZEOF TANK].x
-    .if eax > 180
-        mov eax, 0                       ; 穿过去了 = 失败
-    .else
-        mov eax, 1                       ; 被挡在墙前
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT17a, 21
-    invoke LogNum, logVal                ; expect 1（被挡）
-    ; b) 发动穿墙术 -> 穿过墙且剩余次数 3-1=2
+    mov lGot, 0
+    cmp eax, 96
+    jbe T17BadA
+    cmp eax, 180
+    ja T17BadA
+    mov lGot, 1
+T17BadA:
+    invoke Chk, offset stT17a, stT17aL, lGot, 1
+    ; b) 穿墙术发动后 30 tick：穿过钢墙
     mov tanks[0*SIZEOF TANK].skill, SK_GHOST
     mov prevUse[0], 0
     mov inputTable[20], 1
     invoke GameUpdate
     mov inputTable[20], 0
-    mov inputTable[12], 1
+    mov inputTable[0], 1
     invoke AdvanceTicks, 30
-    mov inputTable[12], 0
+    mov inputTable[0], 0
     mov eax, tanks[0*SIZEOF TANK].x
-    .if eax > 200
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT17b, 20
-    invoke LogNum, logVal                ; expect 1（已穿过）
-    mov eax, tanks[0*SIZEOF TANK].wallPass
-    mov logVal, eax
-    invoke LogStr, offset stT17c, 23
-    invoke LogNum, logVal                ; expect 2（用掉 1 次）
-    mov mapData[13*COLS+6], TILE_EMPTY
-T17Done:
-    ; T18: 地雷 —— 2s 后生效；生效时踩雷者（含自己）受伤；引爆后消失
+    mov lGot, 0
+    cmp eax, 200
+    jbe T17BadB
+    mov lGot, 1
+T17BadB:
+    invoke Chk, offset stT17b, stT17bL, lGot, 1
+    ; c) 穿墙计数：中心进入墙格一次 -> 3-1=2
+    invoke Chk, offset stT17c, stT17cL, tanks[0*SIZEOF TANK].wallPass, 2
+    mov mapData[13*COLS+6], TILE_EMPTY     ; 还原走廊
+
+    ; ==== T18 地雷：120 tick 生效；生效时踩雷者（含布雷人自己）爆炸阵亡 ====
+    invoke Mark, 181
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov tanks[0*SIZEOF TANK].alive, 1
     mov tanks[0*SIZEOF TANK].hp, TANK_HP
     mov tanks[0*SIZEOF TANK].skill, SK_MINE
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                    ; 布雷（就埋在自己脚下）
+    invoke GameUpdate                      ; 布雷（埋在自己脚下 (13,1)）
     mov inputTable[20], 0
-    invoke AdvanceTicks, 60              ; 未到 2s
-    mov eax, tanks[0*SIZEOF TANK].hp
-    mov logVal, eax
-    invoke LogStr, offset stT18a, 20
-    invoke LogNum, logVal                ; expect 3（未生效）
-    invoke AdvanceTicks, 61              ; 到时 -> 仍踩在雷上 -> 自伤
-    mov eax, tanks[0*SIZEOF TANK].hp
-    mov logVal, eax
-    invoke LogStr, offset stT18b, 21
-    invoke LogNum, logVal                ; expect 2（含自己）
+    invoke AdvanceTicks, 60                ; 未到 2s
+    invoke Chk, offset stT18a, stT18aL, tanks[0*SIZEOF TANK].hp, 1
+    invoke AdvanceTicks, 61                ; 到时 -> 仍踩雷上 -> 自爆（1HP 即死）
+    invoke Chk, offset stT18b, stT18bL, tanks[0*SIZEOF TANK].alive, 0
     mov eax, mineCell[0]
-    .if eax == -1
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT18c, 23
-    invoke LogNum, logVal                ; expect 1（引爆后消失）
-T18Done:
-    ; T19: 燃油加速 —— 常速 2->3；泥地减速叠加：1->2
+    mov lGot, 0
+    cmp eax, -1
+    jne T18Bad
+    mov lGot, 1
+T18Bad:
+    invoke Chk, offset stT18c, stT18cL, lGot, 1
+
+    ; ==== T19 燃油加速 + 奇偶步长：常速 4/5 交替；加速 +2；泥地叠加=4 ====
+    invoke Mark, 191
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
     mov tanks[0*SIZEOF TANK].alive, 1
-    ; a) 常速一步
-    mov inputTable[12], 1
+    ; a) 常速一步 = TANK_SPEED + (gTick&1)（GameUpdate 先 inc 后移动，同值）
+    mov inputTable[0], 1
     invoke GameUpdate
-    mov inputTable[12], 0
+    mov inputTable[0], 0
+    mov eax, TANK_SPEED
+    mov ecx, gTick
+    and ecx, 1
+    add eax, ecx
+    mov lWant, eax
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 96
-    mov logVal, eax
-    invoke LogStr, offset stT19a, 21
-    invoke LogNum, logVal                ; expect 2
-    ; b) 发动燃油加速 -> 一步 3px
+    mov lGot, eax
+    invoke Chk, offset stT19a, stT19aL, lGot, lWant
+    ; b) 加速一步 = 常速 + 2
     mov tanks[0*SIZEOF TANK].skill, SK_NITRO
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate
+    invoke GameUpdate                      ; 发动加速（此 tick 无驾驶输入，不动）
     mov inputTable[20], 0
-    mov eax, tanks[0*SIZEOF TANK].x      ; 发动后位置（前进一步 = 98）
-    mov ebx, eax                         ; ebx = 步前 x（ebx 跨 invoke 保存）
-    mov inputTable[12], 1
+    mov ebx, tanks[0*SIZEOF TANK].x        ; 步前位置（ebx 跨 invoke 保存）
+    mov inputTable[0], 1
     invoke GameUpdate
-    mov inputTable[12], 0
+    mov inputTable[0], 0
+    mov eax, TANK_SPEED
+    mov ecx, gTick
+    and ecx, 1
+    add eax, ecx
+    add eax, 2
+    mov lWant, eax
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, ebx
-    mov logVal, eax
-    invoke LogStr, offset stT19b, 22
-    invoke LogNum, logVal                ; expect 3
-    ; c) 泥地叠加：当前格设为泥，再走一步应 2px（(1*3+1)/2）
-    mov tanks[0*SIZEOF TANK].x, 96       ; 重置到 col3
+    mov lGot, eax
+    invoke Chk, offset stT19b, stT19bL, lGot, lWant
+    ; c) 泥地叠加：DIRT_SPEED(2) + 加速(2) = 4 恒定（与奇偶无关）
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov mapData[13*COLS+3], TILE_DIRT
-    mov inputTable[12], 1
+    mov inputTable[0], 1
     invoke GameUpdate
-    mov inputTable[12], 0
+    mov inputTable[0], 0
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 96
-    mov logVal, eax
-    invoke LogStr, offset stT19c, 23
-    invoke LogNum, logVal                ; expect 2（泥1 + 加速叠加）
+    mov lGot, eax
+    invoke Chk, offset stT19c, stT19cL, lGot, 4
     mov mapData[13*COLS+3], TILE_EMPTY
-T19Done:
-    ; T20: 换位术 —— 发射子弹 -> 再按使用键与之换位（方向继承）
-    ; 用 UP 发射：旧版 SpawnBullet 把 vy 候选（-6）当弹索引返回的 bug
-    ; 只有 UP/DOWN 才暴露（RIGHT 碰巧返回 0 正确），此场景即回归锁
+
+    ; ==== T20 换位术：UP 发射换位弹 -> 再按与弹互换；朝向继承 fireAng ====
+    invoke Mark, 201
     call ResetTanks
-    mov ebx, 2                           ; 清 col3 rows 2..16 做向上弹道
+    mov ebx, 2                             ; 清 col3 rows 2..16 做向上弹道
 T20Clr:
     mov eax, ebx
     imul eax, eax, COLS
@@ -1756,271 +1986,276 @@ T20Clr:
     .endif
     mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].y, 416
-    mov tanks[0*SIZEOF TANK].dir, DIR_UP
+    mov tanks[0*SIZEOF TANK].dir, DIR_UP   ; 270：off=(0,-18)，弹 x 恒 104
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov tanks[0*SIZEOF TANK].alive, 1
     mov tanks[0*SIZEOF TANK].fireCd, 0
     mov tanks[0*SIZEOF TANK].skill, SK_SWAP
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                    ; 发射换位弹（占配额）
+    invoke GameUpdate                      ; 发射换位弹（绑定 swapBul）
     mov inputTable[20], 0
-    invoke AdvanceTicks, 20              ; 弹飞 ~120px（y 408 -> 288）
+    invoke AdvanceTicks, 20                ; 弹上飞约 120px
     mov inputTable[20], 1
-    invoke GameUpdate                    ; 换位
+    invoke GameUpdate                      ; 再按 -> DoSwap
     mov inputTable[20], 0
-    ; a) 坦克已瞬移到子弹处（x=96, y~282）
+    ; a) 坦克已瞬移到子弹处（子弹中心对齐：x=104-8=96）
     mov eax, tanks[0*SIZEOF TANK].y
-    .if eax < 350
-        mov eax, tanks[0*SIZEOF TANK].x
-        .if eax == 96
-            mov eax, 1
-        .else
-            mov eax, 0
-        .endif
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT20a, 21
-    invoke LogNum, logVal                ; expect 1
-    ; b) 子弹回到坦克原位附近（原位 x=96+6=102，UP 场景 x 不变）
-    mov eax, bullets[0].x
-    .if eax >= 100 && eax <= 140
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT20b, 22
-    invoke LogNum, logVal                ; expect 1
-    ; c) 坦克朝向 = 子弹方向（UP = 0）
-    mov eax, tanks[0*SIZEOF TANK].dir
-    .if eax == DIR_UP
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT20c, 17
-    invoke LogNum, logVal                ; expect 1
-    ; d) 换位后绑定解除
-    mov eax, tanks[0*SIZEOF TANK].swapBul
-    .if eax == -1
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT20d, 21
-    invoke LogNum, logVal                ; expect 1
-T20Done:
-    ; T21: 驭水术 —— 无技能被水挡；发动后行走水上；到期保护；离水失效
-    call ResetTanks
-    mov mapData[13*COLS+5], TILE_WATER   ; row13 走廊 col5/col6 设水（测后还原）
-    mov mapData[13*COLS+6], TILE_WATER
-    mov tanks[0*SIZEOF TANK].x, 96       ; col3
-    mov tanks[0*SIZEOF TANK].y, 416      ; row13
-    mov tanks[0*SIZEOF TANK].alive, 1
-    ; a) 无技能：右移 25 tick 被水挡在水前（col5 水 160..191，坦克 25px
-    ;    最深 x=135；4/5 交替步进落点不固定，断言区间+中心格非水）
-    mov inputTable[12], 1
-    invoke AdvanceTicks, 25
-    mov inputTable[12], 0
+    mov lGot, 0
+    cmp eax, 350
+    jae T20BadA
     mov eax, tanks[0*SIZEOF TANK].x
-    .if eax > 140 || eax < 120
-        mov eax, 0
-    .else
-        mov eax, tanks[0*SIZEOF TANK].x
-        add eax, TANK_SIZE/2
-        mov ecx, tanks[0*SIZEOF TANK].y
-        add ecx, TANK_SIZE/2
-        invoke TileAtPx, eax, ecx
-        .if eax == TILE_WATER
-            mov eax, 0                  ; 中心在水里 = 没被挡住
-        .else
-            mov eax, 1
-        .endif
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT21a, 25
-    invoke LogNum, logVal                ; expect 1（被挡在水边）
-    ; b) 发动驭水 -> 穿进水域（15 tick 约 67px，中心格必须在水上）
+    cmp eax, 96
+    jne T20BadA
+    mov lGot, 1
+T20BadA:
+    invoke Chk, offset stT20a, stT20aL, lGot, 1
+    ; b) 子弹回到坦克原位（96+8=104；旧网格语义 expect 不变）
+    mov eax, bullets[0].x
+    mov lGot, 0
+    cmp eax, 100
+    jb T20BadB
+    cmp eax, 140
+    ja T20BadB
+    mov lGot, 1
+T20BadB:
+    invoke Chk, offset stT20b, stT20bL, lGot, 1
+    ; c) 坦克朝向 = 子弹发射角（270，会话 19：fireAng 直接继承）
+    mov eax, tanks[0*SIZEOF TANK].dir
+    mov lGot, 0
+    cmp eax, DIR_UP
+    jne T20BadC
+    mov lGot, 1
+T20BadC:
+    invoke Chk, offset stT20c, stT20cL, lGot, 1
+    ; d) 换位后绑定解除（swapBul=-1）
+    mov eax, tanks[0*SIZEOF TANK].swapBul
+    mov lGot, 0
+    cmp eax, -1
+    jne T20BadD
+    mov lGot, 1
+T20BadD:
+    invoke Chk, offset stT20d, stT20dL, lGot, 1
+
+    ; ==== T21 驭水术：无技能被水挡；发动后可水上行走；到期保护；离水失效 ====
+    invoke Mark, 211
+    call ResetTanks
+    mov mapData[13*COLS+5], TILE_WATER     ; row13 走廊 col5/col6 设水
+    mov mapData[13*COLS+6], TILE_WATER
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    ; a) 无技能：前进被水挡（col5 起水 160..191，25px 车身最深 x=135）
+    mov inputTable[0], 1
+    invoke AdvanceTicks, 25
+    mov inputTable[0], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov lGot, 0
+    cmp eax, 120
+    jb T21BadA
+    cmp eax, 140
+    ja T21BadA
+    mov ecx, eax
+    add ecx, TANK_SIZE/2
+    mov eax, tanks[0*SIZEOF TANK].y
+    add eax, TANK_SIZE/2
+    invoke TileAtPx, ecx, eax
+    cmp eax, TILE_WATER
+    je T21BadA                             ; 中心在水里 = 没挡住
+    mov lGot, 1
+T21BadA:
+    invoke Chk, offset stT21a, stT21aL, lGot, 1
+    ; b) 发动驭水 -> 穿进水域（8 tick 约 36px，中心必须落在水格上）
     mov tanks[0*SIZEOF TANK].skill, SK_WATER
     mov prevUse[0], 0
     mov inputTable[20], 1
     invoke GameUpdate
     mov inputTable[20], 0
-    mov inputTable[12], 1
-    invoke AdvanceTicks, 15
-    mov inputTable[12], 0
+    mov inputTable[0], 1
+    invoke AdvanceTicks, 8
+    mov inputTable[0], 0
     mov eax, tanks[0*SIZEOF TANK].x
     add eax, TANK_SIZE/2
     mov ecx, tanks[0*SIZEOF TANK].y
     add ecx, TANK_SIZE/2
     invoke TileAtPx, eax, ecx
-    .if eax == TILE_WATER
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT21b, 22
-    invoke LogNum, logVal                ; expect 1（水上行走）
-    ; c) 到期保护：中心仍在水上 -> 延寿不掉效
+    mov lGot, 0
+    cmp eax, TILE_WATER
+    jne T21BadB
+    mov lGot, 1
+T21BadB:
+    invoke Chk, offset stT21b, stT21bL, lGot, 1
+    ; c) 到期保护：中心仍在水上 -> effT 归零时延寿 1 tick，不掉驭水
     mov tanks[0*SIZEOF TANK].effT, 1
     invoke AdvanceTicks, 1
     mov eax, tanks[0*SIZEOF TANK].effOn
     and eax, EFF_WATER
+    mov lGot, 0
     .if eax != 0
-        mov eax, 1
-    .else
-        mov eax, 0
+        mov lGot, 1
     .endif
-    mov logVal, eax
-    invoke LogStr, offset stT21c, 18
-    invoke LogNum, logVal                ; expect 1（水上延寿）
-    ; d) 离开水 -> 到期即失效
-    mov tanks[0*SIZEOF TANK].x, 96       ; 传回 row13 走廊（非水）
+    invoke Chk, offset stT21c, stT21cL, lGot, 1
+    ; d) 离开水（传回走廊）+ 到期 -> 驭水位清除
+    mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].y, 416
     mov tanks[0*SIZEOF TANK].effT, 1
     invoke AdvanceTicks, 1
     mov eax, tanks[0*SIZEOF TANK].effOn
     and eax, EFF_WATER
-    mov logVal, eax
-    invoke LogStr, offset stT21d, 17
-    invoke LogNum, logVal                ; expect 0（已失效）
-    mov mapData[13*COLS+5], TILE_EMPTY   ; 还原走廊
+    mov lGot, eax
+    invoke Chk, offset stT21d, stT21dL, lGot, 0
+    mov mapData[13*COLS+5], TILE_EMPTY     ; 还原走廊
     mov mapData[13*COLS+6], TILE_EMPTY
-T21Done:
-    ; T22: 定格术 —— 虚影免伤 / 虚影被打=受伤+消失 / 2 次 / 收回清技能
+
+    ; ==== T22 定格术：虚影免伤 / 打虚影=真实伤害（1HP 即死）/ 二次放影 / 收回 ====
+    invoke Mark, 221
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
     mov tanks[0*SIZEOF TANK].skill, SK_PHANTOM
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                    ; 放虚影 #1
+    invoke GameUpdate                      ; 放虚影 #1（uses 初始化 2 -> 1）
     mov inputTable[20], 0
+    ; a) 虚影就位在原地且效果激活
     mov eax, tanks[0*SIZEOF TANK].effOn
     and eax, EFF_PHANTOM
-    .if eax != 0
+    mov lGot, 0
+    .if eax == 0
+        jmp T22BadA
+    .endif
     mov eax, tanks[0*SIZEOF TANK].phantomX
-    .if eax == 96
-        mov eax, 1
-        jmp T22aOk
-    .endif
-    .endif
-    mov eax, 0
-T22aOk:
-    mov logVal, eax
-    invoke LogStr, offset stT22a, 25
-    invoke LogNum, logVal                ; expect 1（虚影就位在原地）
+    cmp eax, 96
+    jne T22BadA
+    mov lGot, 1
+T22BadA:
+    invoke Chk, offset stT22a, stT22aL, lGot, 1
     ; b) 实像自由移动 -> 与虚影分离
-    mov inputTable[12], 1
+    mov inputTable[0], 1
     invoke AdvanceTicks, 15
-    mov inputTable[12], 0
+    mov inputTable[0], 0
     mov eax, tanks[0*SIZEOF TANK].x
-    .if eax > 110
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT22b, 19
-    invoke LogNum, logVal                ; expect 1（实像远离虚影）
-    ; c) 敌弹打实像位置 -> 虚影期间免疫
-    mov edi, offset bullets
-    xor ecx, ecx
-ST22Clr:
-    mov (BULLET ptr [edi]).active, 0
-    add edi, SIZEOF BULLET
-    inc ecx
-    .if ecx < MAX_BULLETS
-        jmp ST22Clr
-    .endif
+    mov lGot, 0
+    cmp eax, 110
+    jbe T22BadB
+    mov lGot, 1
+T22BadB:
+    invoke Chk, offset stT22b, stT22bL, lGot, 1
+    ; c) 敌弹压在实像位置 -> 判定矩形=虚影，实像免伤
     mov bullets[0].active, 1
+    mov bullets[0].owner, 1
     mov eax, tanks[0*SIZEOF TANK].x
     mov bullets[0].x, eax
     mov bullets[0].y, 420
     mov bullets[0].vx, 0
     mov bullets[0].vy, 0
+    mov bullets[0].bounces, 0
+    mov bullets[0].age, 0
+    mov bullets[0].subpxX, 0
+    mov bullets[0].subpxY, 0
     invoke AdvanceTicks, 2
-    mov eax, tanks[0*SIZEOF TANK].hp
-    .if eax == TANK_HP
-        mov eax, 1
-    .else
-        mov eax, 0
-    .endif
-    mov logVal, eax
-    invoke LogStr, offset stT22c, 20
-    invoke LogNum, logVal                ; expect 1（实像免伤）
-    ; d) 弹移到虚影位置 -> 视为被击中（掉血）+ 虚影消失
+    invoke Chk, offset stT22c, stT22cL, tanks[0*SIZEOF TANK].hp, 1
+    ; d) 弹移到虚影框 -> 命中虚影 = 真实扣血（1HP 即死）+ 虚影消失
     mov bullets[0].x, 104
     invoke AdvanceTicks, 2
     mov eax, tanks[0*SIZEOF TANK].hp
-    .if eax == TANK_HP - 1
-        mov eax, tanks[0*SIZEOF TANK].effOn
-        and eax, EFF_PHANTOM
-        .if eax == 0
-            mov eax, 1
-            jmp T22dOk
-        .endif
+    mov lGot, 0
+    .if eax != 0
+        jmp T22BadD
     .endif
-    mov eax, 0
-T22dOk:
-    mov logVal, eax
-    invoke LogStr, offset stT22d, 20
-    invoke LogNum, logVal                ; expect 1（虚影被打=受伤+消失）
-    ; e) 再按 = 第二只虚影（uses 2->1->0）
-    mov prevUse[0], 0
-    mov inputTable[20], 1
-    invoke GameUpdate
-    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].alive
+    .if eax != 0
+        jmp T22BadD
+    .endif
     mov eax, tanks[0*SIZEOF TANK].effOn
     and eax, EFF_PHANTOM
     .if eax != 0
-    mov eax, tanks[0*SIZEOF TANK].phantomUses
-    .if eax == 0
-        mov eax, 1
-        jmp T22eOk
+        jmp T22BadD
     .endif
-    .endif
-    mov eax, 0
-T22eOk:
-    mov logVal, eax
-    invoke LogStr, offset stT22e, 17
-    invoke LogNum, logVal                ; expect 1（第二只虚影，次数用尽）
-    ; f) 再按收回 -> 虚影消失且技能用尽清空
+    mov lGot, 1
+T22BadD:
+    invoke Chk, offset stT22d, stT22dL, lGot, 1
+    ; e) 死亡清零 uses 后再拾取语义：发动 = 重新初始化 2 -> 1（新 2 次虚影）
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].skill, SK_PHANTOM
     mov prevUse[0], 0
     mov inputTable[20], 1
     invoke GameUpdate
     mov inputTable[20], 0
     mov eax, tanks[0*SIZEOF TANK].effOn
     and eax, EFF_PHANTOM
+    mov lGot, 0
     .if eax == 0
+        jmp T22BadE
+    .endif
+    mov eax, tanks[0*SIZEOF TANK].phantomUses
+    cmp eax, 1
+    jne T22BadE
     mov eax, tanks[0*SIZEOF TANK].skill
-    .if eax == SKILL_NONE
-        mov eax, 1
-        jmp T22fOk
+    cmp eax, SK_PHANTOM
+    jne T22BadE
+    mov lGot, 1
+T22BadE:
+    invoke Chk, offset stT22e, stT22eL, lGot, 1
+    ; f) 收回(uses=1 保 skill) -> 再发动(1->0) -> 再收回(uses==0 清 skill)
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                      ; 收回 #1
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].phantomUses
+    cmp eax, 1
+    jne T22BadF
+    mov eax, tanks[0*SIZEOF TANK].skill
+    cmp eax, SK_PHANTOM
+    jne T22BadF
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                      ; 发动第二只：uses 1 -> 0
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_PHANTOM
+    .if eax == 0
+        jmp T22BadF
     .endif
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                      ; 再收回：uses==0 -> skill 清空
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_PHANTOM
+    mov lGot, 0
+    .if eax != 0
+        jmp T22BadF
     .endif
-    mov eax, 0
-T22fOk:
-    mov logVal, eax
-    invoke LogStr, offset stT22f, 19
-    invoke LogNum, logVal                ; expect 1（收回+清空）
-T22Done:
-    ; T23: 多命制 —— 3 命击杀后 1.5s 原地重生（满血+保护），命尽才淘汰
+    mov eax, tanks[0*SIZEOF TANK].skill
+    cmp eax, SKILL_NONE
+    jne T22BadF
+    mov lGot, 1
+T22BadF:
+    invoke Chk, offset stT22f, stT22fL, lGot, 1
+
+    ; ==== T23 多命制：3 命击杀 -> 扣 1 命，1.5s 重生满血 + 保护剩余 120 ====
+    invoke Mark, 231
     mov testLives, 3
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
-    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
     mov tanks[1*SIZEOF TANK].x, 160
     mov tanks[1*SIZEOF TANK].y, 416
-    mov tanks[1*SIZEOF TANK].hp, TANK_HP
-    mov tanks[1*SIZEOF TANK].alive, 1
     mov inputTable[16], 1
     xor esi, esi
 T23Kill:
@@ -2034,16 +2269,362 @@ T23Kill:
     jmp T23Kill
 T23KillDone:
     mov inputTable[16], 0
-    invoke LogStr, offset stT23a, 25
-    invoke LogNum, tanks[1*SIZEOF TANK].lives      ; expect 2（扣一命）
-    invoke AdvanceTicks, 120                       ; 1.5s 重生 + 30 tick 保护
-    invoke LogStr, offset stT23b, 27
-    invoke LogNum, tanks[1*SIZEOF TANK].alive      ; expect 1（已重生）
-    invoke LogStr, offset stT23c, 24
-    invoke LogNum, tanks[1*SIZEOF TANK].hp         ; expect 3（满血）
-    invoke LogStr, offset stT23d, 27
-    invoke LogNum, tanks[1*SIZEOF TANK].protT      ; expect 120（保护剩余）
-    mov testLives, 1                               ; 恢复（保险）
+    invoke Chk, offset stT23a, stT23aL, tanks[1*SIZEOF TANK].lives, 2
+    invoke AdvanceTicks, 120               ; 90 tick 重生 + 30 tick 已减保护
+    invoke Chk, offset stT23b, stT23bL, tanks[1*SIZEOF TANK].alive, 1
+    invoke Chk, offset stT23c, stT23cL, tanks[1*SIZEOF TANK].hp, TANK_HP
+    invoke Chk, offset stT23d, stT23dL, tanks[1*SIZEOF TANK].protT, 120
+    mov testLives, 1                       ; 恢复单命（保险）
+
+    ; ==== T24 角度回绕（2026 回滚版致命 bug2 回归锁）：0-4=356 / 359+4=3 ====
+    invoke Mark, 241
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov inputTable[8], 1                   ; 左键（逆时针）
+    invoke GameUpdate
+    mov inputTable[8], 0
+    mov eax, tanks[0*SIZEOF TANK].dir
+    mov lGot, 0
+    cmp eax, 356
+    jne T24Bad
+    mov tanks[0*SIZEOF TANK].dir, 359
+    mov inputTable[12], 1                  ; 右键（顺时针）
+    invoke GameUpdate
+    mov inputTable[12], 0
+    mov eax, tanks[0*SIZEOF TANK].dir
+    cmp eax, 3
+    jne T24Bad
+    mov lGot, 1
+T24Bad:
+    invoke Chk, offset stT24, stT24L, lGot, 1
+
+    ; ==== 清空大 box（cols2..13 x rows2..12）+ col14 竖钢墙（rows2..13），
+    ;      供 T25/T26/T27/T29 的斜向弹道使用（收尾统一从 saveMap 还原） ====
+    mov ebx, 2
+STBoxR:
+    mov ecx, 2
+STBoxC:
+    mov eax, ebx
+    imul eax, eax, COLS
+    add eax, ecx
+    mov mapData[eax], TILE_EMPTY
+    inc ecx
+    cmp ecx, 14
+    jb STBoxC
+    inc ebx
+    cmp ebx, 13
+    jb STBoxR
+    mov ebx, 2
+STWallR:
+    mov eax, ebx
+    imul eax, eax, COLS
+    add eax, 14
+    mov mapData[eax], TILE_STEEL
+    inc ebx
+    cmp ebx, 14
+    jb STWallR
+
+    ; ==== T25 dir 纯度（回滚版致命 bug1 回归锁）：45 度前进 10 tick，
+    ;      dir 仍 =45 且两轴位移均落在 28..36（0.707 分量） ====
+    invoke Mark, 251
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 104
+    mov tanks[0*SIZEOF TANK].y, 104
+    mov tanks[0*SIZEOF TANK].dir, 45
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov lX0, 104
+    mov lY0, 104
+    invoke SetDirInput, 0
+    invoke AdvanceTicks, 10
+    invoke SetDirInput, 99
+    mov lGot, 0
+    mov eax, tanks[0*SIZEOF TANK].dir
+    cmp eax, 45
+    jne T25Bad
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, lX0
+    cmp eax, 28
+    jb T25Bad
+    cmp eax, 36
+    ja T25Bad
+    mov eax, tanks[0*SIZEOF TANK].y
+    sub eax, lY0
+    cmp eax, 28
+    jb T25Bad
+    cmp eax, 36
+    ja T25Bad
+    mov lGot, 1
+T25Bad:
+    invoke Chk, offset stT25, stT25L, lGot, 1
+
+    ; ==== T26 MuzzlePoint 炮口几何（Chebyshev 恒距 18px）：
+    ;      0/90/180/270/45 五采样；用槽 3 尸体坦克（alive=0，逻辑不触碰） ====
+    invoke Mark, 261
+    mov edi, offset tanks
+    add edi, 3*SIZEOF TANK
+    mov (TANK ptr [edi]).alive, 0
+    mov (TANK ptr [edi]).x, 100
+    mov (TANK ptr [edi]).y, 100
+    mov lPass, 0
+    mov (TANK ptr [edi]).dir, 0
+    invoke MuzzlePoint, edi
+    cmp eax, 18
+    jne ST26A
+    cmp edx, 0
+    jne ST26A
+    inc lPass
+ST26A:
+    mov (TANK ptr [edi]).dir, 90
+    invoke MuzzlePoint, edi
+    cmp eax, 0
+    jne ST26B
+    cmp edx, 18
+    jne ST26B
+    inc lPass
+ST26B:
+    mov (TANK ptr [edi]).dir, 180
+    invoke MuzzlePoint, edi
+    cmp eax, -18
+    jne ST26C
+    cmp edx, 0
+    jne ST26C
+    inc lPass
+ST26C:
+    mov (TANK ptr [edi]).dir, 270
+    invoke MuzzlePoint, edi
+    cmp eax, 0
+    jne ST26D
+    cmp edx, -18
+    jne ST26D
+    inc lPass
+ST26D:
+    mov (TANK ptr [edi]).dir, 45
+    invoke MuzzlePoint, edi
+    cmp eax, 18
+    jne ST26E
+    cmp edx, 18
+    jne ST26E
+    inc lPass
+ST26E:
+    invoke Chk, offset stT26, stT26L, lPass, 5
+
+    ; ==== T27 45 度弹道积分（回滚版 45 度提速失效回归锁）：
+    ;      16.16 定点 -> 60 tick 精确 254px/轴（|v| 任意角恒 6） ====
+    invoke Mark, 271
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 64
+    mov tanks[0*SIZEOF TANK].y, 64
+    mov tanks[0*SIZEOF TANK].dir, 45
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].fireCd, 0
+    mov inputTable[16], 1
+    invoke GameUpdate                      ; 发射 45 度弹（弹起点 90,90）
+    mov inputTable[16], 0
+    ; 找到这颗弹并记录初始位置/速度
+    mov esi, offset bullets
+    xor ecx, ecx
+ST27Find:
+    cmp ecx, MAX_BULLETS
+    jae ST27NotFound
+    cmp (BULLET ptr [esi]).active, 0
+    je ST27Next
+    cmp (BULLET ptr [esi]).owner, 0
+    jne ST27Next
+    mov stBulIdx, ecx
+    mov eax, (BULLET ptr [esi]).x
+    mov stBulX0, eax
+    mov eax, (BULLET ptr [esi]).y
+    mov stBulY0, eax
+    mov eax, (BULLET ptr [esi]).vx
+    mov stVx0, eax
+    mov eax, (BULLET ptr [esi]).vy
+    mov stVy0, eax
+    jmp ST27Found
+ST27Next:
+    add esi, SIZEOF BULLET
+    inc ecx
+    jmp ST27Find
+ST27NotFound:
+    mov lGot, 0
+    jmp ST27Log
+ST27Found:
+    invoke AdvanceTicks, 60
+    mov eax, stBulIdx
+    imul eax, eax, SIZEOF BULLET
+    add eax, offset bullets
+    mov esi, eax
+    mov lGot, 0
+    mov eax, (BULLET ptr [esi]).x
+    sub eax, stBulX0
+    mov lTmp, eax
+    cmp eax, 250
+    jb ST27Bad
+    cmp eax, 257
+    ja ST27Bad
+    mov eax, (BULLET ptr [esi]).y
+    sub eax, stBulY0
+    cmp eax, 250
+    jb ST27Bad
+    cmp eax, 257
+    ja ST27Bad
+    mov lGot, 1
+ST27Bad:
+ST27Log:
+    invoke Chk, offset stT27, stT27L, lGot, 1
+
+    ; ==== T28 网络 tdir 量化往返：13 个采样角 q=(a*256)/360 -> 还原误差 <2 ====
+    invoke Mark, 281
+    mov lPass, 0
+    mov lIdx, 0
+ST28Loop:
+    mov eax, lIdx
+    cmp eax, 13
+    jge ST28Done
+    mov esi, offset stAngTbl
+    mov eax, [esi+eax*4]
+    mov lTmp, eax                          ; a
+    imul eax, eax, 256
+    mov ecx, 360
+    xor edx, edx
+    div ecx                                ; q = a*256/360
+    imul eax, eax, 360
+    add eax, 128
+    shr eax, 8                               ; 还原角
+    sub eax, lTmp
+    cmp eax, 0
+    jge ST28Abs
+    neg eax
+ST28Abs:
+    cmp eax, 2
+    jae ST28Next
+    inc lPass
+ST28Next:
+    mov eax, lIdx
+    inc eax
+    mov lIdx, eax
+    jmp ST28Loop
+ST28Done:
+    invoke Chk, offset stT28, stT28L, lPass, 13
+
+    ; ==== T29 斜弹撞墙反弹：|vx|/|vy| 取反保模（16.16 定点反弹回归锁） ====
+    invoke Mark, 291
+    mov tanks[0*SIZEOF TANK].alive, 0      ; 阵亡坦克不参与命中，防回流弹干扰
+    invoke AdvanceTicks, 120
+    mov eax, stBulIdx
+    imul eax, eax, SIZEOF BULLET
+    add eax, offset bullets
+    mov esi, eax
+    mov lGot, 0
+    cmp (BULLET ptr [esi]).active, 0
+    je ST29Log
+    mov eax, (BULLET ptr [esi]).bounces
+    cmp eax, 1
+    jb ST29Log
+    mov eax, (BULLET ptr [esi]).vx
+    cmp eax, 0
+    jge ST29AX
+    neg eax
+ST29AX:
+    mov ecx, stVx0
+    cmp ecx, 0
+    jge ST29AY
+    neg ecx
+ST29AY:
+    cmp eax, ecx
+    jne ST29Log
+    mov eax, (BULLET ptr [esi]).vy
+    cmp eax, 0
+    jge ST29BX
+    neg eax
+ST29BX:
+    mov ecx, stVy0
+    cmp ecx, 0
+    jge ST29BY
+    neg ecx
+ST29BY:
+    cmp eax, ecx
+    jne ST29Log
+    mov lGot, 1
+ST29Log:
+    invoke Chk, offset stT29, stT29L, lGot, 1
+
+    ; ==== T30 滑行中转向：轨迹冻结在 sdir，不随 dir 改变（会话 19 新语义） ====
+    invoke Mark, 301
+    call ResetTanks
+    mov mapData[13*COLS+20], TILE_ICE
+    mov tanks[0*SIZEOF TANK].x, 640
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    invoke SetDirInput, 0
+    invoke GameUpdate                      ; 冰上起步 1 tick -> 触发滑行
+    invoke SetDirInput, 99
+    mov inputTable[12], 1                  ; 滑行中持续右转
+    invoke GameUpdate
+    invoke GameUpdate
+    mov inputTable[12], 0
+    mov lGot, 0
+    mov eax, tanks[0*SIZEOF TANK].dir
+    cmp eax, 8
+    jne T30Bad
+    mov eax, tanks[0*SIZEOF TANK].sdir
+    cmp eax, 0
+    jne T30Bad                             ; 滑行向量必须仍是出冰瞬间的 0
+    mov eax, tanks[0*SIZEOF TANK].slide
+    cmp eax, 6                             ; 仍在滑行（冰上刷新 6..15）
+    jb T30Bad
+    mov lGot, 1
+T30Bad:
+    invoke Chk, offset stT30, stT30L, lGot, 1
+
+    ; ==== T31 三角表运行时抽查：正交角必须精确（表错全链路皆错） ====
+    invoke Mark, 311
+    mov lPass, 0
+    mov eax, cosTBL[0]
+    cmp eax, 1024
+    jne ST31A
+    inc lPass
+ST31A:
+    mov eax, sinTBL[90*4]
+    cmp eax, 1024
+    jne ST31B
+    inc lPass
+ST31B:
+    mov eax, cosTBL[180*4]
+    cmp eax, -1024
+    jne ST31C
+    inc lPass
+ST31C:
+    mov eax, sinTBL[0]
+    test eax, eax
+    jnz ST31D
+    inc lPass
+ST31D:
+    invoke Chk, offset stT31, stT31L, lPass, 4
+
+    ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
+    invoke Mark, 320
+    cld
+    mov esi, offset saveMap
+    mov edi, offset mapData
+    mov ecx, COLS*ROWS
+    rep movsb
+    mov ecx, MAX_BULLETS*(SIZEOF BULLET)/4
+    mov edi, offset bullets
+    xor eax, eax
+    rep stosd
+    invoke LogStr, offset stFails, stFailsL
+    invoke LogNum, stFailN
+    invoke LogStr, offset stDone, stDoneL
     call CloseLog
     ret
 SelfTestRun endp
@@ -2596,114 +3177,149 @@ SI2_Next:
 SpawnIce2x2 endp
 
 ; ------------------------------------------------------------
-; SegmentDamage —— 折线路段（轴对齐）上的所有存活坦克受击
+; SegmentDamage —— 折线段上所有存活坦克受击（每辆至多一次）
+; 会话 19：旧版只认轴对齐段（x0==x1 判垂直、否则当水平），斜段静默错位。
+; 现改主轴逐像素采样（n=max(|dx|,|dy|)，16.16 步进，含两端点）+ 点入
+; 坦克 AABB 判定；轴对齐段同样正确（端点全覆盖）。
 ; ------------------------------------------------------------
 SegmentDamage proc uses ebx esi edi pXs: dword, pYs: dword, nPts: dword
-    local x0:dword, x1:dword, y0:dword, y1:dword
-    local ymin:dword, ymax:dword, xmin:dword, xmax:dword
-    local tright:dword, tbottom:dword
+    local x0:dword, y0:dword, segDx:dword, segDy:dword, sampN:dword
+    local stepX:dword, stepY:dword, accX:dword, accY:dword
+    local sampI:dword, px:dword, py:dword, hitmask:dword
     .if nPts < 2
         ret
     .endif
-    xor esi, esi                     ; 坦克槽位
+    mov hitmask, 0
+    xor ebx, ebx                     ; 折线段起点下标
+SD_Seg:
+    mov eax, nPts
+    dec eax
+    .if ebx >= eax
+        jmp SD_Done
+    .endif
+    mov ecx, pXs
+    mov eax, [ecx+ebx*4]
+    mov edx, [ecx+ebx*4+4]
+    sub edx, eax                     ; segDx = x[i+1]-x[i]（有符号）
+    mov x0, eax
+    mov segDx, edx
+    mov ecx, pYs
+    mov eax, [ecx+ebx*4]
+    mov edx, [ecx+ebx*4+4]
+    sub edx, eax
+    mov y0, eax
+    mov segDy, edx
+    ; sampN = max(|dx|,|dy|)，0 段取 1（防除零）
+    mov eax, segDx
+    test eax, eax
+    jns SD_AbsDX
+    neg eax
+SD_AbsDX:
+    mov ecx, segDy
+    test ecx, ecx
+    jns SD_AbsDY
+    neg ecx
+SD_AbsDY:
+    cmp eax, ecx
+    jae SD_NOK
+    mov eax, ecx
+SD_NOK:
+    .if eax == 0
+        mov eax, 1
+    .endif
+    mov sampN, eax
+    ; stepX/Y = (d << 16) / n（idiv 有符号截零，两端点 i=0/n 精确命中）
+    mov eax, segDx
+    shl eax, 16
+    cdq
+    idiv sampN
+    mov stepX, eax
+    mov eax, segDy
+    shl eax, 16
+    cdq
+    idiv sampN
+    mov stepY, eax
+    mov accX, 0
+    mov accY, 0
+    mov sampI, 0
+SD_Sample:
+    ; 当前采样点：floor(acc/65536) = (acc - 低16位) 后 sar16（负值借位正确）
+    mov eax, accX
+    mov edx, eax
+    and edx, 0FFFFh
+    sub eax, edx
+    sar eax, 16
+    add eax, x0
+    mov px, eax
+    mov eax, accY
+    mov edx, eax
+    and edx, 0FFFFh
+    sub eax, edx
+    sar eax, 16
+    add eax, y0
+    mov py, eax
+    ; 4 坦克点入盒判定 [tx,tx+25) x [ty,ty+25)
+    xor esi, esi
 SD_Tank:
     .if esi >= MAX_PLAYERS
-        ret
+        jmp SD_NextSample
     .endif
+    mov eax, hitmask
+    mov ecx, esi                     ; sil 在 .386 不存在：1<<slot 用 cl 变移位
+    mov eax, 1
+    shl eax, cl
+    test eax, hitmask
+    jnz SD_ThNext                    ; 本段调用内已伤过，不重复
     mov eax, esi
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
     mov edi, eax
     cmp (TANK ptr [edi]).alive, 0
-    je SD_Next
-    xor ebx, ebx                     ; 线段起点下标
-SD_Seg:
-    mov eax, nPts
-    dec eax
-    .if ebx >= eax
-        jmp SD_Next
-    .endif
-    mov ecx, pXs
-    mov eax, [ecx+ebx*4]
-    mov x0, eax
-    mov eax, [ecx+ebx*4+4]
-    mov x1, eax
-    mov ecx, pYs
-    mov eax, [ecx+ebx*4]
-    mov y0, eax
-    mov eax, [ecx+ebx*4+4]
-    mov y1, eax
-    mov eax, y0
-    mov ecx, y1
-    .if ecx < eax
-        mov ymin, ecx
-    .else
-        mov ymin, eax
-    .endif
-    .if ecx > eax
-        mov ymax, ecx
-    .else
-        mov ymax, eax
-    .endif
-    mov eax, x0
-    mov ecx, x1
-    .if ecx < eax
-        mov xmin, ecx
-    .else
-        mov xmin, eax
-    .endif
-    .if ecx > eax
-        mov xmax, ecx
-    .else
-        mov xmax, eax
-    .endif
-    ; 坦克矩形 [tx,tx+TS) x [ty,ty+TS)
-    mov eax, (TANK ptr [edi]).x          ; tx
-    mov ecx, (TANK ptr [edi]).y          ; ty
-    mov tright, eax
-    add tright, TANK_SIZE
-    mov tbottom, ecx
-    add tbottom, TANK_SIZE
-    ; 垂直段：x0==x1（注意 .if 里 reg+const 是内存寻址，边界先算好）
-    mov edx, x0
-    .if edx == x1
-        .if edx >= eax && edx < tright
-            mov edx, ymin
-            .if edx < tbottom
-                mov edx, ymax
-                .if edx > ecx
-                    push esi
-                    push edi
-                    invoke DamageTank, esi
-                    pop edi
-                    pop esi
-                    jmp SD_Next          ; 每辆坦克只伤一次
-                .endif
-            .endif
-        .endif
-    .else
-        ; 水平段：y0==y1
-        mov edx, y0
-        .if edx >= ecx && edx < tbottom
-            mov edx, xmin
-            .if edx < tright
-                mov edx, xmax
-                .if edx > eax
-                    push esi
-                    push edi
-                    invoke DamageTank, esi
-                    pop edi
-                    pop esi
-                    jmp SD_Next
-                .endif
-            .endif
-        .endif
-    .endif
-    inc ebx
-    jmp SD_Seg
-SD_Next:
+    je SD_ThNext
+    mov eax, px
+    cmp eax, (TANK ptr [edi]).x
+    jl SD_ThNext
+    mov ecx, (TANK ptr [edi]).x
+    add ecx, TANK_SIZE
+    cmp eax, ecx
+    jge SD_ThNext
+    mov eax, py
+    cmp eax, (TANK ptr [edi]).y
+    jl SD_ThNext
+    mov ecx, (TANK ptr [edi]).y
+    add ecx, TANK_SIZE
+    cmp eax, ecx
+    jge SD_ThNext
+    ; 命中：置掩码 + 统一伤害入口（冰盾可挡）
+    mov eax, 1
+    mov ecx, esi
+    shl eax, cl
+    or eax, hitmask
+    mov hitmask, eax
+    push esi
+    push edi
+    invoke DamageTank, esi
+    pop edi
+    pop esi
+SD_ThNext:
     inc esi
     jmp SD_Tank
+SD_NextSample:
+    mov eax, accX
+    add eax, stepX
+    mov accX, eax
+    mov eax, accY
+    add eax, stepY
+    mov accY, eax
+    mov eax, sampI
+    inc eax
+    mov sampI, eax
+    cmp eax, sampN
+    jle SD_Sample
+    inc ebx
+    jmp SD_Seg
+SD_Done:
+    ret
 SegmentDamage endp
 
 ; ------------------------------------------------------------
@@ -2715,6 +3331,7 @@ SegmentDamage endp
 SimReflectPath proc uses ebx esi edi slotIdx: dword, pXs: dword, pYs: dword, pHits: dword
     local x:dword, y:dword, vx:dword, vy:dword
     local bn:dword, steps:dword, pc:dword, ptank:dword, sgn:dword
+    local subpxX:dword, subpxY:dword
     mov eax, slotIdx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
@@ -2726,40 +3343,30 @@ SimReflectPath proc uses ebx esi edi slotIdx: dword, pXs: dword, pYs: dword, pHi
         mov dword ptr [edi+8], 0
         mov dword ptr [edi+12], 0
     .endif
-    ; 起点 = 炮口（与 SpawnBullet 公式一致）
-    mov ecx, ptank
-    mov eax, (TANK ptr [ecx]).dir
-    mov edx, (TANK ptr [ecx]).x
-    mov ebx, (TANK ptr [ecx]).y
-    .if eax == DIR_UP
-        mov x, edx
-        add x, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov y, ebx
-        sub y, BULLET_SIZE_PX
-        mov vx, 0
-        mov vy, -BULLET_SPEED
-    .elseif eax == DIR_DOWN
-        mov x, edx
-        add x, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov y, ebx
-        add y, TANK_SIZE
-        mov vx, 0
-        mov vy, BULLET_SPEED
-    .elseif eax == DIR_LEFT
-        mov x, edx
-        sub x, BULLET_SIZE_PX
-        mov y, ebx
-        add y, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov vx, -BULLET_SPEED
-        mov vy, 0
-    .else
-        mov x, edx
-        add x, TANK_SIZE
-        mov y, ebx
-        add y, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov vx, BULLET_SPEED
-        mov vy, 0
-    .endif
+    ; 起点 = 炮口（与 SpawnBullet 同式 MuzzlePoint；旧 4 分支种子轴锁，
+    ; 斜角预览会错位。速度 = 16.16 定点，与实弹同步进同进位）
+    invoke MuzzlePoint, ptank        ; eax=offx edx=offy（ebx/ecx 受保护）
+    mov ebx, eax
+    mov ecx, edx
+    mov esi, ptank                   ; 必须经寄存器解引用：局部槽 [ptank] 里装的是指针值，
+    mov eax, (TANK ptr [esi]).x      ; 直接 (TANK ptr [ptank]).x 只会算出成员地址而不读值
+    add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
+    add eax, ebx
+    mov x, eax
+    mov eax, (TANK ptr [esi]).y
+    add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
+    add eax, ecx
+    mov y, eax
+    mov eax, (TANK ptr [esi]).dir
+    mov ebx, cosTBL[eax*4]
+    imul ebx, ebx, BULLET_SPEED*FIX_TBL64
+    mov vx, ebx
+    mov ebx, sinTBL[eax*4]
+    imul ebx, ebx, BULLET_SPEED*FIX_TBL64
+    mov vy, ebx
+    mov ebx, 0
+    mov subpxX, ebx
+    mov subpxY, ebx
     ; 第 0 点 = 炮口
     mov eax, pXs
     mov ecx, x
@@ -2788,9 +3395,16 @@ SRP_Step:
 SRP_XNeg:
         mov sgn, -1
 SRP_XSgnDone:
-        mov eax, x
-        add eax, sgn
-        mov x, eax
+        ; 进位步进（与 BulletTick 完全同构 -> 预览与实弹逐 tick 一致）
+        mov eax, subpxX
+        add eax, vx
+        mov edx, eax
+        sar edx, 16
+        and eax, 0FFFFh
+        mov subpxX, eax
+        mov ecx, x
+        add ecx, edx
+        mov x, ecx
         invoke WallRectsHit, x, y, BULLET_SIZE_PX, BULLET_SIZE_PX
         .if eax != 0
             ; 逐像素回退到弹体完全出墙再反弹（出膛嵌墙时与真实弹道一致）
@@ -2841,9 +3455,16 @@ SRP_XBackDone:
 SRP_YNeg:
         mov sgn, -1
 SRP_YSgnDone:
-        mov eax, y
-        add eax, sgn
-        mov y, eax
+        ; 进位步进（同 X 轴）
+        mov eax, subpxY
+        add eax, vy
+        mov edx, eax
+        sar edx, 16
+        and eax, 0FFFFh
+        mov subpxY, eax
+        mov ecx, y
+        add ecx, edx
+        mov y, ecx
         invoke WallRectsHit, x, y, BULLET_SIZE_PX, BULLET_SIZE_PX
         .if eax != 0
             ; 逐像素回退到弹体完全出墙再反弹（同 X 轴）
@@ -2933,59 +3554,119 @@ SRP_Done:
 SimReflectPath endp
 
 ; ------------------------------------------------------------
-; MuzzleEdge —— 直线激光终点（炮口沿朝向到地图边界）
-; 写入 laserX/Y[0..1]，laserN=2
+; MuzzleEdge —— 直线激光终点（炮口中心沿航向角到地图边界）
+; 会话 19：旧 4 分支轴锁版作废，改参数化射线求交（2 次除法，无步进）。
+; 写入 laserX/Y[0..1]（[0]=炮口中心，[4]=边界交点），laserN=2
 ; ------------------------------------------------------------
 MuzzleEdge proc uses ebx ecx edx slotIdx: dword
+    local mx:dword, my:dword, cV:dword, sV:dword, tXv:dword, tYv:dword
+    local tM:dword, eX:dword, eY:dword
     mov eax, slotIdx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
-    mov ecx, (TANK ptr [eax]).dir
-    mov edx, (TANK ptr [eax]).x
-    mov ebx, (TANK ptr [eax]).y
-    .if ecx == DIR_UP
-        mov eax, edx
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov laserX[0], eax
-        mov laserX[4], eax               ; 垂直段 x 恒定
-        mov eax, ebx
-        sub eax, BULLET_SIZE_PX          ; 炮口在坦克上缘之外
-        mov laserY[0], eax
-        mov laserY[4], 0
-    .elseif ecx == DIR_DOWN
-        mov eax, edx
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov laserX[0], eax
-        mov eax, ebx
-        add eax, TANK_SIZE
-        mov laserY[0], eax
-        mov eax, edx
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov laserX[4], eax
-        mov laserY[4], MAP_H
-    .elseif ecx == DIR_LEFT
-        mov eax, edx
-        sub eax, BULLET_SIZE_PX
-        mov laserX[0], eax
-        mov eax, ebx
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov laserY[0], eax
-        mov laserX[4], 0
-        mov eax, ebx
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov laserY[4], eax
-    .else
-        mov eax, edx
-        add eax, TANK_SIZE
-        mov laserX[0], eax
-        mov eax, ebx
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov laserY[0], eax
-        mov laserX[4], MAP_W
-        mov eax, ebx
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov laserY[4], eax
-    .endif
+    mov ebx, eax
+    invoke MuzzlePoint, ebx          ; eax=offx edx=offy（ebx/ecx 受保护）
+    mov ecx, (TANK ptr [ebx]).x
+    add ecx, eax
+    add ecx, TANK_SIZE/2             ; 弹左上 +4 = 中心：x+8+off+4
+    mov mx, ecx
+    mov ecx, (TANK ptr [ebx]).y
+    add ecx, edx
+    add ecx, TANK_SIZE/2
+    mov my, ecx
+    ; 起点钳进地图矩形（坦克贴界时炮口中心会出界几 px，参数会负）
+    mov eax, mx
+    test eax, eax
+    jns ME_MxOK
+    xor eax, eax
+ME_MxOK:
+    cmp eax, MAP_W
+    jbe ME_MxOK2
+    mov eax, MAP_W
+ME_MxOK2:
+    mov mx, eax
+    mov eax, my
+    test eax, eax
+    jns ME_MyOK
+    xor eax, eax
+ME_MyOK:
+    cmp eax, MAP_H
+    jbe ME_MyOK2
+    mov eax, MAP_H
+ME_MyOK2:
+    mov my, eax
+    ; 单位向量（x1024）
+    mov eax, (TANK ptr [ebx]).dir
+    mov ecx, cosTBL[eax*4]
+    mov cV, ecx
+    mov edx, sinTBL[eax*4]
+    mov sV, edx
+    ; tXv = 到左右边界参数（1024 单位/px）；轴平行取大值不会被 min 选中
+    mov tXv, 0FFFFFFFEh
+    test ecx, ecx
+    jz ME_NoX
+    jns ME_XPos
+    neg ecx                          ; c<0：撞左界，分母取 |c|
+    mov eax, mx
+    imul eax, eax, 1024
+    xor edx, edx
+    div ecx
+    mov tXv, eax
+    jmp ME_NoX
+ME_XPos:
+    mov eax, MAP_W
+    sub eax, mx
+    imul eax, eax, 1024
+    xor edx, edx
+    div ecx
+    mov tXv, eax
+ME_NoX:
+    ; tYv（ecx 已被破坏，从 sV 重载）
+    mov tYv, 0FFFFFFFEh
+    mov ecx, sV
+    test ecx, ecx
+    jz ME_NoY
+    jns ME_YPos
+    neg ecx
+    mov eax, my
+    imul eax, eax, 1024
+    xor edx, edx
+    div ecx
+    mov tYv, eax
+    jmp ME_NoY
+ME_YPos:
+    mov eax, MAP_H
+    sub eax, my
+    imul eax, eax, 1024
+    xor edx, edx
+    div ecx
+    mov tYv, eax
+ME_NoY:
+    ; tM = min(tXv, tYv)：至少一轴不平行 -> 有限（<=~3000），乘积不溢出
+    mov eax, tXv
+    cmp eax, tYv
+    jbe ME_MinOK
+    mov eax, tYv
+ME_MinOK:
+    mov tM, eax
+    ; 终点 = 起点 + 单位向量 x t >> 10（cV/sV 有符号 -> imul + sar 下取整）
+    imul eax, cV
+    sar eax, 10
+    add eax, mx
+    mov eX, eax
+    mov eax, tM
+    imul eax, sV
+    sar eax, 10
+    add eax, my
+    mov eY, eax
+    mov eax, mx
+    mov laserX[0], eax
+    mov eax, my
+    mov laserY[0], eax
+    mov eax, eX
+    mov laserX[4], eax
+    mov eax, eY
+    mov laserY[4], eax
     mov laserN, 2
     ret
 MuzzleEdge endp
@@ -3103,7 +3784,7 @@ DoSwap proc uses ebx esi edi slotIdx: dword
         ret
     .endif
     mov edi, eax
-    shl eax, 5
+    imul eax, eax, SIZEOF BULLET     ; 会话 19：BULLET 32->44B，shl 5 步长作废
     add eax, offset bullets
     mov esi, eax                     ; esi = &bullets[bi]
     cmp (BULLET ptr [esi]).active, 0
@@ -3143,7 +3824,7 @@ DS_GiveUp:
     .endif
     ; TankBlocked 破坏了 esi（只保护 ebx）-> 重新装载子弹指针
     mov eax, edi
-    shl eax, 5
+    imul eax, eax, SIZEOF BULLET
     add eax, offset bullets
     mov esi, eax
     mov ecx, ptank
@@ -3155,25 +3836,13 @@ DS_GiveUp:
     mov (TANK ptr [ecx]).x, eax
     mov eax, ny
     mov (TANK ptr [ecx]).y, eax
-    ; 坦克朝向 = 子弹方向（vx/vy 可为负：勿用 .if > 0，MASM 无符号恒真）
-    mov eax, (BULLET ptr [esi]).vx
-    test eax, eax
-    jz DS_ChkVy
-    js DS_VxNeg
-    mov (TANK ptr [ecx]).dir, DIR_RIGHT
-    jmp DS_DirDone
-DS_VxNeg:
-    mov (TANK ptr [ecx]).dir, DIR_LEFT
-    jmp DS_DirDone
-DS_ChkVy:
-    mov eax, (BULLET ptr [esi]).vy
-    test eax, eax
-    js DS_VyNeg
-    mov (TANK ptr [ecx]).dir, DIR_DOWN
-    jmp DS_DirDone
-DS_VyNeg:
-    mov (TANK ptr [ecx]).dir, DIR_UP
-DS_DirDone:
+    ; 坦克朝向 = 子弹发射角（会话 19：直接继承 fireAng；旧版从 vx/vy 符号
+    ; 反推 4 方向，斜弹换位会静默把车拧成朝右）
+    mov eax, (BULLET ptr [esi]).fireAng
+    mov (TANK ptr [ecx]).dir, eax
+    mov edx, 0
+    mov (TANK ptr [ecx]).subpxX, edx
+    mov (TANK ptr [ecx]).subpxY, edx
     ; 子弹回到坦克原位（速度不变 = 方向与原来相同）
     mov eax, oldx
     add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
@@ -3454,54 +4123,31 @@ FindSlot:
 
 SlotFound:
     mov eax, ecx
-    mov bulIdx, eax                 ; 先存槽索引（ecx 马上被 vy 候选占用）
-    ; 速度向量由朝向决定（vx/vy 只取 0 / ±BULLET_SPEED）
-    mov eax, (TANK ptr [ebx]).dir
-    xor edx, edx                     ; vx 候选
-    xor ecx, ecx                     ; vy 候选
-    .if eax == DIR_UP
-        mov ecx, -BULLET_SPEED
-    .elseif eax == DIR_RIGHT
-        mov edx, BULLET_SPEED
-    .elseif eax == DIR_DOWN
-        mov ecx, BULLET_SPEED
-    .else
-        mov edx, -BULLET_SPEED
-    .endif
-    mov (BULLET ptr [esi]).vx, edx
-    mov (BULLET ptr [esi]).vy, ecx
-    ; 位置：炮口（坦克边缘之外 8px = 炮管尖端）—— 否则开启自伤后
-    ; 子弹出膛即命中自己
-    mov eax, (TANK ptr [ebx]).dir
-    .if eax == DIR_UP
-        mov eax, (TANK ptr [ebx]).x
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        sub eax, BULLET_SIZE_PX
-        mov (BULLET ptr [esi]).y, eax
-    .elseif eax == DIR_DOWN
-        mov eax, (TANK ptr [ebx]).x
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        add eax, TANK_SIZE
-        mov (BULLET ptr [esi]).y, eax
-    .elseif eax == DIR_LEFT
-        mov eax, (TANK ptr [ebx]).x
-        sub eax, BULLET_SIZE_PX
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).y, eax
-    .else
-        mov eax, (TANK ptr [ebx]).x
-        add eax, TANK_SIZE
-        mov (BULLET ptr [esi]).x, eax
-        mov eax, (TANK ptr [ebx]).y
-        add eax, (TANK_SIZE - BULLET_SIZE_PX)/2
-        mov (BULLET ptr [esi]).y, eax
-    .endif
+    mov bulIdx, eax                 ; 先存槽索引
+    ; 会话 19：速度向量 = 航向角单位向量 x BULLET_SPEED，16.16 定点
+    ; （任意角 |v|=6 精确；旧整数表 45 度弹只能飞出 5.66 且轴向阶梯）
+    mov ecx, (TANK ptr [ebx]).dir
+    mov (BULLET ptr [esi]).fireAng, ecx
+    mov eax, cosTBL[ecx*4]
+    imul eax, eax, BULLET_SPEED*FIX_TBL64
+    mov (BULLET ptr [esi]).vx, eax
+    mov eax, sinTBL[ecx*4]
+    imul eax, eax, BULLET_SPEED*FIX_TBL64
+    mov (BULLET ptr [esi]).vy, eax
+    mov eax, 0
+    mov (BULLET ptr [esi]).subpxX, eax
+    mov (BULLET ptr [esi]).subpxY, eax
+    ; 位置：炮口（MuzzlePoint 切比雪夫分离，弹盒与己方 AABB 主轴出界，
+    ; 任意角保持 T12 自伤保护；旧 4 分支表把出弹点锁死在轴向）
+    invoke MuzzlePoint, ebx              ; eax=offx edx=offy（ebx/esi 受保护）
+    mov ecx, (TANK ptr [ebx]).x
+    add ecx, eax
+    add ecx, (TANK_SIZE - BULLET_SIZE_PX)/2
+    mov (BULLET ptr [esi]).x, ecx
+    mov ecx, (TANK ptr [ebx]).y
+    add ecx, edx
+    add ecx, (TANK_SIZE - BULLET_SIZE_PX)/2
+    mov (BULLET ptr [esi]).y, ecx
     mov (BULLET ptr [esi]).owner, edi
     mov (BULLET ptr [esi]).active, 1
     mov (BULLET ptr [esi]).bounces, 0
@@ -3542,25 +4188,72 @@ BulletWallHit proc uses ebx pb: dword
 BulletWallHit endp
 
 ; ------------------------------------------------------------
-; MoveTank —— 坦克移动（水/钢/砖实心，冰/泥/空地可通行）
-; 冰面：位移成功且中心格是冰 -> 刷新滑行 tick（6..10）与滑行方向
-; 泥土：中心格是泥土 -> 本 tick 速度 DIRT_SPEED（1），否则 TANK_SPEED
+; MuzzlePoint —— 全角度炮口分离偏移（切比雪夫分离式）
+; 保证 8x8 弹盒与 25px 坦克 AABB 沿主轴分离 >=17px（T12 自伤保护的
+; 任意角推广）。SpawnBullet / MuzzleEdge / SimReflectPath 三处共用，
+; 杜绝公式漂移。入参：坦克指针；出参 eax=offx, edx=offy。
+; 弹左上 = tank.x+8+offx, tank.y+8+offy（弹中心再 +4）。
+; 数学：m=max(|c|,|s|)>=724（恒不为 0），D=17408/m+1（17px x1024 +1
+; 防向下取整），off=(tbl*D+512) sar 10（主轴 |off|>=17）。
 ; ------------------------------------------------------------
-MoveTank proc ownerIdx: dword, wantDir: dword
-    local nx:dword, ny:dword, solid:dword, ptank:dword, dirL:dword
-    local spd:dword
+MuzzlePoint proc uses ebx ecx tankPtr: dword
+    local c1:dword, s1:dword, m: dword
+    mov ecx, tankPtr
+    mov eax, (TANK ptr [ecx]).dir
+    mov ebx, cosTBL[eax*4]
+    mov c1, ebx
+    mov ebx, sinTBL[eax*4]
+    mov s1, ebx
+    ; m = max(|c|, |s|)
+    mov eax, c1
+    test eax, eax
+    jns MP_CAbs
+    neg eax
+MP_CAbs:
+    mov m, eax
+    mov eax, s1
+    test eax, eax
+    jns MP_SAbs
+    neg eax
+MP_SAbs:
+    cmp eax, m
+    jbe MP_MDone
+    mov m, eax
+MP_MDone:
+    ; D = 17408/m + 1（m>0 恒成立；div 无符号两侧均正）
+    mov eax, 17408
+    xor edx, edx
+    div m
+    inc eax
+    mov m, eax
+    ; offx = (c1*D + 512) >> 10；offy 同（c1/s1 有符号 -> imul+sar）
+    mov ecx, m
+    imul eax, c1
+    add eax, 512
+    sar eax, 10
+    imul ecx, s1
+    add ecx, 512
+    sar ecx, 10
+    mov edx, ecx
+    ret
+MuzzlePoint endp
+
+; ------------------------------------------------------------
+; MoveTank —— 坦克移动（水/钢/砖实心，冰/泥/空地可通行）
+; 会话 19：沿航向角 moveF 前进(1)/后退(-1)，16.16 定点进位位移；
+; 冰面：位移成功且中心格是冰 -> 刷新滑行 tick 并冻结当前航向角
+; 泥土：中心格泥土 -> 本 tick 速度 DIRT_SPEED，否则 4/5 交替
+; 本函数绝不写 dir（旧 360 版致命 bug1：把动作码 mov 进 dir 清零航向）
+; ------------------------------------------------------------
+MoveTank proc ownerIdx: dword, moveF: dword, ang: dword
+    local nx:dword, ny:dword, solid:dword, ptank:dword
+    local spd:dword, dx16:dword, dy16:dword, accX:dword, accY:dword
     ; ptank = &tanks[ownerIdx]（跨 invoke 保存，用局部变量存指针）
     mov eax, ownerIdx
     mov ecx, SIZEOF TANK
     imul ecx, eax
     add ecx, offset tanks
     mov ptank, ecx
-    mov eax, wantDir
-    mov dirL, eax
-
-    mov ecx, ptank
-    mov edx, dirL
-    mov (TANK ptr [ecx]).dir, edx            ; 转向即时生效
 
     ; 泥土减速：坦克中心格地形决定本 tick 速度
     mov eax, (TANK ptr [ecx]).x
@@ -3587,26 +4280,43 @@ MT_SpdEven:
     .endif
     mov spd, eax
 
-    ; 计算新坐标
+    ; 计算新坐标（16.16 定点：单位向量 x 速度，任意角度模长精确；
+    ; 正交角 carry 恰为 +-spd、余数恒 0 -> 与旧网格版逐像素一致）
+    mov ecx, ang
+    mov eax, cosTBL[ecx*4]
+    imul eax, spd
+    imul eax, eax, FIX_TBL64
+    mov dx16, eax
+    mov eax, sinTBL[ecx*4]
+    imul eax, spd
+    imul eax, eax, FIX_TBL64
+    mov dy16, eax
+    mov eax, moveF
+    test eax, eax
+    js MT_Rev                       ; 后退：位移向量取反（手写 js，.if==-1 之外勿用比较符）
+    jmp MT_RevDone
+MT_Rev:
+    neg dx16
+    neg dy16
+MT_RevDone:
+    ; 进位累加（先试探，位移成功才提交 subpx；被挡时在 else 分支清零）
     mov ecx, ptank
-    mov eax, (TANK ptr [ecx]).x
-    mov nx, eax
-    mov eax, (TANK ptr [ecx]).y
-    mov ny, eax
-    mov eax, dirL
-    .if eax == DIR_UP
-        mov ecx, spd
-        sub ny, ecx
-    .elseif eax == DIR_DOWN
-        mov ecx, spd
-        add ny, ecx
-    .elseif eax == DIR_LEFT
-        mov ecx, spd
-        sub nx, ecx
-    .else
-        mov ecx, spd
-        add nx, ecx
-    .endif
+    mov eax, (TANK ptr [ecx]).subpxX
+    add eax, dx16
+    mov edx, eax
+    sar edx, 16                     ; 本 tick x 位移（floor，含借位）
+    and eax, 0FFFFh
+    mov accX, eax
+    add edx, (TANK ptr [ecx]).x
+    mov nx, edx
+    mov eax, (TANK ptr [ecx]).subpxY
+    add eax, dy16
+    mov edx, eax
+    sar edx, 16
+    and eax, 0FFFFh
+    mov accY, eax
+    add edx, (TANK ptr [ecx]).y
+    mov ny, edx
 
     ; 硬边界保护：坦克整体必须在地图内。出界目标判为 solid=3
     ; （任何技能都不放行）——否则 ghost 在边界墙上被 clamp 恒判定命中，
@@ -3653,6 +4363,10 @@ MT_AfterBlock:
         mov (TANK ptr [ecx]).x, edx
         mov edx, ny
         mov (TANK ptr [ecx]).y, edx
+        mov edx, accX
+        mov (TANK ptr [ecx]).subpxX, edx
+        mov edx, accY
+        mov (TANK ptr [ecx]).subpxY, edx
         ; 穿墙计数：中心进入与上 tick 不同的墙格 -> 剩余次数-1
         mov eax, (TANK ptr [ecx]).x
         add eax, TANK_SIZE/2
@@ -3684,9 +4398,9 @@ MT_AfterBlock:
         invoke TileAtPx, eax, edx
         .if eax == TILE_ICE
             invoke RngBelow, ICE_SLIDE_RNG   ; 0..4
-            add eax, ICE_SLIDE_MIN           ; 6..10 tick
+            add eax, ICE_SLIDE_MIN           ; 6..15 tick
             mov ecx, ptank
-            mov edx, dirL
+            mov edx, ang                     ; 冻结本 tick 实际使用角：滑行中转向不改轨迹
             mov (TANK ptr [ecx]).sdir, edx
             mov (TANK ptr [ecx]).slide, eax
         .else
@@ -3695,6 +4409,9 @@ MT_AfterBlock:
         .endif
     .else
         mov (TANK ptr [ecx]).slide, 0        ; 撞墙立即停滑
+        mov edx, 0                           ; 被挡清分数余量（防旧余量偏置新方向）
+        mov (TANK ptr [ecx]).subpxX, edx
+        mov (TANK ptr [ecx]).subpxY, edx
     .endif
     ret
 MoveTank endp
@@ -3802,43 +4519,62 @@ GU_Slot:
     .endif
     mov esi, ebx
     imul esi, esi, KEY_PER*4           ; esi = slot*KEY_PER*4（输入表字节偏移）
-    ; 方向选择
-    mov dirWanted, -1
+    ; ---- 转向通道（会话 19：独立于驾驶通道，可边走边转）----
+    ; 左键槽2=逆时针（角减小），右键槽3=顺时针（角增大，屏幕 y 向下 CW+）
+    mov eax, ebx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov edx, eax                       ; edx = &tanks[slot]
+    mov eax, (TANK ptr [edx]).alive
+    .if eax == 0
+        jmp GU_NoMove                  ; 死亡坦克不转向/不驾驶/不滑行（旧版按住键尸体会移动）
+    .endif
+    mov ecx, inputTable[esi+8]
+    .if ecx != 0
+        mov eax, (TANK ptr [edx]).dir
+        sub eax, TURN_SPEED
+        test eax, eax                  ; 回绕手写 js：.if eax<0 按无符号编译恒假
+        jns GU_TurnLOk                 ; （2026 回滚版致命 bug2 就死在这里 -> 表越界）
+        add eax, ANGLE_SPAN
+GU_TurnLOk:
+        mov (TANK ptr [edx]).dir, eax
+    .endif
+    mov ecx, inputTable[esi+12]
+    .if ecx != 0
+        mov eax, (TANK ptr [edx]).dir
+        add eax, TURN_SPEED
+        cmp eax, ANGLE_SPAN
+        jb GU_TurnROk
+        sub eax, ANGLE_SPAN
+GU_TurnROk:
+        mov (TANK ptr [edx]).dir, eax
+    .endif
+    ; ---- 驾驶通道：槽0=前进、槽1=后退（双键同按=前进优先，与旧行为一致）----
+    mov dirWanted, 0
     mov eax, inputTable[esi]
     .if eax != 0
-        mov dirWanted, DIR_UP
+        mov dirWanted, 1
     .else
         mov eax, inputTable[esi+4]
         .if eax != 0
-            mov dirWanted, DIR_DOWN
-        .else
-            mov eax, inputTable[esi+8]
-            .if eax != 0
-                mov dirWanted, DIR_LEFT
-            .else
-                mov eax, inputTable[esi+12]
-                .if eax != 0
-                    mov dirWanted, DIR_RIGHT
-                .endif
-            .endif
+            mov dirWanted, -1
         .endif
     .endif
     mov eax, dirWanted
-    .if eax != -1
-        invoke MoveTank, ebx, eax
+    .if eax != 0
+        mov ecx, (TANK ptr [edx]).dir
+        invoke MoveTank, ebx, eax, ecx
     .else
-        ; 无输入 -> 冰面滑行
-        mov eax, ebx
-        imul eax, eax, SIZEOF TANK
-        add eax, offset tanks
-        mov edx, eax
+        ; 不驾驶 -> 冰面滑行（沿冻结角 sdir 前进；滑行中 dir 可转但轨迹不变）
         mov eax, (TANK ptr [edx]).slide
         .if eax > 0
             dec (TANK ptr [edx]).slide
-            mov eax, (TANK ptr [edx]).sdir
-            invoke MoveTank, ebx, eax
+            mov ecx, (TANK ptr [edx]).sdir
+            mov eax, 1
+            invoke MoveTank, ebx, eax, ecx
         .endif
     .endif
+GU_NoMove:
     ; 开火（冷却 20 tick）
     mov eax, inputTable[esi+16]
     .if eax != 0
@@ -3931,7 +4667,7 @@ GU_Slot:
     mov edx, (TANK ptr [eax]).swapBul
     .if edx != -1                    ; 有绑定（勿写 >= 0：无符号恒真）
         mov ecx, edx
-        shl ecx, 5
+        imul ecx, ecx, SIZEOF BULLET
         add ecx, offset bullets
         cmp (BULLET ptr [ecx]).active, 0
         jne GU_SwapOk
@@ -3956,9 +4692,15 @@ BulletTick:
             mov (BULLET ptr [edi]).active, 0
             jmp BulletNext
         .endif
-        ; 1) X 轴
+        ; 1) X 轴（16.16 进位累加：任意角度轴向步长 0..8px，模长恒 6）
         mov eax, (BULLET ptr [edi]).vx
         .if eax != 0
+            mov edx, (BULLET ptr [edi]).subpxX
+            add edx, eax
+            mov eax, edx
+            sar eax, 16                    ; 位移 = 累加和 floor 除 65536（含借位）
+            and edx, 0FFFFh                ; 余数归一化 0..65535
+            mov (BULLET ptr [edi]).subpxX, edx
             add (BULLET ptr [edi]).x, eax
             ; 屏幕边界反弹（.if eax < 0 恒假，手写 test/jns）
             mov eax, (BULLET ptr [edi]).x
@@ -4015,9 +4757,15 @@ BT_XEnd:
                 jmp BulletNext          ; 反弹次数耗尽
             .endif
         .endif
-        ; 2) Y 轴
+        ; 2) Y 轴（同 X：进位累加）
         mov eax, (BULLET ptr [edi]).vy
         .if eax != 0
+            mov edx, (BULLET ptr [edi]).subpxY
+            add edx, eax
+            mov eax, edx
+            sar eax, 16
+            and edx, 0FFFFh
+            mov (BULLET ptr [edi]).subpxY, edx
             add (BULLET ptr [edi]).y, eax
             mov eax, (BULLET ptr [edi]).y
             test eax, eax

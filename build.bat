@@ -40,7 +40,7 @@ if errorlevel 1 (
 )
 
 echo [2/2] Linking...
-link /SUBSYSTEM:WINDOWS /ENTRY:start /OUT:tankwar.exe main.obj ui.obj gfx.obj input.obj game.obj net.obj sound.obj winmm.lib
+link /MAP /SUBSYSTEM:WINDOWS /ENTRY:start /OUT:tankwar.exe main.obj ui.obj gfx.obj input.obj game.obj net.obj sound.obj winmm.lib
 if errorlevel 1 (
     echo [ERROR] Link failed.
     exit /b 1

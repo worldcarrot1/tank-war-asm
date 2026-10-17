@@ -62,6 +62,10 @@ extern brushP2     :dword        ; gfx：P2 车体色
 extern brushBullet :dword        ; gfx：子弹
 extern brushIce    :dword        ; gfx：冰面（演示/护盾）
 extern brushWater  :dword        ; gfx：水面（演示）
+extern brushDirt   :dword        ; gfx：泥地（演示）
+extern brushDirtDark :dword      ; gfx：泥地纹理（演示）
+extern brushWave   :dword        ; gfx：水波纹（演示）
+extern brushStreak :dword        ; gfx：冰高光（演示）
 DrawTank PROTO :DWORD,:DWORD,:DWORD,:DWORD
 DrawPickupIcon PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 GameInit  PROTO
@@ -168,13 +172,15 @@ RST_H      equ 30
     szKO        db "K.O.", 0
     dDemoEn     dd dDE0, dDE1, dDE2, dDE3, dDE4, dDE5
     dDemoCn     dd kDD0, kDD1, kDD2, kDD3, kDD4, kDD5
-    dDE0        db "MOVE: arrow keys / WASD; spawn faces half-map side", 0
+    dDE0        db "DRIVE: W/S fwd-back, A/D rotate; aim = body facing", 0
     dDE1        db "FIRE: each hit drains 1 HP; 3 HP and out", 0
     dDE2        db "BOUNCE: bullets ricochet off walls (up to 10)", 0
     dDE3        db "TERRAIN: mud slows, ice slides, water blocks", 0
     dDE4        db "SKILLS: a box spawns every 10s; skill key fires it", 0
     dDE5        db "SCORE: last survivor +1; most wins takes the match", 0
-    kDD0        dw 079FBh,052A8h,0FF1Ah,065B9h,05411h,0952Eh,06216h,00020h,00057h,00041h,00053h,00044h,0FF1Bh,051FAh,0751Fh,0671Dh,05411h,06309h,06240h,05728h,0534Ah,0573Ah,081EAh,052A8h,08BBEh,05B9Ah, 0
+    kDD0        dw 9A7Eh,9A76h,0FF1Ah,0057h,002Fh,0053h,524Dh,8FDBh,540Eh,9000h,0FF0Ch,0041h,002Fh,0044h,5DE6h,53F3h,65CBh,8F6Ch,0FF1Bh,70AEh,5F39h,671Dh,70AEh,53E3h,65B9h,5411h,98DEh, 0
+    ; 驾驶：W/S 前进后退、A/D 左右旋转；炮弹朝炮口方向飞
+    ;（原"移动：方向键或WASD；出生朝向…"文案随会话 19 操控改版更新）
     kDD1        dw 05C04h,051FBh,0FF1Ah,0547Dh,04E2Dh,05373h,06DD8h,06C70h,0FF08h,04E00h,06EF4h,08840h,0FF09h, 0
     kDD2        dw 053CDh,05F39h,0FF1Ah,05B50h,05F39h,0649Eh,05899h,04F1Ah,053CDh,05F39h,0FF08h,06700h,0591Ah,00020h,00031h,00030h,00020h,06B21h,0FF09h,0FF0Ch,053EFh,04EE5h,07ED5h,0540Eh,0653Bh,051FBh, 0
     kDD3        dw 05730h,05F62h,0FF1Ah,06CE5h,05730h,051CFh,0901Fh,03001h,051B0h,09762h,06ED1h,0884Ch,03001h,06C34h,09762h,0963Bh,06321h,0FF08h,09A6Dh,06C34h,0672Fh,053EFh,0901Ah,08FC7h,0FF09h, 0
@@ -228,17 +234,17 @@ RST_H      equ 30
     CN_SKHINT   dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,07FFBh,09875h, 0
     szSkPage    db " / %d", 0
 
-    aUp         db "UP", 0
-    aDn         db "DOWN", 0
-    aLt         db "LEFT", 0
-    aRt         db "RIGHT", 0
+    aUp         db "FWD", 0          ; 会话 19: 四方向驾驶 -> 前进/后退/转左/转右
+    aDn         db "BACK", 0
+    aLt         db "TURN-L", 0
+    aRt         db "TURN-R", 0
     aFire       db "FIRE", 0
     aUse        db "SKILL", 0
     ; 中文动作名：等长指针表（每项独立 0 结尾，按下标索引）
-    cUpW        dw 4E0Ah, 0             ; 上
-    cDnW        dw 4E0Bh, 0             ; 下
-    cLtW        dw 5DE6h, 0             ; 左
-    cRtW        dw 53F3h, 0             ; 右
+    cUpW        dw 524Dh, 8FDBh, 0   ; 前进
+    cDnW        dw 540Eh, 9000h, 0   ; 后退
+    cLtW        dw 5DE6h, 8F6Ch, 0   ; 左转
+    cRtW        dw 53F3h, 8F6Ch, 0   ; 右转
     cFireW      dw 5F00h, 706Bh, 0      ; 开火
     cUseW       dw 4F7Fh, 7528h, 0      ; 使用（技能）
     cnActT      dd cUpW, cDnW, cLtW, cRtW, cFireW, cUseW
@@ -1948,42 +1954,110 @@ NS_BoxDone:
             invoke FillRect, hdcBack, addr boxRc, brushBullet
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 3
-            invoke SelectObject, hdcBack, brushBrick
+            ; 地形演示（会话 18 重做）：坦克行驶在地形带正中（原悬浮在带上方
+            ; 且恒速直线，看不出任何地形效果）。纹理与 game.asm 地面层同款
+            ; 泥地（150..320）：棕褐底 + 两道深棕纹理
             mov boxRc.left, 150
             mov boxRc.top, 350
             mov boxRc.right, 320
             mov boxRc.bottom, 372
-            invoke FillRect, hdcBack, addr boxRc, brushBrick
-            invoke SelectObject, hdcBack, brushIce
+            invoke FillRect, hdcBack, addr boxRc, brushDirt
+            mov boxRc.left, 154
+            mov boxRc.right, 310
+            mov boxRc.top, 357
+            mov boxRc.bottom, 359
+            invoke FillRect, hdcBack, addr boxRc, brushDirtDark
+            mov boxRc.left, 160
+            mov boxRc.right, 316
+            mov boxRc.top, 369
+            mov boxRc.bottom, 371
+            invoke FillRect, hdcBack, addr boxRc, brushDirtDark
+            ; 冰面（320..490）：浅蓝底 + 两道错位白高光
             mov boxRc.left, 320
-            mov boxRc.top, 350
             mov boxRc.right, 490
+            mov boxRc.top, 350
             mov boxRc.bottom, 372
             invoke FillRect, hdcBack, addr boxRc, brushIce
-            invoke SelectObject, hdcBack, brushWater
+            mov boxRc.left, 324
+            mov boxRc.right, 480
+            mov boxRc.top, 356
+            mov boxRc.bottom, 358
+            invoke FillRect, hdcBack, addr boxRc, brushStreak
+            mov boxRc.left, 330
+            mov boxRc.right, 486
+            mov boxRc.top, 368
+            mov boxRc.bottom, 370
+            invoke FillRect, hdcBack, addr boxRc, brushStreak
+            ; 水面（490..660）：深蓝底 + 两道浅蓝波纹
             mov boxRc.left, 490
-            mov boxRc.top, 350
             mov boxRc.right, 660
+            mov boxRc.top, 350
             mov boxRc.bottom, 372
             invoke FillRect, hdcBack, addr boxRc, brushWater
-            invoke SelectObject, hdcBack, brushBg
-            mov boxRc.left, 660
-            mov boxRc.top, 350
-            mov boxRc.right, 838
-            mov boxRc.bottom, 372
-            invoke FillRect, hdcBack, addr boxRc, brushBg
+            mov boxRc.left, 494
+            mov boxRc.right, 656
+            mov boxRc.top, 358
+            mov boxRc.bottom, 360
+            invoke FillRect, hdcBack, addr boxRc, brushWave
+            mov boxRc.left, 500
+            mov boxRc.right, 650
+            mov boxRc.top, 368
+            mov boxRc.bottom, 370
+            invoke FillRect, hdcBack, addr boxRc, brushWave
+            ; 空地（660..838）：留白透出页面底色（深夜模式不铺死色）
+            ; 运动时间轴：480 tick 循环，tt = demoPh*120 + demoPt
+            mov eax, demoPh
+            imul eax, eax, 120
+            add eax, demoPt
+            .if eax < 150                 ; 泥地：1px/tick 半速爬行
+                add eax, 150
+                mov demoP1x, eax
+            .elseif eax < 160             ; 离开泥地恢复正常速
+                sub eax, 150
+                imul eax, eax, 2
+                add eax, 300
+                mov demoP1x, eax
+            .elseif eax < 231             ; 冰面：滑行保持 2px/tick
+                sub eax, 160
+                imul eax, eax, 2
+                add eax, 320
+                mov demoP1x, eax
+            .elseif eax < 235             ; 冰尽头：余势缓停（1px/tick）
+                sub eax, 230
+                add eax, 460
+                mov demoP1x, eax
+            .elseif eax < 300             ; 水面阻挡：冰缘原地小幅顶撞
+                shr eax, 2
+                and eax, 1
+                shl eax, 1
+                add eax, 463
+                mov demoP1x, eax
+            .elseif eax < 388             ; 驭水术生效：2px/tick 穿水而过
+                sub eax, 300
+                imul eax, eax, 2
+                add eax, 465
+                mov demoP1x, eax
+            .elseif eax < 452             ; 开阔地：正常速冲刺
+                sub eax, 388
+                imul eax, eax, 2
+                add eax, 639
+                mov demoP1x, eax
+            .else                         ; 循环末停住，回卷重演
+                mov demoP1x, 765
+            .endif
+            ; 驭水徽章：坦克中心骑在水面上（x 478..648）时框浅色外圈
+            mov eax, demoP1x
+            .if eax >= 478 && eax <= 648
+                mov boxRc.left, eax
+                sub boxRc.left, 3
+                mov boxRc.right, eax
+                add boxRc.right, TANK_SIZE + 3
+                mov boxRc.top, 345
+                mov boxRc.bottom, 345 + TANK_SIZE + 6
+                invoke FrameRect, hdcBack, addr boxRc, brushIce
+            .endif
             invoke SelectObject, hdcBack, brushP1
-            mov eax, demoT
-            xor edx, edx
-            mov ecx, 480
-            div ecx
-            mov eax, edx
-            imul eax, eax, 140
-            xor edx, edx
-            mov ecx, 100
-            div ecx
-            add eax, 160
-            invoke DrawTank, hdcBack, eax, 316, DIR_RIGHT
+            invoke DrawTank, hdcBack, demoP1x, 348, DIR_RIGHT
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 4
             mov eax, demoPh

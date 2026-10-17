@@ -50,15 +50,23 @@ ARENA_COUNT equ 20                  ; 内置对战图 ARENA1..20（每局随机�
 ; 渲染（gfx.asm）与碰撞（game.asm WallRects/WallRectsHit）共用同一几何。
 WALL_THICK  equ 8                   ; 挡板厚度（像素），格内居中
 
-; ---- 方向 ----
-DIR_UP      equ 0
-DIR_RIGHT   equ 1
-DIR_DOWN    equ 2
-DIR_LEFT    equ 3
+; ---- 朝向（会话 19 起：整数航向角，不再离散 4 方向）----
+; dir 语义 = 航向角 0..359：0=+x(右)，屏幕 y 向下，顺时针为正
+; 90=下, 180=左, 270=上。常数名沿用，值变为姿态角（供渲染/演示直接用）。
+DIR_RIGHT   equ 0
+DIR_DOWN    equ 90
+DIR_LEFT    equ 180
+DIR_UP      equ 270
+TURN_SPEED  equ 4                   ; 每 tick 转向 4 度（左键减、右键加）
+ANGLE_SPAN  equ 360
+TRIG_SHIFT  equ 10                  ; cosTBL/sinTBL 标度 x1024，右移 10（必须 sar）
+FIX_SHIFT   equ 16                  ; 子弹/坦克位移 16.16 定点
+FIX_ONE     equ 65536
+FIX_TBL64   equ 64                  ; 65536/1024：tbl 值 * 像素速度 * 64 = 16.16 速度
 
 ; ---- 坦克 ----
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
-KEY_PER     equ 6                   ; 每玩家键位数：0上1下2左3右4开火5技能
+KEY_PER     equ 6                   ; 每玩家键位数：0前进1后退2左转3右转4开火5技能
 TANK_SIZE   equ 25                  ; 坦克碰撞/绘制边长（21 的 1.2 倍）
 TANK_SPEED  equ 4                   ; 每 tick 基础移动像素（偶 tick）
 TANK_SPEED_HI equ 5                 ; 奇 tick（4/5 交替 = 平均 4.5，比子弹慢 25%）
@@ -145,12 +153,14 @@ NET_PORT    equ 28888                ; 本地监听端口（收发同端口）
 TANK STRUCT
     x       dd ?                     ; 左上角像素坐标
     y       dd ?
-    dir     dd ?                     ; DIR_UP..DIR_LEFT
+    subpxX  dd ?                     ; 位移 16.16 余数（恒 0..65535，撞墙/停车清零）
+    subpxY dd ?
+    dir     dd ?                     ; 航向角 0..359（0右 90下 180左 270上，CW+）
     hp      dd ?
     alive   dd ?                     ; 0=死亡 1=存活
     fireCd  dd ?                     ; 开火冷却剩余 tick
     slide   dd ?                     ; 冰面滑行剩余 tick（0=无）
-    sdir    dd ?                     ; 滑行方向
+    sdir    dd ?                     ; 滑行冻结航向角（滑行期间 dir 可继续变）
     score   dd ?                     ; 本场得分（回合制积分）
     skill   dd ?                     ; 持有未发动的技能 id（SKILL_NONE=无）
     effOn   dd ?                     ; 激活效果位掩码 EFF_*
@@ -169,18 +179,24 @@ TANK STRUCT
     protT   dd ?                     ; 重生保护剩余 tick（免伤+闪烁）
     spawnX  dd ?                     ; 本回合出生点（重生用）
     spawnY  dd ?
-    spawnDir dd ?                    ; 本回合出生朝向
+    spawnDir dd ?                    ; 本回合出生航向角
 TANK ENDS
 
 ; 子弹（全场固定池 bullets[MAX_BULLETS]）
 ; 反弹物理：存速度分量 vx/vy，反弹 = 对应分量取反（零乘除）
+; 会话 19：vx/vy 改 16.16 有符号定点（任意角 |v|=BULLET_SPEED 精确），
+; 每 tick subpx 进位产生整数步长；SIZEOF 32->44，引用处必须用 SIZEOF BULLET
+; （game.asm 原 3 处 shl 5 已改 imul）。
 BULLET STRUCT
     x       dd ?                     ; 弹体 8x8 左上角像素
     y       dd ?
-    vx      dd ?                     ; 速度分量，0 或 ±BULLET_SPEED
-    vy      dd ?
+    vx      dd ?                     ; 16.16 定点 x 速度（px/tick，可负）
+    vy      dd ?                     ; 16.16 定点 y 速度
     owner   dd ?                     ; 所属坦克槽位
     active  dd ?                     ; 0=空闲槽位 1=在飞
     bounces dd ?                     ; 已反弹次数
     age     dd ?                     ; 已存活 tick 数
+    subpxX  dd ?                     ; x 余数累加器（恒 0..65535）
+    subpxY  dd ?
+    fireAng dd ?                     ; 发射角 0..359（换位/调试用，不渲染）
 BULLET ENDS

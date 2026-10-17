@@ -8,3 +8,7 @@
 # 编辑器
 .vs/
 .vscode/
+
+# 调试/构建产物（会话 19 起）
+tankwar.map
+*.png

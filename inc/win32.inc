@@ -175,6 +175,7 @@ CreateSolidBrush        PROTO stdcall :DWORD
 FrameRect               PROTO stdcall :DWORD,:DWORD,:DWORD
 MoveToEx                PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD
 LineTo                  PROTO stdcall :DWORD,:DWORD,:DWORD
+Polygon                 PROTO stdcall :DWORD,:DWORD,:DWORD
 FillRect                PROTO stdcall :DWORD,:DWORD,:DWORD
 BitBlt                  PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 Rectangle               PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD

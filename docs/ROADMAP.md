@@ -334,3 +334,78 @@
       **invoke 参数里 px+const 是内存寻址陷阱**，坐标必须先算进寄存器）
 - [x] 回归扫描修复 5 处新无符号陷阱（pauseSel/volumeLvl clamp、
       gfx swapBul >=0）；46 断言全过；暂停/倒计时/设置/深夜/图标截图验收
+
+### 2026-10-17 会话 18：技能图标重绘 + 地形演示动画重做（用户点名问题）
+
+- [x] **六项技能图标重绘**（game.asm 拾取物/说明页/演示页共用
+      gfx.asm DrawPickupIcon，16x16 格坐标 × sc 缩放，白 2px 笔 + brushIcon 填充）：
+      冰盾 → 盾牌轮廓（平顶垂边下收尖）+ 冰晶十字；激光炮 → 大炮剪影
+      （圆炮轮+炮管+炮口箍）；穿墙术 → 实心墙块中央留缝 + 贯入贯穿箭头；
+      地雷 → 圆弹体 + 引信 + 火花十字；驭水术 → 两排海浪波纹；
+      定格术 → 照相机（机身+顶钮+三层同心镜头）。
+      镜头"镂空"用 brushPickBg——成立前提：三个调用方（对局拾取物/
+      技能说明页/演示页冰盾拾取帧）都先铺该色深色底板；定格术分支
+      末尾 SelectObject 复位白刷，防镂空色泄漏给后续绘制
+- [x] **演示页第 4 幕地形动画重做**（ui.asm ST_DEMO demoPage==3）：
+      原动画坦克悬浮在地形带上方 ~9px 且全程恒速直线，完全演不出规则
+      （用户截图点名）。现坦克纵向压带（y=348，中心与带中心 361 对齐），
+      480 tick 循环分段演出：泥地 1px/t 缓爬 → 出带恢复 2px/t →
+      冰面滑行 → 冰缘 1px/t 余势缓停 → 水面阻挡原地 2px 顶撞（右缘恰贴
+      水线 490）→ 驭水术生效 2px/t 穿水（坦克中心入水期 x478..648 加
+      brushIce 外框徽章）→ 开阔地冲刺至停驻回卷。
+      三带纹理与 game.asm 地面层同款（泥=brushDirt+两道 brushDirtDark、
+      冰=brushIce+错位 brushStreak、水=brushWater+两道 brushWave，替换
+      原来误用的 brushBrick 砖红）；原带尾段不再铺死 brushBg，留白透
+      页面底色（深夜模式友好）
+- [x] gfx.asm 新导出 brushDirt/brushDirtDark/brushWave/brushStreak 供
+      ui.asm 演示页 extern；修正 DrawTank 头注释过时的 TANK_SIZE=21→25
+- [x] 新增验收工具：tools/shot_v18icon.py（说明页大图标连拍；第一版
+      两次 DOWN 连击被菜单边沿检测并成一步走错页——已加 0.4s 间隔修复，
+      待抓屏恢复重跑）、tools/shot_v18walk.py（驭水帧连拍）、
+      tools/icon_mock_v18.py（PIL 按 GDI 语义复刻 DrawPickupIcon 校验几何）
+- [x] 构建通过；selftest 46 断言全过（纯渲染层改动，玩法逻辑零触碰）
+- [ ] ⚠ 验收状态：地形幕真帧截图 6 张（s18_terrain_0..5.png）已确认坦克
+      贴带行驶、阻挡/穿水位置正确；**新图标的真实 GDI 截图未成**——
+      本 VM 显示栈在截图标时开始全白（PrintWindow 与屏幕 BitBlt 双失效，
+      属 tools 注释记载的老毛病），暂以 icon_mock_v18.png 六剪影可辨
+      兜底，待抓屏恢复补真图或用户实机过目
+
+### 2026-10-18 会话 19：坦克整车自由转向 + 任意角度弹道（360° 操控落地，selftest 全量重写）
+
+- [x] 需求确认（AskUserQuestion）：**全连续角度** + **整车旋转**；
+      W/S 沿炮口方向前进/倒车、A/D 逆时针/顺时针 ∓4°/tick（TURN_SPEED 常量可调）
+- [x] 三角落地：tools/gen_trig.py 预生成 inc/trig.inc（360 对 ×1024 定点
+      sin/cos，含 sin[a]==cos[a+270] 自校验），运行时零 FPU、两端确定；
+      game.inc 增 ANGLE_*/TURN_SPEED/BULLET +accX/accY/ang（BULLET 32→44B，不上网络）
+- [x] MoveTank/TurnTank/GameUpdate 输入链：dir 语义化 0..359 度数（0=+x 顺时针正），
+      移动=速度×单位向量（16.16 进位），转向与移动可同时进行；冰滑行 sdir=角度快照；
+      ResetTanks/spawnDir 角度化；ui 键位标签 前进/后退/左转/右转、演示页 ANGLE_* 化
+- [x] SpawnBullet/BulletTick 16.16 定点化：任意角度弹速模长恒 6px/tick
+      （修掉旧尝试 45° 变 5.66），出膛位 车中心+单位向量×18px；DoSwap 继承 bullet.ang
+- [x] 激光/反射激光角度化：SimReflectPath 种子改单位向量符号、预览=实弹同构步进；
+      MuzzleEdge/RefreshLaserPreview/FireAimedLaser/SegmentDamage 全对角
+- [x] DrawTank（gfx.asm）：Polygon 整车旋转，局部前向统一 +x（根除旧"炮管与弹道
+      差 90°"故障），八角车体+旋转炮管，正交角视觉差 ≤1px
+- [x] net.asm：tdir 量化 q=ang*256/360（0..255），接收端 (q*360+128)>>8 还原先于
+      开火事件处理；PROTOCOL.md tdir/fire 说明同步更新
+- [x] **SelfTestRun 全量重写（本次收尾）**：31 组 62 断言新语义，含 4 个旧回滚
+      故障回归锁（T25 dir 污染锁、T24 回绕 0-4=356/359+4=3、T26 炮口几何锁、
+      自测改写完成）+ 360° 新增（T27 45° 弹道积分 60tick Δ≈254px、T28 网络量化
+      往返 13 角、T29 斜弹反弹模长不变、T30 滑行中转向不改向量、T31 三角表）
+- [x] 修复间歇性崩溃（上一版自测偶发 exit 139 真凶）：SimReflectPath 中
+      `(TANK ptr [ptank]).x` —— MASM 对"局部变量槽"做结构成员访问只算成员地址
+      不解引用，dir 取到的是 tanks 数组地址 → cosTBL[eax*4] 越界读 AV；
+      改经 esi 寄存器解引用（引擎既有惯例）。VEHP 向量化异常处理器 +
+      dumpbin 反汇编定位到 SimReflectPath+0x7E 后确认
+- [x] 断言按引擎真实语义修正三处（非引擎 bug）：
+      T7 P2 停靠位 32..37 → x==20（会话 18 细墙几何：左边界钢条 x∈[12,20)）；
+      T16c 反射激光 caster 自灭（激光无差别伤害路径上坦克为 HEAD 既有语义，
+      水平弹道沿 13 行来回扫必扫过发射者）；T22e/f 按"死亡清零 phantomUses/
+      skill"重写为 重拾取初始化 2→1 + 收回-再发动-耗尽收回清 skill 全链路
+- [x] 临时探针全部剥离（SRP/MuzzlePoint MarkSafe、T16 直接调用、VEHP 安装/处理器/
+      字符串、MarkSafe proc、win32.inc AddVectoredExceptionHandler 原型）；
+      保留 build.bat /MAP（崩溃定位用）与 SimReflectPath PROTO
+- [x] 验收：`tankwar.exe selftest` 连续 10 次 exit=0 / ST_FAILS=0 /
+      SELFTEST_DONE 一致（确定性达成）；62 断言 ≥ 旧基线 47
+- [ ] ⚠ 手测/截图：VM 显示栈仍全白未恢复（会话 18 遗留问题），四正交角渲染对比
+      以 T26/T28 几何断言兜底，待实机过目；双开联机 tdir 目视回环同样待补

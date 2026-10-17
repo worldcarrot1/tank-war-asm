@@ -30,6 +30,10 @@ public brushIce                   ; 玩法演示地形
 public brushWater                 ; 玩法演示地形
 public brushBg                    ; 玩法演示空地
 public brushSteel                 ; 玩法演示挡板
+public brushDirt                  ; 玩法演示地形（泥地）
+public brushDirtDark              ; 玩法演示泥地纹理
+public brushWave                  ; 玩法演示水波纹
+public brushStreak                ; 玩法演示冰高光
 extern hWnd        :dword          ; main.asm 里的主窗口句柄
 extern numPlayers  :dword          ; ui.asm（当前玩家数）
 extern mapData     :byte           ; game.asm 里的地图数组
@@ -58,12 +62,15 @@ extern countT      :dword          ; 倒计时剩余
 extern volumeLvl   :dword          ; 音量 0..100
 extern sfxOn       :dword          ; 音效开关
 extern shakeT      :dword          ; 爆炸震屏剩余 tick（game.asm）
+extern cosTBL      :dword          ; 360 度三角表 x1024（game.asm .data，gen_trig.py 生成）
+extern sinTBL      :dword
 
 WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
 UiTextZ   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD   ; ui.asm：ASCII 文本
 UiTextL   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD ; ui.asm：双语文本
 
 .data
+    rotPts      POINT 8 dup (<>)    ; DrawTank 旋转顶点暂存（车体八边形；炮管复用前 4 个）
     hdcWin      dd ?                ; 窗口 DC（临时缓存）
     hdcBack     dd ?                ; 后台内存 DC
     hbmBack     dd ?                ; 后台位图
@@ -336,7 +343,7 @@ FormatScore endp
 ; ------------------------------------------------------------
 ; DrawTank —— 圆角车体 + 中心炮塔 + 伸出炮管（笔/刷已就位）
 ; 入参：hdc, px, py(已含 HUD 偏移), dirV
-; 坦克边长 TANK_SIZE=21（原 32 的 2/3）；炮管伸出车体 8px = 出弹点
+; 坦克边长 TANK_SIZE=25（会话 17 定稿）；炮管伸出车体 8px = 出弹点
 ; ------------------------------------------------------------
 ; ------------------------------------------------------------
 ; PickLine -- 白色笔画线段（x1,y1 -> x2,y2）
@@ -382,34 +389,40 @@ ENDM
 DrawPickupIcon proc uses ebx edi hdc: dword, px: dword, py: dword, tp: dword, sc: dword
     mov eax, tp
     .if eax == SK_ICE_SHIELD
-        invoke SelectObject, hdcBack, brushIcon
-        PK_FILL hdc, Ellipse, 5, 3, 13, 11
-        PK_FILL hdc, Rectangle, 7, 9, 11, 15
+        ; 冰盾：盾牌轮廓（平顶垂边、下收尖）+ 中央冰晶十字
+        PK_LINE hdc, 3,3, 13,3
+        PK_LINE hdc, 3,3, 3,9
+        PK_LINE hdc, 13,3, 13,9
+        PK_LINE hdc, 3,9, 8,14
+        PK_LINE hdc, 13,9, 8,14
+        PK_LINE hdc, 8,5, 8,11
+        PK_LINE hdc, 5,8, 11,8
     .elseif eax == SK_LASER
-        PK_LINE hdc, 2, 9, 16, 9
-        PK_LINE hdc, 4, 5, 4, 13
-        PK_LINE hdc, 14, 5, 14, 13
+        ; 激光炮：大炮剪影 = 粗炮轮 + 炮管 + 炮口箍（白色填充）
+        invoke SelectObject, hdc, brushIcon
+        PK_FILL hdc, Ellipse, 2,8, 10,16
+        PK_FILL hdc, Rectangle, 5,6, 15,10
+        PK_FILL hdc, Rectangle, 13,4, 16,12
     .elseif eax == SK_REFLASER
         PK_LINE hdc, 3, 14, 8, 14
         PK_LINE hdc, 8, 14, 8, 4
         PK_LINE hdc, 8, 4, 13, 4
         PK_LINE hdc, 13, 4, 13, 14
     .elseif eax == SK_GHOST
-        PK_LINE hdc, 4, 4, 8, 4
-        PK_LINE hdc, 11, 4, 14, 4
-        PK_LINE hdc, 4, 14, 8, 14
-        PK_LINE hdc, 11, 14, 14, 14
-        PK_LINE hdc, 4, 4, 4, 8
-        PK_LINE hdc, 4, 11, 4, 14
-        PK_LINE hdc, 14, 4, 14, 8
-        PK_LINE hdc, 14, 11, 14, 14
+        ; 穿墙术：实心竖墙块、中央留缝；箭头自左贯入右贯出
+        invoke SelectObject, hdc, brushIcon
+        PK_FILL hdc, Rectangle, 6,1, 10,7
+        PK_FILL hdc, Rectangle, 6,10, 10,16
+        PK_LINE hdc, 1, 8, 15, 8
+        PK_LINE hdc, 12, 5, 15, 8
+        PK_LINE hdc, 12, 11, 15, 8
     .elseif eax == SK_MINE
-        invoke SelectObject, hdcBack, brushIcon
-        PK_FILL hdc, Ellipse, 6, 6, 12, 12
-        PK_LINE hdc, 9, 3, 9, 6
-        PK_LINE hdc, 9, 12, 9, 15
-        PK_LINE hdc, 3, 9, 6, 9
-        PK_LINE hdc, 12, 9, 15, 9
+        ; 地雷：圆弹体（白填充）+ 引信 + 火花十字
+        invoke SelectObject, hdc, brushIcon
+        PK_FILL hdc, Ellipse, 1,6, 11,15
+        PK_LINE hdc, 9, 6, 12, 3
+        PK_LINE hdc, 12, 1, 12, 5
+        PK_LINE hdc, 10, 3, 14, 3
     .elseif eax == SK_NITRO
         PK_LINE hdc, 3, 4, 7, 9
         PK_LINE hdc, 7, 9, 3, 14
@@ -423,105 +436,135 @@ DrawPickupIcon proc uses ebx edi hdc: dword, px: dword, py: dword, tp: dword, sc
         PK_LINE hdc, 7, 9, 4, 12
         PK_LINE hdc, 4, 12, 7, 15
     .elseif eax == SK_WATER
-        PK_LINE hdc, 2, 11, 5, 7
-        PK_LINE hdc, 5, 7, 9, 11
-        PK_LINE hdc, 9, 11, 13, 7
-        PK_LINE hdc, 13, 7, 16, 11
+        ; 驭水术：两排海浪波纹线
+        PK_LINE hdc, 2, 7, 4, 4
+        PK_LINE hdc, 4, 4, 6, 7
+        PK_LINE hdc, 6, 7, 8, 4
+        PK_LINE hdc, 8, 4, 10, 7
+        PK_LINE hdc, 10, 7, 12, 4
+        PK_LINE hdc, 12, 4, 14, 7
+        PK_LINE hdc, 2, 14, 4, 11
+        PK_LINE hdc, 4, 11, 6, 14
+        PK_LINE hdc, 6, 14, 8, 11
+        PK_LINE hdc, 8, 11, 10, 14
+        PK_LINE hdc, 10, 14, 12, 11
+        PK_LINE hdc, 12, 11, 14, 14
     .else
-        PK_LINE hdc, 3, 3, 15, 3
-        PK_LINE hdc, 15, 3, 15, 15
-        PK_LINE hdc, 15, 15, 3, 15
-        PK_LINE hdc, 3, 15, 3, 3
-        PK_LINE hdc, 7, 7, 11, 7
-        PK_LINE hdc, 11, 7, 11, 11
-        PK_LINE hdc, 11, 11, 7, 11
-        PK_LINE hdc, 7, 11, 7, 7
+        ; 定格术：照相机 = 白机身+顶钮，镜头三层同心（暗环/白圈/暗瞳）。
+        ; 镂空用 brushPickBg——所有调用方都先铺该色深色底板
+        invoke SelectObject, hdc, brushIcon
+        PK_FILL hdc, Rectangle, 2, 6, 14, 14
+        PK_FILL hdc, Rectangle, 6, 4, 10, 6
+        invoke SelectObject, hdc, brushPickBg
+        PK_FILL hdc, Ellipse, 5, 8, 11, 14
+        invoke SelectObject, hdc, brushIcon
+        PK_FILL hdc, Ellipse, 6, 9, 10, 13
+        invoke SelectObject, hdc, brushPickBg
+        PK_FILL hdc, Ellipse, 7, 10, 9, 12
+        invoke SelectObject, hdc, brushIcon      ; 复位白刷，别把镂空色留给后面绘制
     .endif
     ret
 DrawPickupIcon endp
 
+; ROTP —— 局部点（以车体中心为原点，局部前向=+x）旋转到 [ecx] 顶点并推进。
+; 调用前需备好：ecx=顶点指针，局部变量 cxL/cyL/cosL/sinL。
+; gx = cx + (lx*c - ly*s)>>10；gy = cy + (lx*s + ly*c)>>10（屏幕 y 向下，CW+）
+ROTP macro lx, ly
+    mov eax, cosL
+    imul eax, eax, lx
+    mov edx, sinL
+    imul edx, edx, ly
+    sub eax, edx
+    sar eax, TRIG_SHIFT
+    add eax, cxL
+    mov (POINT ptr [ecx]).x, eax
+    mov eax, sinL
+    imul eax, eax, lx
+    mov edx, cosL
+    imul edx, edx, ly
+    add eax, edx
+    sar eax, TRIG_SHIFT
+    add eax, cyL
+    mov (POINT ptr [ecx]).y, eax
+    add ecx, SIZEOF POINT
+endm
+
+; ------------------------------------------------------------
+; DrawTank —— 整车旋转渲染（会话 19）
+; dirV = 航向角 0..359（0右 90下 180左 270上，屏幕顺时针为正）。
+; 局部前向取 +x，与弹道向量 (cos,sin) 同向 —— 旧 360 版把前向定在
+; -y，炮管与瞄准差 90 度（看着朝天打实际朝右飞），此处不得重犯。
+; 车体 = 原 RoundRect(25,圆角9) 的八边形近似（四角切 5）；炮管 =
+; 局部 x -3..21、y +-3 的矩形四角（伸出体外 8px = 出弹位，与
+; MuzzlePoint 分离距离一致，做到"指哪打哪"）；炮塔/舱盖为圆，
+; 圆旋转不变，舱盖中心沿航向偏 2px 示意朝向。
+; 已知妥协：碰撞盒仍是 25px 轴对齐 AABB，45 度时视觉角尖可探入
+; 墙 <=3.6px（旧 360 版同款）。正交角度下与原 Square 风格视觉差 <=1px。
+; ------------------------------------------------------------
 DrawTank proc hdc: dword, px: dword, py: dword, dirV: dword
+    local cxL:dword, cyL:dword, cosL:dword, sinL:dword
     local rc2:RECT
     local oldPen:dword
-    ; 25px 参照图样式：粗黑描边 + 圆角车身 + 大圆炮塔 + 粗炮管
     invoke SelectObject, hdc, penDark
     mov oldPen, eax
-    ; 炮管（先画，压在车体下层；宽 6，伸出体外 8px = 出弹位）
+    ; 旋转锚 = 车体中心
     mov eax, px
-    mov edx, py
-    .if dirV == DIR_UP
-        add eax, 9
-        mov rc2.left, eax
-        add eax, 6
-        mov rc2.right, eax
-        mov eax, py
-        sub eax, 8
-        mov rc2.top, eax
-        add eax, 22
-        mov rc2.bottom, eax
-    .elseif dirV == DIR_DOWN
-        add eax, 9
-        mov rc2.left, eax
-        add eax, 6
-        mov rc2.right, eax
-        add edx, 11
-        mov rc2.top, edx
-        mov eax, py
-        add eax, 33
-        mov rc2.bottom, eax
-    .elseif dirV == DIR_LEFT
-        sub eax, 8
-        mov rc2.left, eax
-        mov eax, px
-        add eax, 16
-        mov rc2.right, eax
-        add edx, 9
-        mov rc2.top, edx
-        add edx, 6
-        mov rc2.bottom, edx
-    .else                                   ; DIR_RIGHT
-        add eax, 9
-        mov rc2.left, eax
-        mov eax, px
-        add eax, 33
-        mov rc2.right, eax
-        add edx, 9
-        mov rc2.top, edx
-        add edx, 6
-        mov rc2.bottom, edx
-    .endif
-    invoke Rectangle, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
-    ; 车体（圆角方块 25x25）
-    mov eax, px
-    mov rc2.left, eax
-    add eax, 25
-    mov rc2.right, eax
+    add eax, TANK_SIZE/2
+    mov cxL, eax
     mov eax, py
-    mov rc2.top, eax
-    add eax, 25
-    mov rc2.bottom, eax
-    invoke RoundRect, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom, 9, 9
-    ; 炮塔（大圆 直径 17 居中）
-    mov eax, px
-    add eax, 4
+    add eax, TANK_SIZE/2
+    mov cyL, eax
+    ; 单位向量 x1024（dir 恒 0..359：TurnTank/NetRestore 保证规范化）
+    mov eax, dirV
+    mov ecx, cosTBL[eax*4]
+    mov cosL, ecx
+    mov ecx, sinTBL[eax*4]
+    mov sinL, ecx
+    ; 炮管（先画，压在车体下层）
+    lea ecx, rotPts
+    ROTP 21, 3
+    ROTP 21, -3
+    ROTP -3, -3
+    ROTP -3, 3
+    invoke Polygon, hdc, addr rotPts, 4
+    ; 车体八边形
+    lea ecx, rotPts
+    ROTP 12, 7
+    ROTP 12, -7
+    ROTP 7, -12
+    ROTP -7, -12
+    ROTP -12, -7
+    ROTP -12, 7
+    ROTP -7, 12
+    ROTP 7, 12
+    invoke Polygon, hdc, addr rotPts, 8
+    ; 炮塔（大圆 直径 17 居中，旋转不变）
+    mov eax, cxL
+    sub eax, 8
     mov rc2.left, eax
     add eax, 17
     mov rc2.right, eax
-    mov eax, py
-    add eax, 4
+    mov eax, cyL
+    sub eax, 8
     mov rc2.top, eax
     add eax, 17
     mov rc2.bottom, eax
     invoke Ellipse, hdc, rc2.left, rc2.top, rc2.right, rc2.bottom
-    ; 舱盖（中心小圆 直径 7，近黑）
+    ; 舱盖（中心小圆 直径 7，近黑；沿航向偏 2px 示意朝向）
     invoke SelectObject, hdc, brushBullet
-    mov eax, px
-    add eax, 9
+    mov eax, cosL
+    imul eax, eax, 2
+    sar eax, TRIG_SHIFT
+    add eax, cxL
+    sub eax, 3
     mov rc2.left, eax
     add eax, 7
     mov rc2.right, eax
-    mov eax, py
-    add eax, 9
+    mov eax, sinL
+    imul eax, eax, 2
+    sar eax, TRIG_SHIFT
+    add eax, cyL
+    sub eax, 3
     mov rc2.top, eax
     add eax, 7
     mov rc2.bottom, eax

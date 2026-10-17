@@ -84,7 +84,13 @@ PackState proc
     mov sendPkt.tx, ax
     mov ax, word ptr tanks[PLAYER_SELF*SIZEOF TANK].y
     mov sendPkt.ty, ax
-    mov al, byte ptr tanks[PLAYER_SELF*SIZEOF TANK].dir
+    ; 航向角量化：q = ang*256/360（0..255；会话 19 起 dir 为 0..359 度数，
+    ; 旧的 byte 截断会把 >=256 度折成小角）
+    mov eax, tanks[PLAYER_SELF*SIZEOF TANK].dir
+    imul eax, eax, 256
+    mov ecx, 360
+    xor edx, edx
+    div ecx
     mov sendPkt.tdir, al
     mov al, byte ptr tanks[PLAYER_SELF*SIZEOF TANK].hp
     mov sendPkt.thp, al
@@ -127,6 +133,11 @@ RecvLoop:
         movzx edx, word ptr recvBuf[6]
         mov tanks[PLAYER_PEER*SIZEOF TANK].y, edx
         movzx edx, byte ptr recvBuf[8]
+        ; 还原量化角：ang = (q*360+128)>>8（误差 <=0.7 度；弹道各端本地
+        ; 演算 + 位置/血量槽主权威，微小角度差不追求逐像素一致）
+        imul edx, edx, 360
+        add edx, 128
+        shr edx, 8
         mov tanks[PLAYER_PEER*SIZEOF TANK].dir, edx
         movzx edx, byte ptr recvBuf[9]
         mov tanks[PLAYER_PEER*SIZEOF TANK].hp, edx

@@ -41,8 +41,9 @@ TILE_BRICK  equ 2                   ; 'b'  清子块后反弹，整格空后穿�
 TILE_WATER  equ 3                   ; '~'  挡坦克，子弹穿过
 TILE_ICE    equ 4                   ; '-'  坦克滑行，子弹穿过
 TILE_DIRT   equ 5                   ; 'd'  泥土：坦克减速，子弹穿过
-ARENA_COUNT equ 24                  ; 内置对战图 ARENA1..24（每局随机一张；
-                                    ;  ARENA21..24 会话 30 新增，墙:地形≈10:3）
+ARENA_COUNT equ 51                  ; 内置对战图 ARENA1..51（每局随机一张；
+                                    ;  ARENA21 起会话 30/31 新增，墙:地形≈10:3；
+                                    ;  51 与 ROUNDS_MAX 对齐，打满恰好一轮一图）
 
 ; ---- 细墙挡板 ----
 ; 墙的视觉与碰撞都不再是整格：每个墙格渲染/判定为

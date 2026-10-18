@@ -2979,7 +2979,8 @@ T23KillDone:
     invoke Chk, offset stT23d, stT23dL, tanks[1*SIZEOF TANK].protT, 120
     mov testLives, 1                       ; 恢复单命（保险）
 
-    ; ==== T24 角度回绕（2026 回滚版致命 bug2 回归锁）：0-4=356 / 359+4=3 ====
+    ; ==== T24 角度回绕（2026 回滚版致命 bug2 回归锁）：
+    ;      0-TURN_SPEED / 359+TURN_SPEED 回绕（期望式随常数，会话 32 调灵敏） ====
     invoke Mark, 241
     call ResetTanks
     mov tanks[0*SIZEOF TANK].dir, 0
@@ -2988,14 +2989,14 @@ T23KillDone:
     mov inputTable[8], 0
     mov eax, tanks[0*SIZEOF TANK].dir
     mov lGot, 0
-    cmp eax, 356
+    cmp eax, 360 - TURN_SPEED
     jne T24Bad
     mov tanks[0*SIZEOF TANK].dir, 359
     mov inputTable[12], 1                  ; 右键（顺时针）
     invoke GameUpdate
     mov inputTable[12], 0
     mov eax, tanks[0*SIZEOF TANK].dir
-    cmp eax, 3
+    cmp eax, TURN_SPEED - 1
     jne T24Bad
     mov lGot, 1
 T24Bad:
@@ -3278,7 +3279,7 @@ ST29Log:
     mov inputTable[12], 0
     mov lGot, 0
     mov eax, tanks[0*SIZEOF TANK].dir
-    cmp eax, 8
+    cmp eax, 2 * TURN_SPEED                ; 2 tick 右转累计（随常数）
     jne T30Bad
     mov eax, tanks[0*SIZEOF TANK].sdir
     cmp eax, 0
@@ -3365,9 +3366,9 @@ T32ClrCol:
     mov inputTable[0], 0
     mov inputTable[12], 0
     mov lPass, 0
-    ; a) 转向照常累计：dir == 85（驾驶没吞转向）
+    ; a) 转向照常累计：dir == 45+10*TURN_SPEED（驾驶没吞转向）
     mov eax, tanks[0*SIZEOF TANK].dir
-    cmp eax, 85
+    cmp eax, 45 + 10 * TURN_SPEED
     jne T32A
     inc lPass
 T32A:

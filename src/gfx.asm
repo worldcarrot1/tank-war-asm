@@ -197,7 +197,7 @@ GfxInit proc
     mov skillBrush[32], eax
     invoke CreateSolidBrush, 00906080h       ; 9 定格：深紫
     mov skillBrush[36], eax
-    invoke CreatePen, PS_SOLID, 2, 000000E0h
+    invoke CreatePen, PS_SOLID, 4, 000000E0h  ; 会话 32：束宽 2→4 加粗
     mov penLaser, eax
     invoke CreatePen, PS_DASH, 1, 00606060h
     mov penPreview, eax

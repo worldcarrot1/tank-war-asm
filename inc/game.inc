@@ -59,7 +59,9 @@ DIR_RIGHT   equ 0
 DIR_DOWN    equ 90
 DIR_LEFT    equ 180
 DIR_UP      equ 270
-TURN_SPEED  equ 4                   ; 每 tick 转向 4 度（左键减、右键加）
+TURN_SPEED  equ 2                   ; 每 tick 转向 2 度（左键减、右键加）。
+                                    ;  会话 32：4→2，用户点名"太灵敏不好
+                                    ;  射击"（240°/s→120°/s）
 ANGLE_SPAN  equ 360
 TRIG_SHIFT  equ 10                  ; cosTBL/sinTBL 标度 x1024，右移 10（必须 sar）
 FIX_SHIFT   equ 16                  ; 子弹/坦克位移 16.16 定点

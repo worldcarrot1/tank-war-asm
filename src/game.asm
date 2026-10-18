@@ -1353,6 +1353,16 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5, ARENA6, ARENA7, ARENA8
     stT40bL equ ($ - stT40b)
     stT40c  db "T40_FLUSH_BRICK_DEAD_AFTER(expect0)="
     stT40cL equ ($ - stT40c)
+    stT41e  db "T41_SWAP_BIND(expect1)="
+    stT41eL equ ($ - stT41e)
+    stT41a  db "T41_PIERCE_ALIVE(expect1)="
+    stT41aL equ ($ - stT41a)
+    stT41b  db "T41_PIERCE_HP(expect1)="
+    stT41bL equ ($ - stT41b)
+    stT41c  db "T41_PIERCE_BULLET_ACTIVE(expect1)="
+    stT41cL equ ($ - stT41c)
+    stT41d  db "T41_UNBOUND_SELFHIT_DEAD(expect0)="
+    stT41dL equ ($ - stT41d)
     stT15p  db "T15_LASER_TWOSTAGE(expect3)="
     stT15pL equ ($ - stT15p)
     stT16p  db "T16_REFL_TWOSTAGE(expect3)="
@@ -3752,8 +3762,58 @@ T40Band:
     invoke AdvanceTicks, 8           ; 挤出墙面反向回飞 -> 自灭
     invoke Chk, offset stT40c, stT40cL, tanks[0*SIZEOF TANK].alive, 0
 
+    ; ==== T41 换位弹对己穿透回归锁（会话 33）：SK_SWAP 发动=发射并绑定
+    ;  swapBul（渲染=射手同色）。把绑定弹拉回射手头顶 2px/tick 下压：
+    ;  age 早已过宽限、AABB 持续重叠却不掉血不销毁（=穿透）；随后手动
+    ;  解绑（swapBul=-1，模拟换位完成/弹到期），同场景必须回退为普通弹
+    ;  自伤语义（射手死亡）。地图沿用 T40 清场（全空+第 6 行砖带远离
+    ;  本弹道），col3 走廊无遮挡 ====
+    invoke Mark, 341
+    call ResetTanks
+    mov matchOver, 0
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_UP
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].fireCd, 0
+    mov tanks[0*SIZEOF TANK].skill, SK_SWAP
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 技能键=发射+绑定 swapBul（T20 同款）
+    mov inputTable[20], 0
+    mov ebx, tanks[0*SIZEOF TANK].swapBul
+    mov lGot, 0
+    cmp ebx, 0
+    jl T41BindBad                        ; 防御：绑定失败则跳过改场（不该发生）
+    mov lGot, 1
+T41BindBad:
+    invoke Chk, offset stT41e, stT41eL, lGot, 1
+    cmp ebx, 0
+    jl T41Done
+    imul ebx, ebx, SIZEOF BULLET
+    add ebx, offset bullets              ; &bullets[swapBul]
+    mov (BULLET ptr [ebx]).vx, 0
+    mov (BULLET ptr [ebx]).vy, 2 * FIX_ONE ; 2px/tick 垂直下压
+    mov (BULLET ptr [ebx]).subpxX, 0
+    mov (BULLET ptr [ebx]).subpxY, 0
+    mov (BULLET ptr [ebx]).x, 100        ; 弹 AABB x[100,108) ⊂ 射手 x[96,121)
+    mov (BULLET ptr [ebx]).y, 408        ; 车头上方 8px，~1 tick 起持续重叠
+    invoke AdvanceTicks, 6
+    invoke Chk, offset stT41a, stT41aL, tanks[0*SIZEOF TANK].alive, 1
+    invoke Chk, offset stT41b, stT41bL, tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov eax, (BULLET ptr [ebx]).active
+    invoke Chk, offset stT41c, stT41cL, eax, 1
+    mov tanks[0*SIZEOF TANK].swapBul, -1 ; 解绑 -> 普通弹自伤语义回归
+    invoke AdvanceTicks, 2
+    invoke Chk, offset stT41d, stT41dL, tanks[0*SIZEOF TANK].alive, 0
+T41Done:
+
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
-    invoke Mark, 322
+    invoke Mark, 342
     cld
     mov esi, offset saveMap
     mov edi, offset mapData
@@ -5137,6 +5197,8 @@ FL_LenDone:
     mov (TANK ptr [eax]).aimSkill, SKILL_NONE
     mov prevTank, -1
     mov prevN, 0
+    invoke SndPlay, 7                 ; 会话 33：激光发射啸声（300->1500Hz
+                                      ;  上行正弦滑音，与开炮下行音区分）
     ret
 FireAimedLaser endp
 
@@ -6395,6 +6457,18 @@ TankHitLoop:
         mov eax, esi
         mov ecx, (BULLET ptr [edi]).owner
         .if eax == ecx
+            ; 会话 33：换位绑定弹（swapBul 指向、渲染成射手同色的那颗）
+            ; 对射手直接穿透——不结算伤害也不销毁，继续飞行仍可命中
+            ; 他人；绑定在换位完成/弹消失时解除，恢复普通自伤规则
+            mov eax, (TANK ptr [edx]).swapBul
+            cmp eax, -1
+            je THR_Grace1
+            imul eax, eax, SIZEOF BULLET
+            add eax, offset bullets
+            cmp eax, edi
+            je TankNext2
+THR_Grace1:
+            ; 会话 30：出膛 1 tick 宽限（age<=1 不判射手）
             mov eax, (BULLET ptr [edi]).age
             cmp eax, 1
             jbe TankNext2

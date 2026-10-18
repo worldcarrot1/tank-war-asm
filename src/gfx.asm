@@ -1004,6 +1004,22 @@ TankSkip:
 BulletLoop:
     mov eax, (BULLET ptr [esi]).active
     .if eax != 0
+        ; 会话 33：换位绑定弹（owner.swapBul==本弹号）涂射手车体同色，
+        ; 一眼分清"哪颗能换位"；解绑（换位完成/弹消失）恢复默认色
+        mov ecx, (BULLET ptr [esi]).owner
+        mov eax, ecx
+        imul eax, eax, SIZEOF TANK
+        add eax, offset tanks
+        mov edx, (TANK ptr [eax]).swapBul
+        cmp edx, ebx
+        jne GLB_Normal
+        lea eax, brushP1
+        mov eax, [eax + ecx*4]
+        invoke SelectObject, hdcBack, eax
+        jmp GLB_Sel
+GLB_Normal:
+        invoke SelectObject, hdcBack, brushBullet
+GLB_Sel:
         mov eax, (BULLET ptr [esi]).x
         add eax, 1
         mov rc.left, eax

@@ -335,7 +335,24 @@ T40_FLUSH_BRICK_HP_ONFIRE(expect1)=1
 T40_FLUSH_BRICK_DEAD_AFTER(expect0)=0
  want 0
  OK
-MARK=322
+MARK=341
+
+T41_SWAP_BIND(expect1)=1
+ want 1
+ OK
+T41_PIERCE_ALIVE(expect1)=1
+ want 1
+ OK
+T41_PIERCE_HP(expect1)=1
+ want 1
+ OK
+T41_PIERCE_BULLET_ACTIVE(expect1)=1
+ want 1
+ OK
+T41_UNBOUND_SELFHIT_DEAD(expect0)=0
+ want 0
+ OK
+MARK=342
 
 ST_FAILS=0
 

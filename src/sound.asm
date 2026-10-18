@@ -51,6 +51,7 @@ SND_PICK         equ 3
 SND_COUNT        equ 4
 SND_SWAP         equ 5
 SND_MINE         equ 6                 ; 布雷确认（会话 23 新增）
+SND_LASER        equ 7                 ; 激光发射（会话 33 新增）
 
 NOTE_SHOT        equ 2646              ; 0.12s
 ; 击败音（会话 26 重制）：PvZ 小丑盒子"开箱"质感 = 盒盖弹开短滑音
@@ -63,6 +64,7 @@ NOTE_BOOM        equ BK_POP + BK_PING*BK_NC + BK_POOF   ; 7580 ≈ 0.34s
 NOTE_HALF        equ 1652              ; 0.075s
 NOTE_CNT         equ 2205              ; 0.10s
 NOTE_THIRD       equ 1101              ; 0.05s
+NOTE_LASR        equ 3969              ; 0.18s 激光啸（会话 33）
 
 .data
     align 4
@@ -76,6 +78,7 @@ NOTE_THIRD       equ 1101              ; 0.05s
     sndCntBuf   db 2360 dup (?)     ; 头+0.10s
     sndSwapBuf  db 3460 dup (?)     ; 头+0.15s
     sndMineBuf  db 2300 dup (?)     ; 头+2*0.05s（布雷闷双响，会话 23）
+    sndLaserBuf db 4100 dup (?)     ; 头+0.18s（会话 33 激光发射）
     hdrBuf      db 44 dup (0)       ; BGM 文件头
     rngSt       dd 12345            ; 噪声 LCG
     tmpAcc      dd 0                ; 滑频相位累积
@@ -606,6 +609,12 @@ BK_Ping:
     invoke GenSquare, offset sndMineBuf+44, 220, NOTE_THIRD, 60
     invoke GenSquare, offset sndMineBuf+44+NOTE_THIRD, 165, NOTE_THIRD, 400
     invoke WrHead, offset sndMineBuf, NOTE_THIRD*2
+    ; 激光发射（会话 33，玩家点名"激光发射时加音效"）：上行啸声
+    ; 300->1500Hz 正弦滑频 0.18s——开炮音是下行（900->180），方向相反
+    ; 一听即辨；GenSlideSoft 纯音不刺耳，尾衰减 600 样本防爆音
+    invoke GenSlideSoft, offset sndLaserBuf+44, 300, 1500, NOTE_LASR
+    invoke DecayTail, offset sndLaserBuf+44, NOTE_LASR, 600
+    invoke WrHead, offset sndLaserBuf, NOTE_LASR
     ret
 SndInit endp
 
@@ -687,7 +696,8 @@ SndBgmSetTrack proc trk: dword
 SndBgmSetTrack endp
 
 ; ------------------------------------------------------------
-; SndPlay -- 播放音效（id: 1开炮 2爆炸 3拾取 4倒计时 5虚影/换位 6布雷）
+; SndPlay -- 播放音效（id: 1开炮 2爆炸 3拾取 4倒计时 5虚影/换位 6布雷
+;              7激光发射）
 ; sfxOn=0 时静默
 ; ------------------------------------------------------------
 SndPlay proc uses ebx id: dword
@@ -708,6 +718,8 @@ SndPlay proc uses ebx id: dword
         invoke PlaySoundA, offset sndSwapBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
     .elseif eax == SND_MINE
         invoke PlaySoundA, offset sndMineBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_LASER
+        invoke PlaySoundA, offset sndLaserBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
     .endif
     ret
 SndPlay endp

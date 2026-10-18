@@ -1,9 +1,13 @@
 ; ============================================================
 ; sound.asm —— 程序化 8-bit 电子音（上世纪芯片音风格）
-; 启动时生成：BGM 循环 WAV 写 %TEMP%\tankwar_bgm.wav
-; （PlaySound 文件循环播放）；音效生成到内存 buffer
-; （PlaySound SND_MEMORY 异步）。音量经 waveOutSetVolume
-; 全局主音量；音效开关 sfxOn（ui.asm）。
+; 启动时生成：BGM 整循环样本填 bgmBuf，同时留档
+; %TEMP%\tankwar_bgm.wav（仅排障用）；音效生成到内存 buffer
+; （PlaySound SND_MEMORY 异步）。
+; 会话 26：BGM 改走 waveOut 独立流（PlaySound 只有单一全局
+; 通道，任何音效都会把 SND_LOOP 的 BGM 掐死——"退出到主页面
+; 音乐突然消失"元凶）；waveOut 流与 PlaySound 音效流并存，
+; 由系统混音。音量经 waveOutSetVolume 全局主音量（两路同受）；
+; 音效开关 sfxOn（ui.asm）。
 ; ============================================================
 .586
 .model flat, stdcall
@@ -18,6 +22,10 @@ public SndVolume
 
 PlaySoundA              PROTO stdcall :DWORD,:DWORD,:DWORD
 waveOutSetVolume        PROTO stdcall :DWORD,:DWORD
+waveOutOpen             PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+waveOutClose            PROTO stdcall :DWORD
+waveOutPrepareHeader    PROTO stdcall :DWORD,:DWORD,:DWORD
+waveOutWrite            PROTO stdcall :DWORD,:DWORD,:DWORD
 GetEnvironmentVariableA PROTO stdcall :DWORD,:DWORD,:DWORD
 lstrcatA                PROTO stdcall :DWORD,:DWORD
 extern sfxOn            :dword        ; 音效开关（ui.asm）
@@ -43,7 +51,13 @@ SND_SWAP         equ 5
 SND_MINE         equ 6                 ; 布雷确认（会话 23 新增）
 
 NOTE_SHOT        equ 2646              ; 0.12s
-NOTE_BOOM        equ 8599              ; 0.39s（小丑盒爆裂纯噪声，会话 24 复原）
+; 击败音（会话 26 重制）：PvZ 小丑盒子"开箱"质感 = 盒盖弹开短滑音
+; + 八音盒上行颤音 14 音 + 落盖噪声尾巴。总长 BK_POP+BK_PING*BK_NC+BK_POOF
+BK_POP           equ 220               ; 0.010s 弹开
+BK_PING          equ 480               ; 0.022s 每音
+BK_NC            equ 14                ; 音数
+BK_POOF          equ 640               ; 0.029s 落盖噪声
+NOTE_BOOM        equ BK_POP + BK_PING*BK_NC + BK_POOF   ; 7580 ≈ 0.34s
 NOTE_HALF        equ 1652              ; 0.075s
 NOTE_CNT         equ 2205              ; 0.10s
 NOTE_THIRD       equ 1101              ; 0.05s
@@ -55,12 +69,11 @@ NOTE_THIRD       equ 1101              ; 0.05s
     envTag      db "TEMP", 0
     ; 音效内存镜像（44 字节 WAV 头 + PCM）
     sndShotBuf  db 2760 dup (?)     ; 头+0.12s
-    sndBoomBuf  db 8800 dup (?)     ; 头+0.39s
+    sndBoomBuf  db 8800 dup (?)     ; 头+0.34s（八音盒开箱音，会话 26）
     sndPickBuf  db 3460 dup (?)     ; 头+0.15s
     sndCntBuf   db 2360 dup (?)     ; 头+0.10s
     sndSwapBuf  db 3460 dup (?)     ; 头+0.15s
     sndMineBuf  db 2300 dup (?)     ; 头+2*0.05s（布雷闷双响，会话 23）
-    tmpBuf      db 4096 dup (?)     ; BGM 逐音符工作区
     hdrBuf      db 44 dup (0)       ; BGM 文件头
     rngSt       dd 12345            ; 噪声 LCG
     tmpAcc      dd 0                ; 滑频相位累积
@@ -76,6 +89,32 @@ NOTE_THIRD       equ 1101              ; 0.05s
     melodyN     = 32
 NOTE_SAMP       equ 3307              ; 0.15s @ 22050
 BGM_REPS        equ 2                 ; 2 遍 = 9.6s 循环
+BGM_TOTAL       equ BGM_REPS*melodyN*NOTE_SAMP   ; 211648 字节
+
+; ---- 会话 26：BGM 独立 waveOut 流（与 PlaySound 音效混音并存）----
+WAVE_MAPPER     equ 0FFFFFFFFh
+WHDR_BEGINLOOP  equ 0004h
+WHDR_ENDLOOP    equ 0008h
+
+.data
+    align 4
+    bgmBuf      db BGM_TOTAL dup (?)  ; 全循环 8bit 单声道样本（waveOut 缓冲）
+    bgmDev      dd 0                  ; HWAVEOUT
+    bgmLive     dd 0                  ; 1=独立流已在播
+    bgmHdr      dd 0                  ; WAVEHDR(x86, 32B)：lpData /
+            dd 0, 0, 0                ;  dwBufferLength / dwBytesRecorded /
+            dd 0, 0, 0, 0             ;  dwUser / dwFlags / dwLoops /
+                                      ;  lpNext / reserved
+    bgmFmt      dw 1                  ; WAVEFORMATEX(18B)：wFormatTag=PCM
+            dw 1                      ;  nChannels=mono
+            dd SR                     ;  nSamplesPerSec
+            dd SR                     ;  nAvgBytesPerSec（8bit 单声道）
+            dw 1                      ;  nBlockAlign
+            dw 8                      ;  wBitsPerSample
+            dw 0                      ;  cbSize
+    ; 八音盒音高表：C6 起上行折返颤音（摇晃开盖的叮当感，14 音）
+    bkFreq      dd 1046, 1175, 1318, 1175, 1318, 1568, 1318
+                dd 1568, 1760, 1568, 1760, 2093, 1760, 2093
 
 .code
 
@@ -241,23 +280,27 @@ GenNoise endp
 ; SndInit -- 启动时生成 BGM 文件与全部音效
 ; ------------------------------------------------------------
 SndInit proc uses ebx esi edi
-    ; ---- BGM 文件 ----
+    ; ---- BGM：逐音符填 bgmBuf（waveOut 独立流数据），并留档一份
+    ;      %TEMP%\tankwar_bgm.wav 供排障。旧版 CreateFile 失败会直接
+    ;      ret，把全部音效生成一起跳过（隐形静音 bug）；现文件仅为
+    ;      留档，失败不再影响任何音频。 ----
     invoke GetEnvironmentVariableA, offset envTag, offset bgmPath, 240
     invoke lstrcatA, offset bgmPath, offset tagBgm
-    invoke WrHead, offset hdrBuf, BGM_REPS*melodyN*NOTE_SAMP
     invoke CreateFileA, offset bgmPath, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0
     mov hFile, eax
-    .if eax == -1
-        ret                       ; 打不开（无 TEMP）：跳过 BGM
-    .endif
-    invoke WriteFile, hFile, offset hdrBuf, 44, addr wrBytes, 0
+    invoke WrHead, offset hdrBuf, BGM_TOTAL
     xor ebx, ebx
 BG_Rep:
     xor esi, esi
 BG_Note:
+    mov eax, ebx
+    imul eax, eax, melodyN
+    add eax, esi
+    imul eax, eax, NOTE_SAMP
+    mov edx, OFFSET bgmBuf
+    add edx, eax
     mov eax, melody[esi*4]
-    invoke GenSquare, offset tmpBuf, eax, NOTE_SAMP, 300
-    invoke WriteFile, hFile, offset tmpBuf, NOTE_SAMP, addr wrBytes, 0
+    invoke GenSquare, edx, eax, NOTE_SAMP, 300
     inc esi
     .if esi < melodyN
         jmp BG_Note
@@ -266,16 +309,32 @@ BG_Note:
     .if ebx < BGM_REPS
         jmp BG_Rep
     .endif
-    invoke CloseHandle, hFile
+    .if hFile != -1
+        invoke WriteFile, hFile, offset hdrBuf, 44, addr wrBytes, 0
+        invoke WriteFile, hFile, offset bgmBuf, BGM_TOTAL, addr wrBytes, 0
+        invoke CloseHandle, hFile
+    .endif
     ; ---- 会话 23 电子音重制 ----
     ; 开炮：尖锐"pew"下滑方波 1500->140Hz，0.12s（旧 900->280 太闷）
     invoke GenSlide, offset sndShotBuf+44, 1500, 140, NOTE_SHOT
     invoke DecayTail, offset sndShotBuf+44, NOTE_SHOT, 200
     invoke WrHead, offset sndShotBuf, NOTE_SHOT
-    ; 爆炸（坦克击败音，会话 24 复原）：小丑盒爆裂纯噪声 0.39s
-    ; （LCG 随机裂音 + 线性衰减包络，即旧版"小丑盒爆炸"质感；
-    ;   会话 23 曾叠加 55Hz 低频轰鸣，玩家要求换回爆裂原味）
-    invoke GenNoise, offset sndBoomBuf+44, NOTE_BOOM
+    ; 爆炸（坦克击败音，会话 26 重制）：PvZ 小丑僵尸"小丑盒子打开"
+    ; 音效 = 八音盒上行折返颤音 14 音（方波+快速衰减的拨弦叮当感），
+    ; 前置盒盖弹开短滑音 900->300Hz，尾部落盖噪声。旧版通长纯噪声
+    ; 爆裂（会话 24"复原"）被指太吵杂，改音乐盒质感。
+    invoke GenSlide, offset sndBoomBuf+44, 900, 300, BK_POP
+    mov edi, OFFSET sndBoomBuf+44+BK_POP
+    xor esi, esi
+BK_Ping:
+    mov eax, bkFreq[esi*4]
+    invoke GenSquare, edi, eax, BK_PING, 380
+    add edi, BK_PING
+    inc esi
+    .if esi < BK_NC
+        jmp BK_Ping
+    .endif
+    invoke GenNoise, edi, BK_POOF
     invoke WrHead, offset sndBoomBuf, NOTE_BOOM
     ; 拾取：明亮上行大三琶音 A5->E6->A6（芯片过关感）
     invoke GenSquare, offset sndPickBuf+44, 880, NOTE_THIRD, 60
@@ -298,10 +357,41 @@ BG_Note:
 SndInit endp
 
 ; ------------------------------------------------------------
-; SndBgmStart -- 循环播放背景音乐
+; SndBgmStart -- 循环播放背景音乐（会话 26：waveOut 独立流）
+; PlaySound 只有一条全局通道：任何 SND_MEMORY 音效都会掐死它的
+; SND_LOOP BGM 且不再恢复——正是"退出到主页面音乐突然消失"的
+; 根因。改 waveOutOpen+Prepare+Write 一条独立流（dwLoops=-1 +
+; BEGINLOOP|ENDLOOP 无限循环），与 PlaySound 音效各自成流、系统
+; 混音；主音量 waveOutSetVolume(0,..) 对两路同时生效。幂等。
 ; ------------------------------------------------------------
 SndBgmStart proc
-    invoke PlaySoundA, offset bgmPath, 0, SND_FILENAME or SND_ASYNC or SND_LOOP
+    mov eax, bgmLive
+    .if eax != 0
+        ret
+    .endif
+    invoke waveOutOpen, addr bgmDev, WAVE_MAPPER, addr bgmFmt, 0, 0, 0
+    .if eax != 0
+        ret                             ; 无声卡/占用：静默跳过 BGM
+    .endif
+    mov eax, OFFSET bgmBuf
+    mov bgmHdr, eax                     ; lpData
+    mov bgmHdr+4, BGM_TOTAL             ; dwBufferLength
+    mov bgmHdr+16, 0                    ; dwFlags 先清零再 Prepare
+    mov bgmHdr+20, -1                   ; dwLoops=-1 → 无限循环
+    invoke waveOutPrepareHeader, bgmDev, addr bgmHdr, 32
+    .if eax != 0
+        invoke waveOutClose, bgmDev
+        mov bgmDev, 0
+        ret
+    .endif
+    or bgmHdr+16, WHDR_BEGINLOOP or WHDR_ENDLOOP
+    invoke waveOutWrite, bgmDev, addr bgmHdr, 32
+    .if eax == 0
+        mov bgmLive, 1
+    .else
+        invoke waveOutClose, bgmDev
+        mov bgmDev, 0
+    .endif
     ret
 SndBgmStart endp
 

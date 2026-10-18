@@ -618,4 +618,44 @@
       （被拒轴余数清零策略的观感）；主页装饰密度/配色是否合口味
       （夜间主题下样块对比度）、慢旋坦克与巡逻车道的节奏
 
+### 2026-10-18 会话 26：改键互换修复 / BGM 独立流 / 八音盒开箱音 / 主页大坦克（用户 4 项需求）
+
+- [x] 点行改键失效根因与修复（ui.asm ST_NUMSEL 改键扫描）：旧"冲突拒绝"
+      把 24 槽（含未上场玩家 3/4 默认键）全部计入冲突，按到即静默保持
+      闪烁=用户所见"无法修改按键"。改为**冲突互换**——新键被占用时本槽
+      旧键塞给占用槽、新键入本槽（UT_Conf 命中占用者即交换写入并结束
+      等待），空闲键走 UT_Grab 直写；Esc 取消 / 点行切换目标 / rebindCool
+      3 tick 冷却全部保留
+- [x] BGM"退出到主页面音乐消失"修复（sound.asm）：根因 PlaySound 单一
+      全局通道，SND_MEMORY 音效必杀 SND_LOOP BGM。BGM 改独立 waveOut 流：
+      SndInit 逐音符直接填 bgmBuf（BGM_TOTAL=211648），SndBgmStart 幂等
+      开 WAVE_MAPPER（WAVEFORMATEX PCM/mono/22050/8bit，WAVEHDR 32B
+      手工布局 lpData/buflen/flags/loops…，Prepare 后 or BEGINLOOP|ENDLOOP，
+      dwLoops=-1 无限循环，Write）；任一步失败静默降级不影响音效与游戏；
+      顺带修掉旧版 CreateFile 失败即 ret 跳过全部音效生成的隐形静音 bug
+      （wav 仅留档）。winmm 已在 link；waveOut 五函数本地 PROTO（手写
+      inc 无声明，重复声明不存在）。SndVolume 主音量对两路同效
+- [x] 击败音效 → PvZ 小丑僵尸小丑盒子**打开**音（八音盒叮当，非爆裂噪声）：
+      盒盖弹开 GenSlide 900→300Hz×220 + bkFreq 14 音上行折返颤音
+      （1046~2093，每音 480 样本方波 380 尾衰减）+ GenNoise 落盖 640，
+      NOTE_BOOM=7580≈0.34s；sndBoomBuf 8800 容量不变
+- [x] 主页视觉收敛（用户："放一张非常大的立体坦克图标，不要用过多的元素，
+      太嘈杂了"）：删除会话 25 全部装饰（174 行渲染段+UMIconBox 宏+
+      UiTick 的 inc demoT），改画一张静止大立体卡通坦克（左下，轮廓
+      x46..409/y365..602：落地投影/斜置 Polygon 炮管(tankBarrel 8 坐标表)/
+      椭圆炮口制退器/圆角炮塔+舱盖/车体/暗部履带圆角带+前后驱动轮
+      4 负重轮+轮心盖）；三色明暗 brushTankHi(F0F0F0)/Mid(C0C0C0)/
+      Dark(5A5A5A)+3px 近黑描边 penTank 于 UiInit 创建；矩形全部
+      RoundRect/Ellipse/Polygon（Ellipse 演示页已有先例）；SelectObject
+      保存 uiOldPen/uiOldBr 成对归还；夜间近黑底上白体黑边同样成立
+- [x] 文档：GAME_DESIGN 会话 26 追加段；技能节"冲突校验"口径改互换；
+      （会话 25 装饰段保留为历史，标注下架）
+- [x] 验收：build 零警告；selftest 38 组 75 断言 0 FAIL、6 次逐字节一致
+      （md5 与改前基线相同=音频/菜单改动不触碰对局确定性）；GUI 冒烟
+      存活且 tankwar_bgm.wav 恰 211692 字节
+- [ ] ⚠ 手测待补：对局开第一枪后主页/设置页 BGM 是否仍在（waveOut 流
+      与 PlaySound 混音需真机听测）；音量条拖动对 BGM 是否生效；
+      点键位行→按 I/T/G 等隐藏玩家默认键是否即时互换、按空键是否直写；
+      大坦克观感（比例/描边粗细/夜间对比）；八音盒开箱音量感
+
 

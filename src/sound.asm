@@ -266,6 +266,70 @@ GL_Loop:
 GenSlide endp
 
 ; ------------------------------------------------------------
+; GenSlideSoft -- 线性滑频正弦绝对写（会话 30 开炮音去刺耳：方波谐波
+; 是"刺耳"元凶，改抛物线近似正弦）。每样本相位步进从 (f0<<16)/SR 线性
+; 插值到 (f1<<16)/SR；低 16 位=周期内相位；byte = 96 ± amp*近似sin
+; ------------------------------------------------------------
+GenSlideSoft proc uses ebx ecx edx esi edi pBuf: dword, f0: dword, f1: dword, nSamp: dword
+local ph: dword, stepA: dword, dstep: dword
+    mov ph, 0
+    mov eax, f0
+    shl eax, 16
+    xor edx, edx
+    mov ebx, SR
+    div ebx
+    mov stepA, eax                  ; 起始每样本相位步进
+    mov eax, f1
+    shl eax, 16
+    xor edx, edx
+    mov ebx, SR
+    div ebx
+    sub eax, stepA
+    mov dstep, eax                  ; 步进差（可为负，滑频斜率）
+    mov esi, pBuf
+    xor ecx, ecx
+GLS_Loop:
+    mov eax, dstep
+    imul eax, ecx
+    cdq
+    idiv nSamp
+    add eax, stepA
+    add ph, eax
+    mov eax, ph
+    and eax, 0FFFFh                 ; p = 周期内相位
+    mov edx, 65536
+    sub edx, eax
+    cmp eax, 32768
+    jbe GLS_NoMir
+    mov eax, edx
+GLS_NoMir:
+    mov edx, 32768
+    sub edx, eax
+    imul eax, edx                   ; u*(32768-u)
+    shr eax, 14                     ; ≤16384
+    imul eax, 56                    ; 满幅 ±56（96±56=40..152，对齐方波响度）
+    shr eax, 14
+    mov edx, ph
+    and edx, 0FFFFh
+    cmp edx, 32768
+    jae GLS_Neg
+    mov edx, 96
+    add edx, eax
+    mov [esi], dl
+    jmp GLS_N
+GLS_Neg:
+    mov edx, 96
+    sub edx, eax
+    mov [esi], dl
+GLS_N:
+    inc esi
+    inc ecx
+    cmp ecx, nSamp
+    jb GLS_Loop
+    ret
+GenSlideSoft endp
+
+; ------------------------------------------------------------
 ; GenNoise -- 白噪声爆炸（pBuf, nSamp），幅度线性衰减
 ; ------------------------------------------------------------
 GenNoise proc uses ebx ecx edx esi pBuf: dword, nSamp: dword
@@ -502,9 +566,10 @@ BG2_Bass:
         invoke WriteFile, hFile, offset bgmBuf, BGM_TOTAL, addr wrBytes, 0
         invoke CloseHandle, hFile
     .endif
-    ; ---- 会话 23 电子音重制 ----
-    ; 开炮：尖锐"pew"下滑方波 1500->140Hz，0.12s（旧 900->280 太闷）
-    invoke GenSlide, offset sndShotBuf+44, 1500, 140, NOTE_SHOT
+    ; ---- 会话 23 电子音重制 / 会话 30 去刺耳 ----
+    ; 开炮：正弦滑频 900->180Hz（旧方波 1500->140 谐波尖锐被指"刺耳"，
+    ; 换 GenSlideSoft 纯音+中低音区），0.12s，尾衰减防爆音
+    invoke GenSlideSoft, offset sndShotBuf+44, 900, 180, NOTE_SHOT
     invoke DecayTail, offset sndShotBuf+44, NOTE_SHOT, 200
     invoke WrHead, offset sndShotBuf, NOTE_SHOT
     ; 爆炸（坦克击败音，会话 26 重制）：PvZ 小丑僵尸"小丑盒子打开"

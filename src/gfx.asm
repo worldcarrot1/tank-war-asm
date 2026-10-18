@@ -46,6 +46,8 @@ extern laserN      :dword          ; 激光路径（发射后显示）
 extern laserX      :dword
 extern laserY      :dword
 extern laserT      :dword
+extern laserD      :dword          ; 会话 30：束头推进距离（截断绘制用）
+extern laserLen    :dword
 extern prevN       :dword          ; 激光预览路径（瞄准中虚线）
 extern prevX       :dword
 extern prevY       :dword
@@ -1019,24 +1021,67 @@ BulletLoop:
         jmp BulletLoop
     .endif
 
-    ; 3b) 激光：发射路径（红实线）与瞄准预览（灰虚线）
+    ; 3b) 激光：会话 30 束头传播绘制——只画已到达的弧段，折线按
+    ;     Σmax(|dx|,|dy|) 度量逐段吃 esi（剩余束程），不足一段则线性
+    ;     插值出端点；传播完成后 laserT>0 全程显示，归零整条消失
     mov eax, laserT
     .if eax > 0 && laserN >= 2
         invoke SelectObject, hdcBack, penLaser
         mov eax, laserY[0]
         invoke MoveToEx, hdcBack, laserX[0], eax, 0
+        mov esi, laserD
         xor ebx, ebx
 GL_Seg:
-        inc ebx
-        mov eax, laserN
-        .if ebx < eax
-            mov edx, ebx
-            shl edx, 2
-            mov eax, laserY[edx]
-            mov ecx, laserX[edx]
-            invoke LineTo, hdcBack, ecx, eax
-            jmp GL_Seg
+        mov eax, ebx
+        inc eax
+        cmp eax, laserN
+        jge GL_Done
+        mov edx, laserX[eax*4]
+        sub edx, laserX[ebx*4]
+        jns GL_ADx
+        neg edx
+GL_ADx:
+        mov ecx, laserY[eax*4]
+        sub ecx, laserY[ebx*4]
+        jns GL_ADy
+        neg ecx
+GL_ADy:
+        cmp edx, ecx
+        jae GL_MaxK
+        mov edx, ecx
+GL_MaxK:
+        .if edx == 0
+            mov edx, 1
         .endif
+        mov ecx, edx                    ; L = 本段长
+        cmp esi, ecx
+        jb GL_Partial                   ; 束头落在本段内
+        sub esi, ecx
+        inc ebx
+        mov eax, laserX[ebx*4]
+        mov ecx, laserY[ebx*4]
+        invoke LineTo, hdcBack, eax, ecx
+        jmp GL_Seg
+GL_Partial:
+        mov eax, ebx
+        inc eax
+        mov edx, laserX[eax*4]
+        sub edx, laserX[ebx*4]          ; dx
+        mov eax, edx
+        imul esi                        ; edx:eax = dx*t
+        idiv ecx                        ; /L（有符号截零，|结果|<|dx|）
+        add eax, laserX[ebx*4]          ; px
+        push eax
+        mov eax, ebx
+        inc eax
+        mov edx, laserY[eax*4]
+        sub edx, laserY[ebx*4]          ; dy
+        imul esi
+        idiv ecx
+        add eax, laserY[ebx*4]          ; py
+        pop ecx
+        invoke LineTo, hdcBack, ecx, eax
+GL_Done:
     .endif
     mov eax, prevTank
     .if eax != -1 && prevN >= 2

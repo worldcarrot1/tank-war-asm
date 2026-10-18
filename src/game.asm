@@ -67,6 +67,8 @@ public laserN
 public laserX
 public laserY
 public laserT
+public laserD
+public laserLen
 public prevN
 public prevX
 public prevY
@@ -112,11 +114,16 @@ public prevTank
     laserN      dd 0
     laserX      dd MAX_LASER_PTS dup (0)
     laserY      dd MAX_LASER_PTS dup (0)
-    laserT      dd 0                 ; 显示剩余 tick
+    laserT      dd 0                 ; 显示剩余 tick（传播完成后开始倒数）
+    laserD      dd 0                 ; 会话 30：束头已走过的路径长度 px
+    laserLen    dd 0                 ; 路径总长（Σ 每段 max(|dx|,|dy|)，与伤害度量一致）
+    laserHitMask dd 0                ; 每发一次性命中掩码（跨 tick 窗口仍"每车至多一次"）
     prevN       dd 0
     prevX       dd MAX_LASER_PTS dup (0)
     prevY       dd MAX_LASER_PTS dup (0)
     prevTank    dd -1                ; 瞄准中的槽位（-1=无）
+    btBounced   dd 0                 ; 会话 30：本 tick 此弹是否已墙面反弹（禁同 tick 双轴翻速）
+    btBackCnt   dd 0                 ; 会话 30：嵌墙回退步数上限计数（>40 判死弹）
 
 ; ---- 字符画对战地图（20x15 字符/张，编译期嵌入）----
 ; 字符表：. 空地  # 钢墙  b 砖墙  ~ 水  - 冰  S 出生点
@@ -533,6 +540,86 @@ ARENA20 db "###############################"
        db "#..##.#####.#######...#####b..#"
        db "#S....#......................S#"
        db "###############################"
+ARENA21 db "###############################"
+       db "#S........#...#...........#..S#"
+       db "#....--..........~~~.b#.#.##..#"
+       db "#....--....ddd...~~~....#.....#"
+       db "####....##.ddd...~~~..#b##b##.#"
+       db "#.....................#.......#"
+       db "#.#.......##b.#.#######....####"
+       db "#.#.~~~...b...#.....#...--....#"
+       db "#.b.~~~...#.#b###.#b#.#.--....#"
+       db "#...~~~.....#.....#...#.--....#"
+       db "#.......##b##.###.#.###.......#"
+       db "#.....................#.......#"
+       db "#.########.~~~...ddd.......##.#"
+       db "#...#...#..~~~...ddd...---....#"
+       db "#.#.#...#..~~~.........---..#.#"
+       db "#.#.....#.........#.........#.#"
+       db "#.......b##.#####.b.#...#.....#"
+       db "#S........#.........#...#....S#"
+       db "###############################"
+
+ARENA22 db "###############################"
+       db "#S....#......................S#"
+       db "#.....#.##.~~~...---...~~~....#"
+       db "#.#...#....~~~...---...~~~....#"
+       db "#.#.#####..~~~.........~~~..#.#"
+       db "#.#.....b...........#.......#.#"
+       db "#.....#.###...#.....#.#######.#"
+       db "#.~~~.b.......#...........#...#"
+       db "#.~~~.###.ddd.#.#.dd....b##.b##"
+       db "#.~~~.....ddd.#.#.dd....#...#.#"
+       db "#.....###.....b.#.....###.###.#"
+       db "#.#.......#.#.................#"
+       db "#.##....#.b.###.....#...--.##.#"
+       db "#....dd.#...#...--..#...--....#"
+       db "###..dd.#.#.###.--.b###.--.##.#"
+       db "#.b.....#.#.#.........#.....#.#"
+       db "#..##.###.#.b.#.#...#.#...##..#"
+       db "#S............#.#...#........S#"
+       db "###############################"
+
+ARENA23 db "###############################"
+       db "#S....#.........#............S#"
+       db "#..##.#.#b.ddd..b.--..b.###...#"
+       db "#.....#....ddd..b.--..#.....#.#"
+       db "#.#####.#.......#.--.####...#.#"
+       db "#...#...#.....#.#.......#.....#"
+       db "#b.....##.#b#.#.#####.#.....#.#"
+       db "#..~~~........b.....#.#.ddd.#.#"
+       db "#..~~~.##.---.###b#.b.#.ddd.#.#"
+       db "#..~~~..#.---.................#"
+       db "#.......#.....#######...#b#####"
+       db "#.......#.....................#"
+       db "###.....#.....#.~~~....~~~..#.#"
+       db "#.b..dd...--..#.~~~....~~~..#.#"
+       db "#.#..dd.#.--.##.~~~.#..~~~..b.#"
+       db "#.#.....#...........#.........#"
+       db "#..######.#####...#.###.####..#"
+       db "#S................#..........S#"
+       db "###############################"
+
+ARENA24 db "###############################"
+       db "#S..........b................S#"
+       db "#....--.##......ddd.##.---....#"
+       db "#....--....dd...ddd....---....#"
+       db "#..........dd.#.....##.....##.#"
+       db "#.............#...#.........#.#"
+       db "##......#####.#...###.#.......#"
+       db "#..~~~..#.............#..~~~..#"
+       db "#..~~~..#.#####.---...##.~~~..#"
+       db "#..~~~..#.#...#.---......~~~..#"
+       db "#......##.#...#.....###.......#"
+       db "#...b...........#.b...#.....#.#"
+       db "#.bb#.#..~~~.b#.#.##b.......#.#"
+       db "#.#...#..~~~..#...#....ddd....#"
+       db "#.#.#.#b.~~~..##b##.##.ddd.####"
+       db "#.#.#.........................#"
+       db "#...#.b.##b.#####.###...b##...#"
+       db "#S....#...........#..........S#"
+       db "###############################"
+
 arenaTable dd ARENA1,
            ARENA2,
            ARENA3,
@@ -552,7 +639,11 @@ arenaTable dd ARENA1,
            ARENA17,
            ARENA18,
            ARENA19,
-           ARENA20
+           ARENA20,
+           ARENA21,
+           ARENA22,
+           ARENA23,
+           ARENA24
     logName     db "selftest.log", 0
     selftestArg db "selftest"
     nlStr       db 13, 10
@@ -723,6 +814,22 @@ arenaTable dd ARENA1,
     stT38cL equ ($ - stT38c)
     stT38d  db "T38_CORNER_FULLSTOP_X(expect0)="
     stT38dL equ ($ - stT38d)
+    stT39a  db "T39_LASER_HEAD_ONFIRE(expect0)="
+    stT39aL equ ($ - stT39a)
+    stT39b  db "T39_LASER_VICTIM_INTACT_ONFIRE(expect1)="
+    stT39bL equ ($ - stT39b)
+    stT39c  db "T39_LASER_PATH_2PTS(expect2)="
+    stT39cL equ ($ - stT39c)
+    stT39d  db "T39_LASER_KILL_AFTER_PROP(expect0)="
+    stT39dL equ ($ - stT39d)
+    stT39e  db "T39_LASER_N_HOLD(expect2)="
+    stT39eL equ ($ - stT39e)
+    stT40a  db "T40_FLUSH_BRICK_ALIVE_ONFIRE(expect1)="
+    stT40aL equ ($ - stT40a)
+    stT40b  db "T40_FLUSH_BRICK_HP_ONFIRE(expect1)="
+    stT40bL equ ($ - stT40b)
+    stT40c  db "T40_FLUSH_BRICK_DEAD_AFTER(expect0)="
+    stT40cL equ ($ - stT40c)
     stT15p  db "T15_LASER_TWOSTAGE(expect3)="
     stT15pL equ ($ - stT15p)
     stT16p  db "T16_REFL_TWOSTAGE(expect3)="
@@ -1823,7 +1930,8 @@ T13Bad:
     invoke Chk, offset stT14c, stT14cL, lGot, 2
 
     ; ==== T15 激光炮：会话 22 两段式（一段持续虚线预览不限时；再按技能键
-    ;      起 78 tick(1.3s) 倒计时后发射穿墙直线伤害；1HP 即杀） ====
+    ;      起 42 tick(0.7s，会话 30 由 78 缩短) 倒计时后发射；束头逐 tick
+    ;      传播扫过才判伤；1HP 即杀） ====
     invoke Mark, 151
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
@@ -1852,12 +1960,12 @@ T13Bad:
     .if ecx == 0 && edx == 2
         inc lPass                    ; b) 两段预览持续挂载（缓冲未清）
     .endif
-    ; 第二段：再按技能键 -> 78 tick 倒计时
+    ; 第二段：再按技能键 -> 42 tick 倒计时
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                ; 二段起爆（aimT=78，本 tick 已减到 77）
+    invoke GameUpdate                ; 二段起爆（aimT=42，本 tick 已减到 41）
     mov inputTable[20], 0
-    invoke AdvanceTicks, 40          ; 77-40=37 tick 未走完：仍不可发射
+    invoke AdvanceTicks, 40          ; 41-40=1 tick 未走完：仍不可发射
     mov eax, tanks[1*SIZEOF TANK].hp
     .if eax == TANK_HP
         inc lPass                    ; c) 二段第 40 tick 未提前发射
@@ -3043,8 +3151,85 @@ T38VWall:
     sub eax, 307
     invoke Chk, offset stT38d, stT38dL, eax, 0
 
+    ; ==== T39 激光传播（会话 30）：束头每 tick 推进 LASER_STEP_PX，
+    ;  发射 tick 目标不掉血（旧版整线瞬伤），束头扫过才死。场景同 T15：
+    ;  P1(32,416) dir0 直炮，P2(400,416)；出膛点 x≈44..61，P2 盒 [400,425)
+    ;  距束始 >300px：发射 tick laserD=0 无窗口、第 1 tick 窗 [0,300) 不及、
+    ;  第 2 tick 窗 [300,600) 扫过 -> 阵亡；全程 laserN=2 保持显示 ====
+    invoke Mark, 319
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].x, 32
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov mapData[13*COLS+10], TILE_STEEL
+    mov tanks[1*SIZEOF TANK].x, 400
+    mov tanks[1*SIZEOF TANK].y, 416
+    mov tanks[1*SIZEOF TANK].alive, 1
+    mov tanks[1*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].skill, SK_LASER
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                ; 第一段：挂预览
+    mov inputTable[20], 0
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                ; 二段起爆（aimT=42，本 tick 减到 41）
+    mov inputTable[20], 0
+    invoke AdvanceTicks, 40          ; aimT=1：未发
+    invoke GameUpdate                ; 本 tick aimT->0 -> FireAimedLaser
+    invoke Chk, offset stT39a, stT39aL, laserD, 0
+    invoke Chk, offset stT39b, stT39bL, tanks[1*SIZEOF TANK].hp, TANK_HP
+    invoke Chk, offset stT39c, stT39cL, laserN, 2
+    invoke AdvanceTicks, 2           ; 束头推进 2 tick（600px）扫过 P2
+    invoke Chk, offset stT39d, stT39dL, tanks[1*SIZEOF TANK].hp, 0
+    invoke Chk, offset stT39e, stT39eL, laserN, 2
+    mov mapData[13*COLS+10], TILE_EMPTY
+
+    ; ==== T40 贴砖墙开火回归锁（会话 30 棕色墙体 bug 修复）：全空沙盒 +
+    ;  第 6 行整行砖墙带（细墙实体 y[204,212)，同 T38 几何注记）。坦克
+    ;  (192,179) 底缘恰贴 204、dir=90 正下发炮：出膛弹盒 [204,212) 满叠
+    ;  墙面，旧版出生同帧回退+命中=当场自伤"无迹可寻"。新语义：age<=1
+    ;  出膛宽限不判射手（本 tick 存活满血）-> 弹被逐像素挤出墙面反向
+    ;  飞出，其后 1~2 tick 回飞命中自灭（轨迹可见，与 T12 同构） ====
+    invoke Mark, 321
+    xor edi, edi
+T40Clr:
+    mov mapData[edi], TILE_EMPTY
+    inc edi
+    cmp edi, COLS*ROWS
+    jb T40Clr
+    mov eax, 6
+    imul eax, eax, COLS
+    xor ebx, ebx
+T40Band:
+    mov mapData[eax+ebx], TILE_BRICK
+    inc ebx
+    cmp ebx, COLS
+    jb T40Band
+    call ResetTanks
+    mov matchOver, 0
+    mov tanks[0*SIZEOF TANK].x, 192
+    mov tanks[0*SIZEOF TANK].y, 179
+    mov tanks[0*SIZEOF TANK].dir, 90
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].fireCd, 0
+    mov inputTable[16], 1
+    invoke GameUpdate                ; 开火 tick：嵌墙回退+宽限
+    mov inputTable[16], 0
+    invoke Chk, offset stT40a, stT40aL, tanks[0*SIZEOF TANK].alive, 1
+    invoke Chk, offset stT40b, stT40bL, tanks[0*SIZEOF TANK].hp, TANK_HP
+    invoke AdvanceTicks, 8           ; 挤出墙面反向回飞 -> 自灭
+    invoke Chk, offset stT40c, stT40cL, tanks[0*SIZEOF TANK].alive, 0
+
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
-    invoke Mark, 320
+    invoke Mark, 322
     cld
     mov esi, offset saveMap
     mov edi, offset mapData
@@ -3684,7 +3869,8 @@ SegmentDamage proc uses ebx esi edi pXs: dword, pYs: dword, nPts: dword
     .if nPts < 2
         ret
     .endif
-    mov hitmask, 0
+    mov eax, laserHitMask            ; 会话 30：掩码改全局（配合分段传播）
+    mov hitmask, eax
     xor ebx, ebx                     ; 折线段起点下标
 SD_Seg:
     mov eax, nPts
@@ -3814,8 +4000,177 @@ SD_NextSample:
     inc ebx
     jmp SD_Seg
 SD_Done:
+    mov eax, hitmask
+    mov laserHitMask, eax
     ret
 SegmentDamage endp
+
+; ------------------------------------------------------------
+; SegmentDamageRange —— 会话 30：激光"传播式"伤害。只对折线上
+; 弧长区间 [d0, d1) 采样判伤（束头扫到哪打到哪）。度量与
+; SegmentDamage 完全一致（每段 sampN=max(|dx|,|dy|)，0→1），
+; 命中掩码用全局 laserHitMask：跨 tick 多个窗口叠加仍保证
+; 每辆坦克一发至多一次（与整条一次结算的旧语义等价）。
+; ------------------------------------------------------------
+SegmentDamageRange proc uses ebx esi edi pXs: dword, pYs: dword, nPts: dword, d0: dword, d1: dword
+    local x0:dword, y0:dword, segDx:dword, segDy:dword, sampN:dword
+    local stepX:dword, stepY:dword, base:dword, j:dword, jLo:dword, jHi:dword
+    local px:dword, py:dword, hitmask:dword
+    .if nPts < 2
+        ret
+    .endif
+    mov eax, laserHitMask
+    mov hitmask, eax
+    mov base, 0
+    xor ebx, ebx
+SR_Seg:
+    mov eax, nPts
+    dec eax
+    .if ebx >= eax
+        jmp SR_Done
+    .endif
+    mov ecx, pXs
+    mov eax, [ecx+ebx*4]
+    mov edx, [ecx+ebx*4+4]
+    sub edx, eax
+    mov x0, eax
+    mov segDx, edx
+    mov ecx, pYs
+    mov eax, [ecx+ebx*4]
+    mov edx, [ecx+ebx*4+4]
+    sub edx, eax
+    mov y0, eax
+    mov segDy, edx
+    ; sampN = max(|dx|,|dy|)，0 段取 1
+    mov eax, segDx
+    test eax, eax
+    jns SR_AbsDX
+    neg eax
+SR_AbsDX:
+    mov ecx, segDy
+    test ecx, ecx
+    jns SR_AbsDY
+    neg ecx
+SR_AbsDY:
+    cmp eax, ecx
+    jae SR_NOK
+    mov eax, ecx
+SR_NOK:
+    .if eax == 0
+        mov eax, 1
+    .endif
+    mov sampN, eax
+    ; stepX/Y = (d<<16)/sampN（与 SegmentDamage 同式同截零）
+    mov eax, segDx
+    shl eax, 16
+    cdq
+    idiv sampN
+    mov stepX, eax
+    mov eax, segDy
+    shl eax, 16
+    cdq
+    idiv sampN
+    mov stepY, eax
+    ; 本段弧长区间 [base, base+sampN]，与 [d0, d1) 求交
+    mov eax, d1
+    cmp eax, base
+    jle SR_NextSeg                   ; d1 未及本段起点
+    mov ecx, base
+    add ecx, sampN
+    mov eax, d0
+    cmp eax, ecx
+    jge SR_NextSeg                   ; d0 已越本段终点（终点由下段 j=0 覆盖）
+    ; jLo = d0 > base ? d0-base : 0
+    mov edx, d0
+    sub edx, base
+    jg SR_LoSet
+    xor edx, edx
+SR_LoSet:
+    mov jLo, edx
+    ; jHi = min(sampN, d1-base)
+    mov eax, d1
+    sub eax, base
+    cmp eax, sampN
+    jbe SR_HiSet
+    mov eax, sampN
+SR_HiSet:
+    mov jHi, eax
+    mov eax, jLo
+    mov j, eax
+SR_Sample:
+    ; 采样点 = (x0,y0) + floor(step*j / 65536)（sar=下取整，负步长借位正确）
+    mov eax, stepX
+    imul eax, j
+    sar eax, 16
+    add eax, x0
+    mov px, eax
+    mov eax, stepY
+    imul eax, j
+    sar eax, 16
+    add eax, y0
+    mov py, eax
+    ; 4 坦克点入盒判定（同 SegmentDamage，共享全局 hitmask）
+    xor esi, esi
+SR_Tank:
+    .if esi >= MAX_PLAYERS
+        jmp SR_NextSample
+    .endif
+    mov eax, 1
+    mov ecx, esi
+    shl eax, cl
+    test eax, hitmask
+    jnz SR_ThNext
+    mov eax, esi
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov edi, eax
+    cmp (TANK ptr [edi]).alive, 0
+    je SR_ThNext
+    mov eax, px
+    cmp eax, (TANK ptr [edi]).x
+    jl SR_ThNext
+    mov ecx, (TANK ptr [edi]).x
+    add ecx, TANK_SIZE
+    cmp eax, ecx
+    jge SR_ThNext
+    mov eax, py
+    cmp eax, (TANK ptr [edi]).y
+    jl SR_ThNext
+    mov ecx, (TANK ptr [edi]).y
+    add ecx, TANK_SIZE
+    cmp eax, ecx
+    jge SR_ThNext
+    mov eax, 1
+    mov ecx, esi
+    shl eax, cl
+    or eax, hitmask
+    mov hitmask, eax
+    push esi
+    push edi
+    invoke DamageTank, esi
+    pop edi
+    pop esi
+SR_ThNext:
+    inc esi
+    jmp SR_Tank
+SR_NextSample:
+    mov eax, j
+    cmp eax, jHi
+    jae SR_NextSeg
+    inc eax
+    mov j, eax
+    jmp SR_Sample
+SR_NextSeg:
+    mov eax, base
+    add eax, sampN
+    mov base, eax
+    inc ebx
+    jmp SR_Seg
+SR_Done:
+    mov eax, hitmask
+    mov laserHitMask, eax
+    ret
+SegmentDamageRange endp
 
 ; ------------------------------------------------------------
 ; SimReflectPath —— 从坦克炮口模拟反弹弹道（最多 7 次反射）
@@ -4197,24 +4552,59 @@ RefreshLaserPreview proc uses ebx slotIdx: dword
 RefreshLaserPreview endp
 
 ; ------------------------------------------------------------
-; FireAimedLaser —— 瞄准到时：生成激光路径并造成伤害
+; FireAimedLaser —— 瞄准到时：生成激光路径（会话 30：不再即时结算伤害，
+; 束头每 tick 沿折线推进 LASER_STEP_PX px，像真光一样有传播时间；
+; 扫过的弧段由 SegmentDamageRange 判伤，显示在传播完成后保持 0.8s）
 ; ------------------------------------------------------------
 FireAimedLaser proc uses ebx slotIdx: dword
-    local hits[4]:dword
+    local hits[4]:dword, lenAcc:dword
     mov eax, slotIdx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
     mov ecx, (TANK ptr [eax]).aimSkill
     .if ecx == SK_LASER
         invoke MuzzleEdge, slotIdx
-        invoke SegmentDamage, offset laserX, offset laserY, laserN
     .elseif ecx == SK_REFLASER
         lea ebx, hits
         invoke SimReflectPath, slotIdx, offset laserX, offset laserY, ebx
         mov laserN, eax
-        invoke SegmentDamage, offset laserX, offset laserY, laserN
     .endif
-    mov laserT, 24                   ; 0.4s 显示
+    ; 路径总长 = Σ max(|dx|,|dy|)（与伤害/渲染度量一致）
+    mov lenAcc, 0
+    xor ebx, ebx
+FL_Len:
+    lea eax, [ebx+1]
+    cmp eax, laserN
+    jge FL_LenDone
+    mov ecx, laserX[eax*4]
+    sub ecx, laserX[ebx*4]
+    jns FL_ADx
+    neg ecx
+FL_ADx:
+    mov edx, laserY[eax*4]
+    sub edx, laserY[ebx*4]
+    jns FL_ADy
+    neg edx
+FL_ADy:
+    cmp ecx, edx
+    jae FL_MaxK
+    mov ecx, edx
+FL_MaxK:
+    .if ecx == 0
+        mov ecx, 1
+    .endif
+    add lenAcc, ecx
+    inc ebx
+    jmp FL_Len
+FL_LenDone:
+    mov eax, lenAcc
+    .if eax == 0
+        mov eax, 1
+    .endif
+    mov laserLen, eax
+    mov laserD, 0
+    mov laserHitMask, 0
+    mov laserT, 48                   ; 传播完成后显示 0.8s（束头到达才起减）
     ; 清瞄准状态与预览
     mov eax, slotIdx
     imul eax, eax, SIZEOF TANK
@@ -5053,12 +5443,24 @@ GUR_CountDone:
             invoke SpawnPickup
         .endif
     .endif
-    ; ---- 激光显示倒计时 ----
+    ; ---- 激光：会话 30 束头传播（伤害扫到哪算到哪），传播完成后
+    ;      laserT 才倒数显示时长，归零清路径 ----
     mov eax, laserT
     .if eax > 0
-        dec laserT
-        .if eax == 1
-            mov laserN, 0
+        mov ecx, laserD
+        .if ecx < laserLen
+            mov edx, ecx                  ; d0 = 旧束头
+            add ecx, LASER_STEP_PX
+            .if ecx > laserLen
+                mov ecx, laserLen
+            .endif
+            mov laserD, ecx               ; d1 = 新束头（存档）
+            invoke SegmentDamageRange, offset laserX, offset laserY, laserN, edx, ecx
+        .else
+            dec laserT
+            .if laserT == 0
+                mov laserN, 0
+            .endif
         .endif
     .endif
 
@@ -5284,6 +5686,7 @@ BulletTick:
             jmp BulletNext
         .endif
         ; 1) X 轴（16.16 进位累加：任意角度轴向步长 0..8px，模长恒 6）
+        mov btBounced, 0             ; 会话 30：每 tick 每弹重置"已反弹"标志
         mov eax, (BULLET ptr [edi]).vx
         .if eax != 0
             mov edx, (BULLET ptr [edi]).subpxX
@@ -5315,31 +5718,50 @@ BT_XPos:
                     ;  弹在挡板内抖动耗尽反弹次数消失，或沿墙内滑出另一侧
                     ;  = "子弹穿墙" + "贴墙射弹无法反弹自杀" 的根因）
                     ; vx 可为负：回退方向手写 test/js（.if > 0 无符号恒真）
+                    ; 会话 30：回退加 40 步上限与"触底仍嵌墙=杀弹"终止——
+                    ; 旧版完全嵌墙时每 tick 逐像素扫到图缘（抖动+卡顿+
+                    ; 反弹额度耗尽凭空消失），现最多 40 步内出墙或判死
+                    mov btBackCnt, 0
                     mov eax, (BULLET ptr [edi]).vx
                     test eax, eax
                     js BT_XBackL
 BT_XBackR:
-                        dec (BULLET ptr [edi]).x
-                        invoke BulletWallHit, edi
-                        .if eax != 0
-                            mov eax, (BULLET ptr [edi]).x
-                            .if eax > 0
-                                jmp BT_XBackR
-                            .endif
-                        .endif
+                    dec (BULLET ptr [edi]).x
+                    inc btBackCnt
+                    invoke BulletWallHit, edi
+                    .if eax == 0
                         jmp BT_XBackDone
+                    .endif
+                    mov eax, btBackCnt
+                    cmp eax, 40
+                    jg BT_XStuck
+                    mov eax, (BULLET ptr [edi]).x
+                    .if eax > 0
+                        jmp BT_XBackR
+                    .endif
+                    jmp BT_XStuck
 BT_XBackL:
-                        inc (BULLET ptr [edi]).x
-                        invoke BulletWallHit, edi
-                        .if eax != 0
-                            mov eax, (BULLET ptr [edi]).x
-                            .if eax < MAP_W - BULLET_SIZE_PX
-                                jmp BT_XBackL
-                            .endif
-                        .endif
+                    inc (BULLET ptr [edi]).x
+                    inc btBackCnt
+                    invoke BulletWallHit, edi
+                    .if eax == 0
+                        jmp BT_XBackDone
+                    .endif
+                    mov eax, btBackCnt
+                    cmp eax, 40
+                    jg BT_XStuck
+                    mov eax, (BULLET ptr [edi]).x
+                    .if eax < MAP_W - BULLET_SIZE_PX
+                        jmp BT_XBackL
+                    .endif
+                    jmp BT_XStuck
+BT_XStuck:
+                    mov (BULLET ptr [edi]).active, 0
+                    jmp BT_XEnd
 BT_XBackDone:
                     neg (BULLET ptr [edi]).vx       ; 反弹
                     invoke BounceOne, edi
+                    mov btBounced, 1                ; 会话 30：本 tick 不再走 Y 墙面反弹
                 .endif
             .endif
 BT_XEnd:
@@ -5372,34 +5794,51 @@ BT_YPos:
                 neg (BULLET ptr [edi]).vy
                 invoke BounceOne, edi
             .else
-                invoke BulletWallHit, edi
-                .if eax != 0
-                    ; 命中：逐像素回退到出墙（同 X 轴；vy 可为负：test/js）
-                    mov eax, (BULLET ptr [edi]).vy
-                    test eax, eax
-                    js BT_YBackU
+                mov eax, btBounced
+                .if eax == 0             ; 会话 30：X 轴本 tick 已墙面反弹则跳过
+                    invoke BulletWallHit, edi
+                    .if eax != 0         ; Y 轴回退同 X（40 步上限+判死）
+                        mov btBackCnt, 0
+                        mov eax, (BULLET ptr [edi]).vy
+                        test eax, eax
+                        js BT_YBackU
 BT_YBackD:
                         dec (BULLET ptr [edi]).y
+                        inc btBackCnt
                         invoke BulletWallHit, edi
-                        .if eax != 0
-                            mov eax, (BULLET ptr [edi]).y
-                            .if eax > 0
-                                jmp BT_YBackD
-                            .endif
+                        .if eax == 0
+                            jmp BT_YBackDone
                         .endif
-                        jmp BT_YBackDone
+                        mov eax, btBackCnt
+                        cmp eax, 40
+                        jg BT_YStuck
+                        mov eax, (BULLET ptr [edi]).y
+                        .if eax > 0
+                            jmp BT_YBackD
+                        .endif
+                        jmp BT_YStuck
 BT_YBackU:
                         inc (BULLET ptr [edi]).y
+                        inc btBackCnt
                         invoke BulletWallHit, edi
-                        .if eax != 0
-                            mov eax, (BULLET ptr [edi]).y
-                            .if eax < MAP_H - BULLET_SIZE_PX
-                                jmp BT_YBackU
-                            .endif
+                        .if eax == 0
+                            jmp BT_YBackDone
                         .endif
+                        mov eax, btBackCnt
+                        cmp eax, 40
+                        jg BT_YStuck
+                        mov eax, (BULLET ptr [edi]).y
+                        .if eax < MAP_H - BULLET_SIZE_PX
+                            jmp BT_YBackU
+                        .endif
+                        jmp BT_YStuck
+BT_YStuck:
+                        mov (BULLET ptr [edi]).active, 0
+                        jmp BT_YEnd
 BT_YBackDone:
-                    neg (BULLET ptr [edi]).vy       ; 反弹
-                    invoke BounceOne, edi
+                        neg (BULLET ptr [edi]).vy       ; 反弹
+                        invoke BounceOne, edi
+                    .endif
                 .endif
             .endif
 BT_YEnd:
@@ -5422,6 +5861,19 @@ TankHitLoop:
         mov eax, (TANK ptr [edx]).alive
         .if eax == 0
             jmp TankNext2
+        .endif
+        ; 会话 30：出膛 1 tick 宽限（age<=1 不判射手）。贴细墙时出膛弹盒
+        ; 压墙矩形、同帧回退会把弹退进射手 AABB，旧版当场自伤"无迹可寻"
+        ; = 棕色墙体开火 bug 主症状（砖墙缝 1~2px 坦克普遍贴得到，钢墙
+        ; 多在图缘贴不到所以砖墙才显形）。宽限后：出膛 tick 不判，弹被
+        ; 挤出墙面反向飞出、1~2 tick 后飞回来命中——反弹轨迹看得见，
+        ; 与 T12 贴界反弹自杀语义同构（T12 命中发生在 age>=2，不受影响）
+        mov eax, esi
+        mov ecx, (BULLET ptr [edi]).owner
+        .if eax == ecx
+            mov eax, (BULLET ptr [edi]).age
+            cmp eax, 1
+            jbe TankNext2
         .endif
         ; AABB：弹体 8x8 (x,y,+8,+8) vs 坦克 TANK_SIZE 见方
         ; 定格虚影激活 -> 判定矩形 = 虚影位置（实像免伤，虚像可被打中）

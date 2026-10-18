@@ -41,7 +41,8 @@ TILE_BRICK  equ 2                   ; 'b'  清子块后反弹，整格空后穿�
 TILE_WATER  equ 3                   ; '~'  挡坦克，子弹穿过
 TILE_ICE    equ 4                   ; '-'  坦克滑行，子弹穿过
 TILE_DIRT   equ 5                   ; 'd'  泥土：坦克减速，子弹穿过
-ARENA_COUNT equ 20                  ; 内置对战图 ARENA1..20（每局随机一张）
+ARENA_COUNT equ 24                  ; 内置对战图 ARENA1..24（每局随机一张；
+                                    ;  ARENA21..24 会话 30 新增，墙:地形≈10:3）
 
 ; ---- 细墙挡板 ----
 ; 墙的视觉与碰撞都不再是整格：每个墙格渲染/判定为
@@ -97,7 +98,11 @@ SK_PHANTOM      equ 9               ; 定格术：原地虚影 x2，实像免伤
 SKILL_COUNT     equ 9
 PICKUP_PERIOD   equ 600             ; 10s @ 60tick
 PICKUP_SIZE     equ 18              ; 拾取物边长（像素）
-LASER_FIRE_TICKS equ 78             ; 二段再按后 1.3s 发射（会话 22 两段式；一段预览不限时）
+LASER_FIRE_TICKS equ 42             ; 二段再按后 0.7s 发射（会话 22 两段式；
+                                    ; 会话 30：1.3s→0.7s，用户点名缩短）
+LASER_STEP_PX   equ 300             ; 会话 30：光束像真光一样有传播速度
+                                    ; （px/tick，穿满 992px 宽图约 3~4 tick，
+                                    ; 极短但非零；伤害随束头推进逐 tick 结算）
 SHIELD_TICKS    equ 420             ; 冰盾 7s
 GHOST_TICKS     equ 240             ; 穿墙 4s
 GHOST_USES      equ 3               ; 穿墙 3 次

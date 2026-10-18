@@ -76,6 +76,7 @@ NetFlush  PROTO
 NetShutdown PROTO
 SndVolume PROTO :DWORD
 SndPlay   PROTO :DWORD
+SndBgmSetTrack PROTO :DWORD
 extern peerAddr  :sockaddr_in
 extern peerKnown :dword
 extern hSock     :dword
@@ -153,15 +154,6 @@ RST_H      equ 30
     bcastAddr   sockaddr_in <>
     oneVal      dd 1
     aTab        dd aUp, aDn, aLt, aRt, aFire, aUse
-
-    ; ---- 会话 26 主菜单大立体坦克（受光/侧面/暗部三色 + 黑描边）----
-    brushTankHi   dd ?                 ; 受光面 0xF0F0F0
-    brushTankMid  dd ?                 ; 侧面/阴影 0xC0C0C0
-    brushTankDark dd ?                 ; 履带暗部 0x5A5A5A
-    penTank       dd ?                 ; 3px 近黑描边（卡通轮廓）
-    uiOldPen      dd ?
-    uiOldBr       dd ?
-    tankBarrel    dd 523, 369, 657, 336, 663, 358, 529, 391   ; 炮管斜置 4 顶点（居中版）
 
     ; ---- 技能说明页数据（9 技能：名/描述，中英双语）----
     skillPage   dd 0                   ; 当前页 0..SKILL_COUNT-1
@@ -348,15 +340,7 @@ UiInit proc
     mov boxBrush, eax
     invoke CreateSolidBrush, 00A0A0A0h       ; 深夜模式容器边框（浅灰）
     mov boxBrushN, eax
-    ; ---- 会话 27 主页大坦克改参考图黄色卡通（三级黄 + 近黑粗描边）----
-    invoke CreateSolidBrush, 0040E0F0h       ; 受光面 RGB(240,224,64) 亮黄
-    mov brushTankHi, eax
-    invoke CreateSolidBrush, 0018B2D4h       ; 侧面 RGB(212,178,24) 中黄
-    mov brushTankMid, eax
-    invoke CreateSolidBrush, 000C7692h       ; 暗部/轮孔 RGB(146,118,12) 芥末暗黄
-    mov brushTankDark, eax
-    invoke CreatePen, PS_SOLID, 4, 0008141Ch ; 4px 近黑卡通描边
-    mov penTank, eax
+    ; （会话 27 主页坦克三色刷+描边笔已随会话 28 下架移除）
     invoke CreateFontA, 30, 0, 0, 0, FW_NORMAL, 0, 0, 0,
            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
            DEFAULT_QUALITY, DEFAULT_PITCH, offset szFont
@@ -734,6 +718,15 @@ UiTick proc uses ebx esi edi
     mov enE, eax
     invoke KeyEdge, VK_ESCAPE, addr prevEsc
     mov esE, eax
+
+    ; ---- 会话 28：BGM 分页——对局用旧主题，其余页面用主页新主题
+    ;      （同轨直返，零开销）----
+    mov eax, gameState
+    .if eax == ST_PLAY
+        invoke SndBgmSetTrack, 1
+    .else
+        invoke SndBgmSetTrack, 0
+    .endif
 
     ; ---------- 对局中：Esc 暂停 / 比赛结束回菜单 ----------
     .if gameState == ST_PLAY
@@ -1411,50 +1404,8 @@ UiRender proc uses ebx esi edi
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
-        ; ==== 会话 27 主页：参考图同款黄色卡通大坦克——居中偏下、
-        ;      静止；亮黄受光+中黄侧面+芥末暗黄轮孔/膛口，4px 近黑
-        ;      描边，斜炮管带制退环、圆顶炮塔、黄履带上一排黑色轮孔。
-        ;      （会话 26 灰阶侧视版与更早多元素装饰均已下架）====
-        invoke SelectObject, hdcBack, penTank
-        mov uiOldPen, eax
-        ; -- 落地投影 + 斜置炮管（中黄） --
-        invoke SelectObject, hdcBack, brushTankMid
-        mov uiOldBr, eax
-        invoke Ellipse, hdcBack, 314, 543, 640, 567
-        invoke Polygon, hdcBack, addr tankBarrel, 4
-        ; -- 炮口制退环（亮黄）套膛口暗孔 --
-        invoke SelectObject, hdcBack, brushTankHi
-        invoke Ellipse, hdcBack, 643, 330, 677, 364
-        invoke SelectObject, hdcBack, brushTankDark
-        invoke Ellipse, hdcBack, 651, 338, 669, 356
-        ; -- 圆顶炮塔（亮黄）+ 舱盖（中黄） --
-        invoke SelectObject, hdcBack, brushTankHi
-        invoke Ellipse, hdcBack, 406, 352, 536, 418
-        invoke SelectObject, hdcBack, brushTankMid
-        invoke Ellipse, hdcBack, 448, 363, 480, 379
-        ; -- 车体 + 黄色履带带（亮黄；车体下缘压在履带上）--
-        invoke SelectObject, hdcBack, brushTankHi
-        invoke RoundRect, hdcBack, 330, 403, 608, 479, 36, 36
-        invoke RoundRect, hdcBack, 322, 457, 614, 545, 88, 88
-        ; -- 前后驱动轮 + 四负重轮：暗黄"轮孔"（参考图黑孔行）--
-        invoke SelectObject, hdcBack, brushTankDark
-        invoke Ellipse, hdcBack, 316, 473, 372, 529
-        invoke Ellipse, hdcBack, 564, 473, 620, 529
-        invoke Ellipse, hdcBack, 380, 481, 420, 521
-        invoke Ellipse, hdcBack, 424, 481, 464, 521
-        invoke Ellipse, hdcBack, 468, 481, 508, 521
-        invoke Ellipse, hdcBack, 512, 481, 552, 521
-        ; -- 轮心高光（中黄） --
-        invoke SelectObject, hdcBack, brushTankMid
-        invoke Ellipse, hdcBack, 336, 493, 352, 509
-        invoke Ellipse, hdcBack, 584, 493, 600, 509
-        invoke Ellipse, hdcBack, 394, 495, 406, 507
-        invoke Ellipse, hdcBack, 438, 495, 450, 507
-        invoke Ellipse, hdcBack, 482, 495, 494, 507
-        invoke Ellipse, hdcBack, 526, 495, 538, 507
-        invoke SelectObject, hdcBack, uiOldPen
-        invoke SelectObject, hdcBack, uiOldBr
-        ; ==== 大坦克结束：标题与 7 项菜单压在上方 ====
+        ; 会话 28：主页暂不放任何大图/装饰（会话 27 黄色大坦克被嫌丑，
+        ; 先下架留纯净底；渲染资源与坐标表已一并移除）
         invoke UiTextZ, hdcBack, 385, 90, offset szTitle, colDark
         mov ebx, 0
 UM_Items:

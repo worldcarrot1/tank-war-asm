@@ -209,15 +209,14 @@ GfxInit proc
 GfxInit endp
 
 ; ------------------------------------------------------------
-; DrawHud —— 会话 27 重排：所有玩家块作为一组按 numPlayers 水平
-;   居中（旧版固定 4 槽左起）；不再显示生命数（一命制下无信息量）；
-;   每块 = 相应颜色小坦克（DrawTank 25px 炮口朝右）+ 30px 大号
-;   得分（menuFont）+ 18px 玩家名（fontSmall），更醒目。
+; DrawHud —— 会话 27 重排、会话 28 定稿：所有玩家块作为一组按
+;   numPlayers 水平居中；不显示生命数（一命制）；每块 = 玩家颜色
+;   色块（20x20 带描边，会话 28：小尺寸坦克剪影辨识度差，回退
+;   纯色表示）+ 30px 大号得分（menuFont）+ 18px 玩家名（fontSmall）。
 ;   文本白色由 GfxRender 预设（SetTextColor/SetBkMode）。
 ; ------------------------------------------------------------
-DrawTank PROTO hdc: dword, px: dword, py: dword, dirV: dword
 DrawHud proc uses ebx esi edi
-    local oldBr: dword
+    local rc:RECT
     local x0: dword
     ; ---- 组起点：total = n*212 + (n-1)*24，x0 = (MAP_W-total)/2 ----
     mov eax, numPlayers
@@ -235,19 +234,24 @@ DH_Blk:
     .if ebx >= numPlayers
         ret
     .endif
-    ; ---- 玩家色小坦克（DrawTank 自理画笔），y 626..651 ----
+    ; ---- 玩家颜色块（20x20 带描边，y 628..648）----
+    mov eax, x0
+    mov rc.left, eax
+    add eax, 20
+    mov rc.right, eax
+    mov rc.top, 628
+    mov rc.bottom, 648
     mov eax, ebx
     .if eax == 0
-        invoke SelectObject, hdcBack, brushP1
+        invoke FillRect, hdcBack, addr rc, brushP1
     .elseif eax == 1
-        invoke SelectObject, hdcBack, brushP2
+        invoke FillRect, hdcBack, addr rc, brushP2
     .elseif eax == 2
-        invoke SelectObject, hdcBack, brushP3
+        invoke FillRect, hdcBack, addr rc, brushP3
     .else
-        invoke SelectObject, hdcBack, brushP4
+        invoke FillRect, hdcBack, addr rc, brushP4
     .endif
-    mov oldBr, eax
-    invoke DrawTank, hdcBack, x0, 626, 0
+    invoke FrameRect, hdcBack, addr rc, brushMortar
     ; ---- 大号得分：x0+31 起，30px，两位封顶 99（沿用旧口径）----
     invoke SelectObject, hdcBack, menuFont
     mov eax, ebx
@@ -291,7 +295,6 @@ DH_NmDone:
     mov eax, x0
     add eax, 85
     invoke TextOutA, hdcBack, eax, 630, offset scoreBuf, ecx
-    invoke SelectObject, hdcBack, oldBr
     add x0, 212 + 24
     inc ebx
     jmp DH_Blk

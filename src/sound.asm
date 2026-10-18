@@ -17,6 +17,7 @@ include win32.inc
 
 public SndInit
 public SndBgmStart
+public SndBgmSetTrack
 public SndPlay
 public SndVolume
 
@@ -24,6 +25,7 @@ PlaySoundA              PROTO stdcall :DWORD,:DWORD,:DWORD
 waveOutSetVolume        PROTO stdcall :DWORD,:DWORD
 waveOutOpen             PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 waveOutClose            PROTO stdcall :DWORD
+waveOutReset            PROTO stdcall :DWORD
 waveOutPrepareHeader    PROTO stdcall :DWORD,:DWORD,:DWORD
 waveOutWrite            PROTO stdcall :DWORD,:DWORD,:DWORD
 GetEnvironmentVariableA PROTO stdcall :DWORD,:DWORD,:DWORD
@@ -80,23 +82,30 @@ NOTE_THIRD       equ 1101              ; 0.05s
     phFl        dd 0                ; 方波电平
     wrBytes     dd 0
     hFile       dd 0
-    ; 会话 27：双轨 64 拍 BGM（用户反馈"旋律太单调"）——主旋律
-    ; Am/F/C/G 四乐句带切分休止、八度大跳与最高音点缀，低音轨以
-    ; 8 分音符根音行进（Am→F→C→G），两轨方波线性叠加（GenAdd）。
-    ; 0=休止。循环尺寸不变：64 拍 × NOTE_SAMP = 211648 字节 9.6s
-    bgmMel      dd 440, 659, 880, 659, 0, 1046, 880, 0
-                dd 523, 659, 880, 1046, 880, 659, 523, 0
-                dd 698, 523, 440, 523, 0, 698, 880, 0
-                dd 1046, 880, 698, 523, 440, 0, 349, 0
-                dd 523, 659, 784, 1046, 784, 659, 0, 523
-                dd 659, 784, 1046, 1318, 1046, 784, 659, 0
-                dd 392, 494, 587, 784, 587, 494, 0, 392
-                dd 494, 587, 784, 988, 784, 587, 494, 392
+    ; 会话 28：主页主题"连奏化"（玩家反馈断断续续）——64 拍全连通
+    ; 无休止（旧版每拍尾衰减到 0 + 大量 0 休止造成空洞；配合 GenAdd
+    ; 包络托底 35%），级进+琶音交替上行下折；低音轨维持 8 分根音
+    bgmMel      dd 440, 523, 659, 880, 659, 880, 1046, 880
+                dd 659, 523, 659, 880, 1046, 880, 659, 523
+                dd 440, 523, 698, 880, 698, 523, 440, 523
+                dd 698, 880, 1046, 880, 698, 523, 440, 349
+                dd 523, 659, 784, 1046, 784, 659, 523, 659
+                dd 784, 1046, 1318, 1046, 784, 659, 523, 587
+                dd 587, 784, 988, 784, 587, 494, 392, 494
+                dd 587, 784, 988, 1175, 988, 784, 587, 494
     bgmBass     dd 110, 0, 110, 0, 110, 0, 110, 0, 110, 0, 110, 0, 110, 0, 110, 0
                 dd 87, 0, 87, 0, 87, 0, 87, 0, 87, 0, 87, 0, 87, 0, 87, 0
                 dd 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0
                 dd 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0
     bgmN        = 64
+    ; 会话 28 对战轨：原样恢复会话 24 的 32 音 Am-F-C-G 跑动单层
+    ; （用户："对战的音乐和之前一样，不要和主页一样"），×2 遍 9.6s
+    gameMel     dd 440, 659, 880, 659, 523, 659, 880, 1046
+                dd 349, 523, 698, 523, 440, 523, 698, 880
+                dd 523, 659, 784, 659, 523, 392, 523, 659
+                dd 392, 587, 784, 988, 880, 784, 659, 587
+    gameN       = 32
+    gameReps    = 2                   ; 32*2=64 拍，与主页轨等长
 NOTE_SAMP       equ 3307              ; 一拍 0.15s @ 22050
 BGM_TOTAL       equ bgmN*NOTE_SAMP    ; 211648 字节
 
@@ -107,13 +116,18 @@ WHDR_ENDLOOP    equ 0008h
 
 .data
     align 4
-    bgmBuf      db BGM_TOTAL dup (?)  ; 全循环 8bit 单声道样本（waveOut 缓冲）
+    bgmBuf      db BGM_TOTAL dup (?)  ; 主页主题（双轨合成）waveOut 缓冲
+    bgmBufG     db BGM_TOTAL dup (?)  ; 会话 28 对战轨（旧 32 音单层×2）
     bgmDev      dd 0                  ; HWAVEOUT
     bgmLive     dd 0                  ; 1=独立流已在播
+    bgmTrk      dd -1                 ; 当前曲目：-1 未开流 / 0 主页 / 1 对战
     bgmHdr      dd 0                  ; WAVEHDR(x86, 32B)：lpData /
             dd 0, 0, 0                ;  dwBufferLength / dwBytesRecorded /
             dd 0, 0, 0, 0             ;  dwUser / dwFlags / dwLoops /
                                       ;  lpNext / reserved
+    bgmHdrG     dd 0                  ; 对战轨 WAVEHDR（同布局）
+            dd 0, 0, 0
+            dd 0, 0, 0, 0
     bgmFmt      dw 1                  ; WAVEFORMATEX(18B)：wFormatTag=PCM
             dw 1                      ;  nChannels=mono
             dd SR                     ;  nSamplesPerSec
@@ -286,19 +300,25 @@ GN_Loop:
 GenNoise endp
 
 ; ------------------------------------------------------------
-; GenAdd -- 方波叠加进 pBuf（会话 27 双轨合成）：读取现值加/减
-; 包络（线性衰减到 0），钳位 8..240。静音中心 96。
+; GenAdd -- 方波叠加进 pBuf（会话 27 双轨合成；会话 28 包络托底）：
+; 摆幅从 delta 线性衰减到 ~35%（旧版衰减到 0，一拍一坑听着断续），
+; 读取现值加/减摆幅，钳位 8..240。静音中心 96。
 ; 钳位用 jl/jle 显式带符号跳转（.if reg<8 会按无符号编译的陷阱）。
 ; 入参：pBuf, freq, nSamp, delta
 ; ------------------------------------------------------------
-GenAdd proc uses ebx esi edx pBuf: dword, freq: dword, nSamp: dword, delta: dword
-    local accSpd: dword
+GenAdd proc uses ebx esi edi edx pBuf: dword, freq: dword, nSamp: dword, delta: dword
+    local hiAcc: dword, stepAcc: dword
     mov eax, delta
-    shl eax, 8
+    imul eax, eax, 256
+    mov hiAcc, eax                    ; 包络起点（定点 8 位）
+    imul eax, delta, 89               ; 托底 ≈ delta*34.8%*256/256
+    mov edx, eax
+    mov eax, hiAcc
+    sub eax, edx                      ; delta*167
     xor edx, edx
     mov ebx, nSamp
     div ebx
-    mov accSpd, eax                   ; 定点 8 位包络步长
+    mov stepAcc, eax                  ; 每样本递减步长（定点 8 位）
     mov esi, pBuf
     xor ecx, ecx                      ; i（ecx 自由：非协议寄存器）
 GA_Loop:
@@ -309,18 +329,19 @@ GA_Loop:
     mov ebx, SR
     div ebx
     and eax, 1
-    mov bl, al                        ; bl=相位（SR 已用完）
-    mov eax, nSamp                    ; 摆幅 d = (n-i)*accSpd>>8
-    sub eax, ecx
-    imul eax, accSpd
-    shr eax, 8
+    mov edi, eax                      ; 相位位（edi 已 uses 保存）
+    mov eax, ecx                      ; 摆幅 d = (hi - i*step)>>8
+    imul eax, stepAcc
+    mov ebx, hiAcc
+    sub ebx, eax
+    shr ebx, 8
     movzx edx, byte ptr [esi]
-    test bl, bl
+    test edi, edi
     jz GA_Lo
-    add edx, eax
+    add edx, ebx
     jmp GA_Clamp
 GA_Lo:
-    sub edx, eax
+    sub edx, ebx
 GA_Clamp:
     cmp edx, 8
     jge GA_C1
@@ -379,6 +400,28 @@ BG_Beat:
     inc ebx
     .if ebx < bgmN
         jmp BG_Beat
+    .endif
+    ; ---- 对战轨（会话 28）：原样恢复会话 24 单层方波（绝对写入，
+    ;      尾衰减 300 样本防爆音），32 音 ×2 遍，与主页轨等长 ----
+    xor ebx, ebx
+BG2_Rep:
+    xor esi, esi
+BG2_Note:
+    mov eax, ebx
+    imul eax, eax, gameN
+    add eax, esi
+    imul eax, eax, NOTE_SAMP
+    mov edx, OFFSET bgmBufG
+    add edx, eax
+    mov eax, gameMel[esi*4]
+    invoke GenSquare, edx, eax, NOTE_SAMP, 300
+    inc esi
+    .if esi < gameN
+        jmp BG2_Note
+    .endif
+    inc ebx
+    .if ebx < gameReps
+        jmp BG2_Rep
     .endif
     .if hFile != -1
         invoke WriteFile, hFile, offset hdrBuf, 44, addr wrBytes, 0
@@ -456,15 +499,53 @@ SndBgmStart proc
         ret
     .endif
     or bgmHdr+16, WHDR_BEGINLOOP or WHDR_ENDLOOP
-    invoke waveOutWrite, bgmDev, addr bgmHdr, 32
+    ; ---- 会话 28：对战轨头同样布局预备（主页/对战双曲目分页）----
+    mov eax, OFFSET bgmBufG
+    mov bgmHdrG, eax
+    mov bgmHdrG+4, BGM_TOTAL
+    mov bgmHdrG+16, 0
+    mov bgmHdrG+20, -1
+    invoke waveOutPrepareHeader, bgmDev, addr bgmHdrG, 32
+    .if eax != 0
+        invoke waveOutClose, bgmDev
+        mov bgmDev, 0
+        ret
+    .endif
+    or bgmHdrG+16, WHDR_BEGINLOOP or WHDR_ENDLOOP
+    invoke waveOutWrite, bgmDev, addr bgmHdr, 32   ; 先播主页主题
     .if eax == 0
         mov bgmLive, 1
+        mov bgmTrk, 0
     .else
         invoke waveOutClose, bgmDev
         mov bgmDev, 0
     .endif
     ret
 SndBgmStart endp
+
+; ------------------------------------------------------------
+; SndBgmSetTrack -- 切换独立流曲目（会话 28：0=主页新主题
+; 1=对战旧主题）。waveOutReset 丢弃当前无限循环缓冲后重写另一
+; 轨头；同轨/未开流零开销直返。UiTick 每 tick 按 gameState 调用。
+; ------------------------------------------------------------
+SndBgmSetTrack proc trk: dword
+    mov eax, bgmTrk
+    .if eax == -1
+        ret
+    .endif
+    .if eax == trk
+        ret
+    .endif
+    invoke waveOutReset, bgmDev
+    mov eax, trk
+    mov bgmTrk, eax
+    .if eax == 1
+        invoke waveOutWrite, bgmDev, addr bgmHdrG, 32
+    .else
+        invoke waveOutWrite, bgmDev, addr bgmHdr, 32
+    .endif
+    ret
+SndBgmSetTrack endp
 
 ; ------------------------------------------------------------
 ; SndPlay -- 播放音效（id: 1开炮 2爆炸 3拾取 4倒计时 5虚影/换位 6布雷）

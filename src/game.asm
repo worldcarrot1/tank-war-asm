@@ -1364,6 +1364,30 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5, ARENA6, ARENA7, ARENA8
     stT41cL equ ($ - stT41c)
     stT41d  db "T41_UNBOUND_SELFHIT_DEAD(expect0)="
     stT41dL equ ($ - stT41d)
+    stT42a  db "T42_GHOST_STRADDLE_ESCAPE(expect1)="
+    stT42aL equ ($ - stT42a)
+    stT42b  db "T42_GHOST_NO_DRIFT(expect1)="
+    stT42bL equ ($ - stT42b)
+    stT43a  db "T43_WATER_STRADDLE_HOLD(expect1)="
+    stT43aL equ ($ - stT43a)
+    stT43c  db "T43_WATER_STRADDLE_WALKOUT(expect1)="
+    stT43cL equ ($ - stT43c)
+    stT43d  db "T43_WATER_FULLY_OFF(expect0)="
+    stT43dL equ ($ - stT43d)
+    stT44a  db "T44_SWAP_RING_LANDED(expect1)="
+    stT44aL equ ($ - stT44a)
+    stT44b  db "T44_SWAP_DIR_UNBOUND(expect1)="
+    stT44bL equ ($ - stT44b)
+    stT45a  db "T45_SLIDE_CARRY_EDGE(expect1)="
+    stT45aL equ ($ - stT45a)
+    stT45b  db "T45_SLIDE_FRESH_EDGE0(expect1)="
+    stT45bL equ ($ - stT45b)
+    ; ---- 会话35：DoSwap 换位脱身环表（理想位 -> 4px 环 -> 8px 环，共 25 候选）----
+    swapRingX dw 0, -4, 4, 0, 0, -4, 4, -4, 4
+              dw -8, 8, 0, 0, -8, 8, -8, 8, -4, 4, -4, 4, -8, 8, -8, 8
+    swapRingY dw 0,  0, 0, -4, 4, -4, -4, 4, 4
+              dw  0, 0, -8, 8, -4, -4, 4, 4, -8, -8, 8, 8, -8, -8, 8, 8
+    SWAP_RING_N equ 25
     stT15p  db "T15_LASER_TWOSTAGE(expect3)="
     stT15pL equ ($ - stT15p)
     stT16p  db "T16_REFL_TWOSTAGE(expect3)="
@@ -3813,6 +3837,238 @@ T41BindBad:
     invoke Chk, offset stT41d, stT41dL, tanks[0*SIZEOF TANK].alive, 0
 T41Done:
 
+    ; ==== T42 穿墙耗尽嵌格爬出回归（会话35）：次数耗尽、中心在墙格且
+    ;      车身压 8px 细墙柱。a) 向左：同格挪动豁免应让车逐步爬出墙格
+    ;      （细墙几何下中心出格=车身脱墙同刻发生，会话21豁免闭环）；
+    ;      b) 向右：中心不得跨入相邻墙格（防"耗尽后无限漂移穿墙"滥用面），
+    ;      爬行封顶在本格内。====
+    invoke Mark, 351
+    call ResetTanks
+    mov matchOver, 0
+    mov edi, offset bullets
+    xor ecx, ecx
+T42ClrB:
+    mov (BULLET ptr [edi]).active, 0
+    add edi, SIZEOF BULLET
+    inc ecx
+    .if ecx < MAX_BULLETS
+        jmp T42ClrB
+    .endif
+    mov byte ptr mapData[13*COLS+4], TILE_BRICK
+    mov byte ptr mapData[13*COLS+5], TILE_BRICK   ; 右侧邻格也是墙：供 b) 验证
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].protT, 0
+    mov tanks[0*SIZEOF TANK].x, 130
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_LEFT
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].wallPass, 0
+    mov tanks[0*SIZEOF TANK].effT, 100
+    mov dword ptr tanks[0*SIZEOF TANK].effOn, EFF_GHOST
+    ; a) 20 tick 向左：必须完全爬出 (4,13) 并继续走进走廊（x <= 104）
+    mov inputTable[0], 1
+    invoke AdvanceTicks, 20
+    mov inputTable[0], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov lGot, 0
+    cmp eax, 104
+    ja T42BadA
+    mov lGot, 1
+T42BadA:
+    invoke Chk, offset stT42a, stT42aL, lGot, 1
+    ; b) 回位嵌入，向右 20 tick：中心不得进入 (5,13) 墙格 => x < 148
+    mov tanks[0*SIZEOF TANK].x, 130
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov inputTable[0], 1
+    invoke AdvanceTicks, 20
+    mov inputTable[0], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov lGot, 0
+    cmp eax, 148
+    jae T42BadB
+    mov lGot, 1
+T42BadB:
+    invoke Chk, offset stT42b, stT42bL, lGot, 1
+    mov byte ptr mapData[13*COLS+4], TILE_EMPTY
+    mov byte ptr mapData[13*COLS+5], TILE_EMPTY
+
+    ; ==== T43 驭水贴边卡死回归（会话35）：斜穿出水域、中心回岸而车身
+    ;      仍压水 5px。旧延寿只认"中心水格"=> 到期清 EFF_WATER，此后
+    ;      任何目标仍压水皆挡 => 卡死水陆交界。新：车身贴水即延寿，
+    ;      EFF_WATER 活着即可走回岸（MoveTryPos 水分支放行）====
+    invoke Mark, 352
+    call ResetTanks
+    mov matchOver, 0
+    mov byte ptr mapData[13*COLS+5], TILE_WATER
+    mov byte ptr mapData[13*COLS+6], TILE_WATER
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].protT, 0
+    mov tanks[0*SIZEOF TANK].x, 140
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].effT, 1
+    mov dword ptr tanks[0*SIZEOF TANK].effOn, EFF_WATER
+    ; a) 到期瞬间车身贴水 -> 位保留（旧代码这里就被清 => 死锁入口）
+    invoke AdvanceTicks, 1
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_WATER
+    mov lGot, 0
+    .if eax != 0
+        mov lGot, 1
+    .endif
+    invoke Chk, offset stT43a, stT43aL, lGot, 1
+    ; c) 靠着延寿走回岸：8 tick 向左 20px（全身离水需 x <= 135）
+    mov tanks[0*SIZEOF TANK].effT, 100
+    mov tanks[0*SIZEOF TANK].dir, DIR_LEFT
+    mov inputTable[0], 1
+    invoke AdvanceTicks, 8
+    mov inputTable[0], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov lGot, 0
+    cmp eax, 130
+    jae T43BadC                      ; 旧代码 x 恒 140 或位已清即撞水停
+    mov lGot, 1
+T43BadC:
+    invoke Chk, offset stT43c, stT43cL, lGot, 1
+    ; d) 全身登岸后到期 -> 位正常清除（水域仍在场，证明因"不贴水"而清）
+    mov tanks[0*SIZEOF TANK].effT, 1
+    invoke AdvanceTicks, 1
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_WATER
+    invoke Chk, offset stT43d, stT43dL, eax, 0
+    mov byte ptr mapData[13*COLS+5], TILE_EMPTY
+    mov byte ptr mapData[13*COLS+6], TILE_EMPTY
+
+    ; ==== T44 换位贴墙脱身环回归（会话35）：子弹中心对齐的理想落点车身
+    ;      压到砖墙 8px 细柱（WT=8：柱=[x0+12..x0+20]）。旧代码单点被挡
+    ;      => 静默解绑放弃（"换位有时候无法换位"）；新环表按序试候选，
+    ;      (-4,0) 起即脱离柱区 => 换位成功 ====
+    invoke Mark, 353
+    call ResetTanks
+    mov matchOver, 0
+    mov edi, offset bullets
+    xor ecx, ecx
+T44ClrB:
+    mov (BULLET ptr [edi]).active, 0
+    add edi, SIZEOF BULLET
+    inc ecx
+    .if ecx < MAX_BULLETS
+        jmp T44ClrB
+    .endif
+    mov byte ptr mapData[13*COLS+4], TILE_BRICK
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].protT, 0
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, DIR_UP
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov dword ptr tanks[0*SIZEOF TANK].effOn, 0
+    mov tanks[0*SIZEOF TANK].skill, SK_SWAP
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 第一段：发射并绑定
+    mov inputTable[20], 0
+    invoke GameUpdate                    ; 松开 tick：prevUse 归零，保证第二段边沿
+    mov edi, tanks[0*SIZEOF TANK].swapBul
+    mov lGot, 0
+    cmp edi, 0
+    jl T44BadBind                        ; 不该失败：防御跳过
+    imul edi, edi, SIZEOF BULLET
+    add edi, offset bullets
+    mov (BULLET ptr [edi]).vx, 0
+    mov (BULLET ptr [edi]).vy, 0
+    mov (BULLET ptr [edi]).subpxX, 0
+    mov (BULLET ptr [edi]).subpxY, 0
+    mov (BULLET ptr [edi]).x, 124        ; 理想落点 (116,416)：车 [116..141)
+    mov (BULLET ptr [edi]).y, 424        ; 压 (4,13) 细柱 [140..148] => 旧码放弃
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 第二段：换位（环扫描命中 (-8,0)）
+    mov inputTable[20], 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    cmp eax, 112
+    jne T44BadBind
+    mov eax, tanks[0*SIZEOF TANK].y
+    cmp eax, 416
+    jne T44BadBind
+    mov lGot, 1
+T44BadBind:
+    invoke Chk, offset stT44a, stT44aL, lGot, 1
+    ; b) 朝向=弹道角(270)，绑定解除（换位完成语义与旧版一致）
+    mov eax, tanks[0*SIZEOF TANK].dir
+    cmp eax, DIR_UP
+    jne T44BadB2
+    mov eax, tanks[0*SIZEOF TANK].swapBul
+    cmp eax, -1
+    jne T44BadB2
+    mov lGot, 1
+    jmp T44OkB2
+T44BadB2:
+    mov lGot, 0
+T44OkB2:
+    invoke Chk, offset stT44b, stT44bL, lGot, 1
+    mov byte ptr mapData[13*COLS+4], TILE_EMPTY
+
+    ; ==== T45 冰缘滑行延续回归（会话35）：滑行途中车身跨出冰格缘
+    ;      （4 点降到 2 点）旧代码立即清零 slide => "雪地加速有时没感觉"；
+    ;      新规则 1..3 点保持动量骑出冰面，0 点（完全离冰）才停。
+    ;      新"起滑"仍须 4/4：T33b 语义不动 ====
+    invoke Mark, 354
+    call ResetTanks
+    mov matchOver, 0
+    mov byte ptr mapData[15*COLS+11], TILE_ICE   ; x352..383
+    mov byte ptr mapData[15*COLS+12], TILE_ICE   ; x384..415
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].protT, 0
+    mov tanks[0*SIZEOF TANK].x, 352
+    mov tanks[0*SIZEOF TANK].y, 480
+    mov tanks[0*SIZEOF TANK].dir, DIR_RIGHT
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov dword ptr tanks[0*SIZEOF TANK].effOn, 0
+    mov inputTable[0], 1
+    invoke GameUpdate                        ; 4/4 命中 -> 起滑
+    mov inputTable[0], 0
+    invoke AdvanceTicks, 30                  ; 一路滑行骑出冰缘
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov lGot, 0
+    cmp eax, 406
+    jb T45BadA                               ; 旧码停在 ~398..400
+    cmp eax, 415
+    ja T45BadA                               ; 完全离冰(0点)必停 => 不越界
+    mov lGot, 1
+T45BadA:
+    invoke Chk, offset stT45a, stT45aL, lGot, 1
+    ; b) 新起滑门槛不变：从 2/4 骑缘位起步驱动 1 tick -> slide 仍 0
+    mov tanks[0*SIZEOF TANK].x, 400
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov inputTable[0], 1
+    invoke GameUpdate
+    mov inputTable[0], 0
+    mov eax, tanks[0*SIZEOF TANK].slide
+    mov lGot, 0
+    .if eax == 0
+        mov lGot, 1
+    .endif
+    invoke Chk, offset stT45b, stT45bL, lGot, 1
+    mov byte ptr mapData[15*COLS+11], TILE_EMPTY
+    mov byte ptr mapData[15*COLS+12], TILE_EMPTY
+
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
     invoke Mark, 342
     cld
@@ -3880,7 +4136,9 @@ TileAtPx proc uses ebx px: dword, py: dword
 TileAtPx endp
 
 ; ------------------------------------------------------------
-; TankTerrMajority —— 地形"四象限全点"判定（会话 20）
+; TankTerrCount —— 四象限采样命中指定地形的点数 0..4（会话 35 从
+; TankTerrMajority 拆出：冰面滑行需区分 4/2/0 档，泥土仍要满 4 点）
+; TankTerrMajority —— 地形"四象限全点"布尔判定（会话 20）
 ; 旧版用坦克中心单像素判泥土减速/冰面滑行：25px 车身骑在 32px 格上时，
 ; 车身早已视觉离开该格而中心点还留在格内，效果"赖着不走"（用户点名：
 ; 不在地形内效果依然会保留）。
@@ -3893,7 +4151,7 @@ TileAtPx endp
 ; 等价（自测摆位全部在格原点，语义不变）。
 ; 水域保持"覆盖任一格即阻挡"——车身边缘碰到水就应停下，不放行。
 ; ------------------------------------------------------------
-TankTerrMajority proc uses ebx esi edi tankP: dword, tileType: dword
+TankTerrCount proc uses ebx esi edi tankP: dword, tileType: dword
     local px0:dword, px1:dword, py0:dword, py1:dword, cnt:dword
     mov esi, tankP
     mov eax, (TANK ptr [esi]).x
@@ -3926,12 +4184,15 @@ TankTerrMajority proc uses ebx esi edi tankP: dword, tileType: dword
         inc cnt
     .endif
     mov eax, cnt
-    cmp eax, 4
-    jb TTM_No
-    mov eax, 1
     ret
-TTM_No:
-    xor eax, eax
+TankTerrCount endp
+
+TankTerrMajority proc tankP: dword, tileType: dword
+    invoke TankTerrCount, tankP, tileType
+    xor ecx, ecx
+    cmp eax, 4
+    setge cl
+    mov eax, ecx
     ret
 TankTerrMajority endp
 
@@ -4269,6 +4530,55 @@ TB_CNext:
     inc cc
     jmp TB_Col
 TankBlocked endp
+
+; ------------------------------------------------------------
+; WaterRectsHit —— 坦克矩形（TANK_SIZE 方块）是否覆盖任意水域格。
+; 会话 35：驭水到期"延寿"判定。不能复用 TankBlocked——它先查墙、
+; 命中墙即短路返回 1，会把水情掩盖。矩形须在界内（调用方坦克恒在界内）。
+; ------------------------------------------------------------
+WaterRectsHit proc uses ebx x:dword, y:dword
+    local c0:dword, c1:dword, r0:dword, r1:dword, cc:dword, rr:dword
+    mov eax, x
+    shr eax, 5                     ; CELL=32=2^5
+    mov c0, eax
+    mov eax, x
+    add eax, TANK_SIZE-1
+    shr eax, 5
+    mov c1, eax
+    mov eax, y
+    shr eax, 5
+    mov r0, eax
+    mov eax, y
+    add eax, TANK_SIZE-1
+    shr eax, 5
+    mov r1, eax
+    mov eax, r0
+    mov rr, eax
+WH_Row:
+    mov eax, r1
+    .if rr > eax
+        xor eax, eax
+        ret
+    .endif
+    mov eax, c0
+    mov cc, eax
+WH_Col:
+    mov eax, c1
+    .if cc > eax
+        inc rr
+        jmp WH_Row
+    .endif
+    mov eax, rr
+    imul eax, eax, COLS
+    add eax, cc
+    movzx eax, mapData[eax]
+    .if eax == TILE_WATER
+        mov eax, 1
+        ret
+    .endif
+    inc cc
+    jmp WH_Col
+WaterRectsHit endp
 
 ; ------------------------------------------------------------
 ; ShiftToOpen -- 坦克重生位嵌墙时，迁移到最近的开放格（复用出生保护逻辑）
@@ -5251,6 +5561,7 @@ PlaceMine endp
 ; ------------------------------------------------------------
 DoSwap proc uses ebx esi edi slotIdx: dword
     local ptank:dword, nx:dword, ny:dword, oldx:dword, oldy:dword
+    local lIdx:dword, tx:dword, ty:dword
     mov eax, slotIdx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
@@ -5270,7 +5581,7 @@ DoSwap proc uses ebx esi edi slotIdx: dword
     mov (TANK ptr [ecx]).swapBul, -1
     ret
 DS_Live:
-    ; 坦克目标 = 子弹中心对齐
+    ; 坦克目标 = 子弹中心对齐（理想位，环表第 0 候选）
     mov eax, (BULLET ptr [esi]).x
     add eax, BULLET_SIZE_PX/2
     sub eax, TANK_SIZE/2
@@ -5279,25 +5590,46 @@ DS_Live:
     add eax, BULLET_SIZE_PX/2
     sub eax, TANK_SIZE/2
     mov ny, eax
-    ; 硬边界防御：子弹贴边飞行时换位目标可能越界
-    mov eax, nx
-    test eax, eax
-    js DS_GiveUp
-    cmp eax, MAP_W - TANK_SIZE
-    ja DS_GiveUp
-    mov eax, ny
-    test eax, eax
-    js DS_GiveUp
-    cmp eax, MAP_H - TANK_SIZE
-    ja DS_GiveUp
-    invoke TankBlocked, nx, ny
-    .if eax != 0
-        ; 目标被挡（子弹贴墙缝隙）-> 放弃换位
-DS_GiveUp:
-        mov ecx, ptank
-        mov (TANK ptr [ecx]).swapBul, -1
-        ret
+    ; 会话 35：脱身环扫描——旧版只试"子弹中心对齐"一个位置，子弹贴墙缝/
+    ; 贴边时 TankBlocked!=0 就直接解绑放弃（用户："换位有时候无法换位"）。
+    ; 现按 swapRing 表"理想位 -> 4px 环 -> 8px 环"共 25 个候选依序尝试，
+    ; 第一个界内且不挡的落点生效；全部不可用才放弃（旧语义兜底不变）。
+    mov lIdx, 0
+DS_Ring:
+    mov eax, lIdx
+    cmp eax, SWAP_RING_N
+    jae DS_GiveUp
+    movsx ecx, swapRingX[eax*2]
+    movsx edx, swapRingY[eax*2]
+    add ecx, nx                      ; 候选 = 理想位 + 偏移
+    add edx, ny
+    test ecx, ecx                    ; 越界候选跳过（不是放弃：环可能绕回界内）
+    js DS_Next
+    cmp ecx, MAP_W - TANK_SIZE
+    ja DS_Next
+    test edx, edx
+    js DS_Next
+    cmp edx, MAP_H - TANK_SIZE
+    ja DS_Next
+    mov tx, ecx
+    mov ty, edx                      ; ecx/edx 会被 invoke 破坏，先落局部
+    invoke TankBlocked, tx, ty
+    .if eax == 0
+        mov eax, tx
+        mov nx, eax
+        mov eax, ty
+        mov ny, eax
+        jmp DS_Ok
     .endif
+DS_Next:
+    inc lIdx
+    jmp DS_Ring
+DS_GiveUp:
+    ; 25 候选全不可用 -> 解绑放弃（与旧版单点失败同语义）
+    mov ecx, ptank
+    mov (TANK ptr [ecx]).swapBul, -1
+    ret
+DS_Ok:
     ; TankBlocked 破坏了 esi（只保护 ebx）-> 重新装载子弹指针
     mov eax, edi
     imul eax, eax, SIZEOF BULLET
@@ -5447,7 +5779,8 @@ TryUseSkill endp
 
 ; ------------------------------------------------------------
 ; EffTick —— 每槽位每 tick：效果倒计时 + 到期保护
-; 穿墙到期仍在墙里 / 驭水到期仍在水里 -> 延寿 1 tick 直到离开
+; 穿墙到期仍在墙里 / 驭水到期车身仍贴水 -> 延寿 1 tick 直到离开
+; （会话 35：两者统一按车身 AABB 判定；旧驭水用中心单点，出水残缘卡死）
 ; ------------------------------------------------------------
 EffTick proc uses ebx slotIdx: dword
     mov ebx, slotIdx
@@ -5483,12 +5816,14 @@ EffTick proc uses ebx slotIdx: dword
     .if eax & EFF_WATER
         mov eax, (TANK ptr [ebx]).effT
         .if eax == 0
+            ; 会话 35：延寿判定从"中心在水格"放宽为"车身贴水格"（与穿墙
+            ; 的 AABB 延寿同构）。原判定下斜穿出水域边缘：中心已回岸而车身
+            ; 仍泡水，到期即清 EFF_WATER，之后任何方向目标仍压水全被挡，
+            ; 卡死在水陆交界（用户点名"卡在里面出不来"）。
             mov ecx, (TANK ptr [ebx]).x
-            add ecx, TANK_SIZE/2
             mov edx, (TANK ptr [ebx]).y
-            add edx, TANK_SIZE/2
-            invoke TileAtPx, ecx, edx
-            .if eax == TILE_WATER
+            invoke WaterRectsHit, ecx, edx
+            .if eax != 0
                 mov (TANK ptr [ebx]).effT, 1
             .else
                 and (TANK ptr [ebx]).effOn, not EFF_WATER
@@ -5734,6 +6069,94 @@ MP_MDone:
 MuzzlePoint endp
 
 ; ------------------------------------------------------------
+; WallOverlapArea —— 坦克车身（TANK_SIZE 方块）与墙格（砖/钢）重叠的
+;   像素面积总和。会话 35：穿墙次数耗尽且"中心已出墙但车身嵌墙"时，
+;   脱离豁免只放行"嵌入面积不增大"且"目标中心非墙"的移动——保证脱身
+;   方向永远可走，同时防骑豁免把中心推进墙内躲避伤害。
+;   调用方（MoveTryPos）已做界内检查，格索引必合法。
+; ------------------------------------------------------------
+WallOverlapArea proc uses ebx esi edi px0: dword, py0: dword
+    local c0:dword, c1:dword, r0:dword, r1:dword, cc:dword, rr:dword
+    local acc:dword
+    mov eax, px0
+    shr eax, 5                     ; CELL=32=2^5
+    mov c0, eax
+    mov eax, px0
+    add eax, TANK_SIZE-1
+    shr eax, 5
+    mov c1, eax
+    mov eax, py0
+    shr eax, 5
+    mov r0, eax
+    mov eax, py0
+    add eax, TANK_SIZE-1
+    shr eax, 5
+    mov r1, eax
+    mov acc, 0
+    mov eax, r0
+    mov rr, eax
+WOA_Row:
+    mov eax, r1
+    .if rr > eax
+        jmp WOA_Done
+    .endif
+    mov eax, c0
+    mov cc, eax
+WOA_Col:
+    mov eax, c1
+    .if cc > eax
+        inc rr
+        jmp WOA_Row
+    .endif
+    mov eax, rr
+    imul eax, eax, COLS
+    add eax, cc
+    movzx eax, mapData[eax]
+    .if eax == TILE_STEEL || eax == TILE_BRICK
+        ; ovX = min(px0+SIZE, wx1) - max(px0, wx0)（覆盖必 >0）
+        mov esi, cc
+        shl esi, 5
+        mov edi, esi
+        add edi, CELL
+        mov eax, px0
+        .if esi > eax
+            mov eax, esi
+        .endif
+        mov edx, px0
+        add edx, TANK_SIZE
+        .if edi < edx
+            mov edx, edi
+        .endif
+        sub edx, eax               ; ovX
+        mov ebx, edx               ; 存档（ebx 为本 proc 保存寄存器）
+        ; ovY 同理
+        mov esi, rr
+        shl esi, 5
+        mov edi, esi
+        add edi, CELL
+        mov eax, py0
+        .if esi > eax
+            mov eax, esi
+        .endif
+        mov edx, py0
+        add edx, TANK_SIZE
+        .if edi < edx
+            mov edx, edi
+        .endif
+        sub edx, eax               ; ovY
+        imul ebx, edx              ; ovX*ovY
+        mov eax, acc
+        add eax, ebx
+        mov acc, eax
+    .endif
+    inc cc
+    jmp WOA_Col
+WOA_Done:
+    mov eax, acc
+    ret
+WallOverlapArea endp
+
+; ------------------------------------------------------------
 ; MoveTryPos —— "坦克 ptank 平移到 (nxv,nyv) 是否放行"统一判定
 ;   （会话 25 从 MoveTank 抽出：界外=3 / 墙=1 / 水=2，驭水/穿墙豁免、
 ;    嵌墙脱离（用完次数仍可挪动/走出）逻辑原样内聚；只判定不消耗，
@@ -5741,7 +6164,7 @@ MuzzlePoint endp
 ;   返回 eax：0=可通行，非 0=阻挡码
 ; ------------------------------------------------------------
 MoveTryPos proc uses ebx esi edi nxv: dword, nyv: dword, ptank: dword
-    local lCRow:dword
+    local lCRow:dword, lCCol:dword, lCurA:dword, lTgtA:dword
     mov eax, nxv
     test eax, eax
     js MTP_Out
@@ -5776,33 +6199,69 @@ MTP_In:
             mov eax, 0             ; 穿墙术放行（计次在提交端做）
             ret
         .else
-            ; 会话 21 修复随迁：次数耗尽但身体仍嵌墙 -> 允许"同墙格挪动"
-            ; 或"目标中心已出墙"的脱离位移，不消耗次数（防四面皆挡卡死）
-            mov edi, (TANK ptr [esi]).x
-            add edi, TANK_SIZE/2
-            shr edi, 5                  ; 当前中心列
-            mov eax, (TANK ptr [esi]).y
-            add eax, TANK_SIZE/2
-            shr eax, 5
-            mov lCRow, eax              ; 当前中心行（IsWallCell 毁 eax，先存）
-            invoke IsWallCell, edi, eax
-            .if eax != 0                ; 嵌在墙里才有脱离豁免
-                mov ecx, nxv
-                add ecx, TANK_SIZE/2
-                shr ecx, 5
-                mov edx, nyv
-                add edx, TANK_SIZE/2
-                shr edx, 5
-                .if ecx == edi && edx == lCRow
-                    mov eax, 0          ; 同墙格内挪动
-                .else
-                    invoke IsWallCell, ecx, edx
-                    .if eax == 0
-                        mov eax, 0      ; 目标中心已出墙 = 脱离
+            ; 会话 21 豁免随迁 + 会话 35 复核：嵌墙门从"中心在墙格"放宽为
+            ; "车身碰墙"(WallRectsHit)，两级规则：
+            ;  a) 中心在墙格（耗尽后嵌格爬行的正路）：同格挪动或目标中心
+            ;     出墙放行；细墙几何保证中心出墙瞬间车身同刻脱柱，无悬空态。
+            ;  b) 中心非墙格但车身碰墙：仅"嵌入面积不增大 + 目标中心非墙"
+            ;     放行。注：WT=8 时此分支按算术不可达（中心在空格 => 车身
+            ;     最远探入邻格 11px < 细柱起点 12px），保留为日后加粗
+            ;     WALL_THICK 时的防卡死保险；若届时启用，WallOverlapArea
+            ;     仍按整格面积计，单调性判据成立但非精确贴柱面积。
+            mov eax, 1                    ; 默认保持阻挡码
+            mov ecx, (TANK ptr [esi]).x
+            mov edx, (TANK ptr [esi]).y
+            invoke WallRectsHit, ecx, edx, TANK_SIZE, TANK_SIZE
+            .if eax != 0                  ; 车身确与墙格相交才谈脱离
+                mov edi, (TANK ptr [esi]).x
+                add edi, TANK_SIZE/2
+                shr edi, 5                ; 当前中心列
+                mov lCCol, edi
+                mov eax, (TANK ptr [esi]).y
+                add eax, TANK_SIZE/2
+                shr eax, 5
+                mov lCRow, eax            ; 当前中心行（IsWallCell 毁 eax，先存）
+                invoke IsWallCell, edi, eax
+                .if eax != 0              ; a) 中心在墙格：会话 21 原语义
+                    mov ecx, nxv
+                    add ecx, TANK_SIZE/2
+                    shr ecx, 5
+                    mov edx, nyv
+                    add edx, TANK_SIZE/2
+                    shr edx, 5
+                    .if ecx == edi && edx == lCRow
+                        mov eax, 0          ; 同墙格内挪动
+                    .else
+                        invoke IsWallCell, ecx, edx
+                        .if eax == 0
+                            mov eax, 0      ; 目标中心已出墙 = 脱离
+                        .endif
+                    .endif
+                .else                       ; b) 中心出墙、车角仍嵌墙
+                    mov ecx, (TANK ptr [esi]).x
+                    mov edx, (TANK ptr [esi]).y
+                    invoke WallOverlapArea, ecx, edx
+                    mov lCurA, eax
+                    invoke WallOverlapArea, nxv, nyv
+                    mov lTgtA, eax
+                    mov eax, lTgtA          ; reg-vs-mem 比较（面积恒非负）
+                    .if eax <= lCurA
+                        mov ecx, nxv
+                        add ecx, TANK_SIZE/2
+                        shr ecx, 5
+                        mov edx, nyv
+                        add edx, TANK_SIZE/2
+                        shr edx, 5
+                        invoke IsWallCell, ecx, edx
+                        .if eax == 0
+                            mov eax, 0      ; 不再钻深且目标中心在墙外 = 脱离
+                        .else
+                            mov eax, 1      ; 目标中心进墙：拒绝
+                        .endif
+                    .else
+                        mov eax, 1          ; 嵌得更深：拒绝（防钻墙避伤）
                     .endif
                 .endif
-            .else
-                mov eax, 1              ; 未嵌墙（正常撞墙）：保持阻挡码
             .endif
         .endif
     .endif
@@ -5962,16 +6421,20 @@ MT_SlideDone:
                 .endif
             .endif
         .endif
-        ; 冰面判定：四象限全点（会话 20：与泥土同因，车已离冰不应再滑行）
-        invoke TankTerrMajority, ptank, TILE_ICE
-        .if eax != 0
+        ; 冰面判定（会话 35 修订，仍基于会话 20 四象限采样）：
+        ;  4/4 -> 刷新滑行并冻结航向；1..3 -> 不刷新也不清零，让已在进行的
+        ;  滑行自然骑出冰缘（修复"车身刚跨出冰缘滑行就掐断"——用户点名
+        ;  "雪地的加速效果有时候无法体现"）；0 -> 完全离冰才停滑。
+        ;  新起滑行仍必须 4/4：会话 20"车已离冰不应再滑行"语义不变（T33b 锁）。
+        invoke TankTerrCount, ptank, TILE_ICE
+        .if eax >= 4
             invoke RngBelow, ICE_SLIDE_RNG   ; 0..9
             add eax, ICE_SLIDE_MIN           ; 8..17 tick
             mov ecx, ptank
             mov edx, ang                     ; 冻结本 tick 实际使用角：滑行中转向不改轨迹
             mov (TANK ptr [ecx]).sdir, edx
             mov (TANK ptr [ecx]).slide, eax
-        .else
+        .elseif eax == 0
             mov ecx, ptank
             mov (TANK ptr [ecx]).slide, 0
         .endif

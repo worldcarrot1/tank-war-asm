@@ -1456,7 +1456,7 @@ STClear13:
     add edi, SIZEOF BULLET
     mov (BULLET ptr [edi]).x, 500
     mov (BULLET ptr [edi]).y, 424
-    mov (BULLET ptr [edi]).vx, BULLET_SPEED*FIX_ONE
+    mov (BULLET ptr [edi]).vx, BULLET_FP
     mov (BULLET ptr [edi]).vy, 0
     mov (BULLET ptr [edi]).owner, 2
     mov (BULLET ptr [edi]).active, 1
@@ -2060,7 +2060,7 @@ T20Clr:
     mov inputTable[20], 1
     invoke GameUpdate                      ; 发射换位弹（绑定 swapBul）
     mov inputTable[20], 0
-    invoke AdvanceTicks, 60                ; 弹上飞约 120px（会话 23：弹速 2，60 tick）
+    invoke AdvanceTicks, 60                ; 弹上飞约 162px（会话 24：弹速 2.7，60 tick）
     mov inputTable[20], 1
     invoke GameUpdate                      ; 再按 -> DoSwap
     mov inputTable[20], 0
@@ -2477,7 +2477,7 @@ ST26E:
     invoke Chk, offset stT26, stT26L, lPass, 5
 
     ; ==== T27 45 度弹道积分（回滚版 45 度提速失效回归锁）：
-    ;      16.16 定点 -> 60 tick 精确 84px/轴（|v| 任意角恒 2） ====
+    ;      16.16 定点 -> 60 tick 精确 114px/轴（|v| 任意角恒 2.7，会话 24） ====
     invoke Mark, 271
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 64
@@ -2528,15 +2528,15 @@ ST27Found:
     mov eax, (BULLET ptr [esi]).x
     sub eax, stBulX0
     mov lTmp, eax
-    cmp eax, 83
+    cmp eax, 112
     jb ST27Bad
-    cmp eax, 86
+    cmp eax, 116
     ja ST27Bad
     mov eax, (BULLET ptr [esi]).y
     sub eax, stBulY0
-    cmp eax, 83
+    cmp eax, 112
     jb ST27Bad
-    cmp eax, 86
+    cmp eax, 116
     ja ST27Bad
     mov lGot, 1
 ST27Bad:
@@ -2580,7 +2580,7 @@ ST28Done:
     ; ==== T29 斜弹撞墙反弹：|vx|/|vy| 取反保模（16.16 定点反弹回归锁） ====
     invoke Mark, 291
     mov tanks[0*SIZEOF TANK].alive, 0      ; 阵亡坦克不参与命中，防回流弹干扰
-    invoke AdvanceTicks, 320               ; 会话 23 弹速 2：320 tick 补走 ~453px/轴必撞边界
+    invoke AdvanceTicks, 320               ; 会话 24 弹速 2.7：320 tick 补走 ~611px/轴必撞边界
     mov eax, stBulIdx
     imul eax, eax, SIZEOF BULLET
     add eax, offset bullets
@@ -3769,10 +3769,12 @@ SimReflectPath proc uses ebx esi edi slotIdx: dword, pXs: dword, pYs: dword, pHi
     mov y, eax
     mov eax, (TANK ptr [esi]).dir
     mov ebx, cosTBL[eax*4]
-    imul ebx, ebx, BULLET_SPEED*FIX_TBL64
+    imul ebx, ebx, BULLET_FP          ; 会话 24：|v|=2.7 非整数，定点标量>>10
+    sar ebx, 10
     mov vx, ebx
     mov ebx, sinTBL[eax*4]
-    imul ebx, ebx, BULLET_SPEED*FIX_TBL64
+    imul ebx, ebx, BULLET_FP
+    sar ebx, 10
     mov vy, ebx
     mov ebx, 0
     mov subpxX, ebx
@@ -4551,15 +4553,18 @@ FindSlot:
 SlotFound:
     mov eax, ecx
     mov bulIdx, eax                 ; 先存槽索引
-    ; 会话 19：速度向量 = 航向角单位向量 x BULLET_SPEED，16.16 定点
-    ; （任意角 |v|=6 精确；旧整数表 45 度弹只能飞出 5.66 且轴向阶梯）
+    ; 会话 19：速度向量 = 航向角单位向量 x 弹速，16.16 定点
+    ; （任意角 |v| 精确；旧整数表 45 度弹只能飞出 5.66 且轴向阶梯。
+    ;   会话 24：弹速 2.7 非整数 -> 用 BULLET_FP>>10 定点标量）
     mov ecx, (TANK ptr [ebx]).dir
     mov (BULLET ptr [esi]).fireAng, ecx
     mov eax, cosTBL[ecx*4]
-    imul eax, eax, BULLET_SPEED*FIX_TBL64
+    imul eax, eax, BULLET_FP
+    sar eax, 10
     mov (BULLET ptr [esi]).vx, eax
     mov eax, sinTBL[ecx*4]
-    imul eax, eax, BULLET_SPEED*FIX_TBL64
+    imul eax, eax, BULLET_FP
+    sar eax, 10
     mov (BULLET ptr [esi]).vy, eax
     mov eax, 0
     mov (BULLET ptr [esi]).subpxX, eax
@@ -4689,7 +4694,7 @@ MoveTank proc uses esi edi ownerIdx: dword, moveF: dword, ang: dword
     .if eax != 0
         mov eax, DIRT_SPEED
     .else
-        ; 3/4 交替 -> 2/3 交替（会话 23：平均 2.5，略高于弹速 2）：奇数 tick 用 HI
+        ; 3/4 交替 -> 2/3 交替（会话 23：平均 2.5，略低于弹速 2.7，会话 24）：奇数 tick 用 HI
         mov eax, TANK_SPEED
         mov edx, gTick
         test edx, 1

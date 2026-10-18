@@ -122,8 +122,9 @@ ICE_SLIDE_RNG equ 10                ; 8 + rand%10 -> 8..17 tick（20..42px）
 ; ---- 子弹（§3）----
 MAX_BULLETS     equ 56              ; 全场弹池
 MAX_PER_TANK    equ 10              ; 每辆坦克同屏上限
-BULLET_SPEED    equ 2               ; px/tick（会话 23：应玩家要求低于坦克均速 2.5，
-                                    ;  注意这意味着坦克可以跑赢自己发出的子弹）
+BULLET_FP       equ 176947            ; 弹速 2.7 px/tick 的 16.16 定点（会话 24：
+                                    ;  比坦克均速 2.5 略快。非整数 -> 不再走
+                                    ;  BULLET_SPEED*64 整数路径，改为 tbl*BULLET_FP>>10）
 BULLET_SIZE_PX  equ 8               ; 弹体 8x8
 BULLET_LIFE     equ 600             ; 存活 600 tick（10 秒）自动消失
 BULLET_MAX_BOUNCE equ 10            ; 反弹 >=10 次消失
@@ -186,7 +187,7 @@ TANK ENDS
 
 ; 子弹（全场固定池 bullets[MAX_BULLETS]）
 ; 反弹物理：存速度分量 vx/vy，反弹 = 对应分量取反（零乘除）
-; 会话 19：vx/vy 改 16.16 有符号定点（任意角 |v|=BULLET_SPEED 精确），
+; 会话 19：vx/vy 改 16.16 有符号定点（任意角 |v| 恒 BULLET_FP 定点值精确），
 ; 每 tick subpx 进位产生整数步长；SIZEOF 32->44，引用处必须用 SIZEOF BULLET
 ; （game.asm 原 3 处 shl 5 已改 imul）。
 BULLET STRUCT

@@ -43,9 +43,7 @@ SND_SWAP         equ 5
 SND_MINE         equ 6                 ; 布雷确认（会话 23 新增）
 
 NOTE_SHOT        equ 2646              ; 0.12s
-NOTE_BOOM        equ 8599              ; 0.39s（噪声 6200 + 低频轰鸣 2399）
-BOOM_NOISE       equ 6200
-BOOM_RUMBLE      equ 2399
+NOTE_BOOM        equ 8599              ; 0.39s（小丑盒爆裂纯噪声，会话 24 复原）
 NOTE_HALF        equ 1652              ; 0.075s
 NOTE_CNT         equ 2205              ; 0.10s
 NOTE_THIRD       equ 1101              ; 0.05s
@@ -69,11 +67,15 @@ NOTE_THIRD       equ 1101              ; 0.05s
     phFl        dd 0                ; 方波电平
     wrBytes     dd 0
     hFile       dd 0
-    ; 自创 16 音循环旋律（A 小调琶音风）
-    melody      dd 440, 523, 659, 880, 784, 659, 523, 587
-                dd 440, 523, 659, 587, 523, 440, 392, 440
+    ; 自创 32 音循环旋律（会话 24 改版：Am-F-C-G 四和弦电子跑动，
+    ; 每小节 8 音琶音+回折，尾小节 988(B5) 下折 587(D5) 导回 A 小调）
+    melody      dd 440, 659, 880, 659, 523, 659, 880, 1046
+                dd 349, 523, 698, 523, 440, 523, 698, 880
+                dd 523, 659, 784, 659, 523, 392, 523, 659
+                dd 392, 587, 784, 988, 880, 784, 659, 587
+    melodyN     = 32
 NOTE_SAMP       equ 3307              ; 0.15s @ 22050
-BGM_REPS        equ 4                 ; 4 遍 = 4.8s 循环
+BGM_REPS        equ 2                 ; 2 遍 = 9.6s 循环
 
 .code
 
@@ -236,25 +238,13 @@ GN_Loop:
 GenNoise endp
 
 ; ------------------------------------------------------------
-; GenBoomMix -- 爆炸混合（会话 23 电子音）：
-;   前段 6200 样本白噪爆裂 + 后段 55Hz 低频方波轰鸣长衰减
-; ------------------------------------------------------------
-GenBoomMix proc uses esi pBuf: dword
-    invoke GenNoise, pBuf, BOOM_NOISE
-    mov esi, pBuf
-    add esi, BOOM_NOISE
-    invoke GenSquare, esi, 55, BOOM_RUMBLE, 1600
-    ret
-GenBoomMix endp
-
-; ------------------------------------------------------------
 ; SndInit -- 启动时生成 BGM 文件与全部音效
 ; ------------------------------------------------------------
 SndInit proc uses ebx esi edi
     ; ---- BGM 文件 ----
     invoke GetEnvironmentVariableA, offset envTag, offset bgmPath, 240
     invoke lstrcatA, offset bgmPath, offset tagBgm
-    invoke WrHead, offset hdrBuf, BGM_REPS*16*NOTE_SAMP
+    invoke WrHead, offset hdrBuf, BGM_REPS*melodyN*NOTE_SAMP
     invoke CreateFileA, offset bgmPath, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0
     mov hFile, eax
     .if eax == -1
@@ -269,7 +259,7 @@ BG_Note:
     invoke GenSquare, offset tmpBuf, eax, NOTE_SAMP, 300
     invoke WriteFile, hFile, offset tmpBuf, NOTE_SAMP, addr wrBytes, 0
     inc esi
-    .if esi < 16
+    .if esi < melodyN
         jmp BG_Note
     .endif
     inc ebx
@@ -282,8 +272,10 @@ BG_Note:
     invoke GenSlide, offset sndShotBuf+44, 1500, 140, NOTE_SHOT
     invoke DecayTail, offset sndShotBuf+44, NOTE_SHOT, 200
     invoke WrHead, offset sndShotBuf, NOTE_SHOT
-    ; 爆炸：白噪爆裂 + 55Hz 低频轰鸣混合，0.39s
-    invoke GenBoomMix, offset sndBoomBuf+44
+    ; 爆炸（坦克击败音，会话 24 复原）：小丑盒爆裂纯噪声 0.39s
+    ; （LCG 随机裂音 + 线性衰减包络，即旧版"小丑盒爆炸"质感；
+    ;   会话 23 曾叠加 55Hz 低频轰鸣，玩家要求换回爆裂原味）
+    invoke GenNoise, offset sndBoomBuf+44, NOTE_BOOM
     invoke WrHead, offset sndBoomBuf, NOTE_BOOM
     ; 拾取：明亮上行大三琶音 A5->E6->A6（芯片过关感）
     invoke GenSquare, offset sndPickBuf+44, 880, NOTE_THIRD, 60

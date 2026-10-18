@@ -1829,10 +1829,13 @@ NS_BoxDone:
             invoke DrawTank, hdcBack, demoP1x, demoP1y, demoDir
             invoke SelectObject, hdcBack, menuFont
         .elseif eax == 1
+            ; 会话 24 重排：旧动画弹速 4px/tick 且"三回合各射一发"与真实
+            ; 弹速/一命制脱节。现在 0~1 拍一发 2.7px/tick 的弹飞到 P2 车头
+            ; 即被吸收，第 2 拍起 P2 淘汰闪烁 + 爆裂圈 + KO（一命制，首发定胜负）
             invoke SelectObject, hdcBack, brushP1
             invoke DrawTank, hdcBack, 200, 330, DIR_RIGHT
             mov eax, demoPh
-            .if eax < 3
+            .if eax < 2
                 invoke SelectObject, hdcBack, brushP2
                 invoke DrawTank, hdcBack, 650, 330, DIR_LEFT
             .else
@@ -1853,12 +1856,17 @@ NS_BoxDone:
                 .endif
                 invoke UiTextZ, hdcBack, 640, 260, offset szKO, 0000E0E0h
             .endif
+            ; 子弹：x = 230 + floor(tt*27/10)（2.7px/tick），越过 648 视为命中
             mov eax, demoPh
-            .if eax < 3
-                mov eax, demoPt
-                .if eax < 100
-                    imul eax, eax, 4
-                    add eax, 230
+            .if eax < 2
+                imul eax, eax, 120
+                add eax, demoPt
+                imul eax, eax, 27
+                mov ecx, 10
+                xor edx, edx
+                div ecx
+                add eax, 230
+                .if eax <= 648
                     mov boxRc.left, eax
                     add eax, 8
                     mov boxRc.right, eax
@@ -1891,22 +1899,31 @@ NS_BoxDone:
             mov ecx, 480
             div ecx
             mov eax, edx
-            .if eax < 240
-                imul eax, eax, 146
+            ; 会话 24 重排：弹真实速度 2.7px/tick —— 128 tick 走完
+            ; 230->572（贴墙），挤压两拍后同速折返，回到炮口停住
+            ; （折返段减法会出负：钳位用有符号 jge，勿写 .if <（无符号恒假））
+            .if eax < 128
+                imul eax, eax, 27
                 xor edx, edx
-                mov ecx, 100
+                mov ecx, 10
                 div ecx
                 add eax, 230
                 mov demoP1x, eax
+            .elseif eax < 132
+                mov demoP1x, 575              ; 贴墙挤压拍（爆裂圈同窗显示）
             .else
-                sub eax, 240
-                imul eax, eax, 146
+                sub eax, 132
+                imul eax, eax, 27
                 xor edx, edx
-                mov ecx, 100
+                mov ecx, 10
                 div ecx
                 mov ecx, eax
-                mov eax, 580
+                mov eax, 575
                 sub eax, ecx
+                cmp eax, 230
+                jge T2P2Keep
+                mov eax, 230
+T2P2Keep:
                 mov demoP1x, eax
             .endif
             mov eax, demoT
@@ -1914,7 +1931,7 @@ NS_BoxDone:
             mov ecx, 480
             div ecx
             mov eax, edx
-            .if eax >= 232 && eax < 250
+            .if eax >= 124 && eax < 142
                 invoke SelectObject, hdcBack, brushBrick
                 invoke Ellipse, hdcBack, 580, 316, 620, 356
             .endif

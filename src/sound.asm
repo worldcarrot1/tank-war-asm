@@ -98,15 +98,18 @@ NOTE_THIRD       equ 1101              ; 0.05s
                 dd 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0
                 dd 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0
     bgmN        = 64
-    ; 会话 28 对战轨：原样恢复会话 24 的 32 音 Am-F-C-G 跑动单层
-    ; （用户："对战的音乐和之前一样，不要和主页一样"），×2 遍 9.6s
-    gameMel     dd 440, 659, 880, 659, 523, 659, 880, 1046
-                dd 349, 523, 698, 523, 440, 523, 698, 880
-                dd 523, 659, 784, 659, 523, 392, 523, 659
-                dd 392, 587, 784, 988, 880, 784, 659, 587
-    gameN       = 32
-    gameReps    = 2                   ; 32*2=64 拍，与主页轨等长
+    ; 会话 29 对战轨：玩家嫌旧 32 音跑动主题"太吵"，改轻音乐——
+    ; 16 音 ×0.3s ×2 遍（与主页轨等长 9.6s），C-G-Am-F 五声级进、
+    ; 中低声区，正弦波叠加（GenSoft，抛物线半周近似），旋律摆幅 28 /
+    ; 低音摆幅 12（主页方波轨是 44/16），整体更静更柔
+    gameMel     dd 330, 392, 392, 440, 440, 330, 349, 294
+                dd 523, 392, 494, 392, 440, 330, 349, 262
+    gameBass    dd 131, 98, 110, 87, 131, 98, 110, 87
+    gameN       = 16                  ; 旋律音数/遍
+    gameBassN   = 8                   ; 低音根数/遍（每根盖两旋律音）
+    gameReps    = 2
 NOTE_SAMP       equ 3307              ; 一拍 0.15s @ 22050
+GAME_SAMP       equ NOTE_SAMP*2       ; 会话 29 轻音乐半速：一音 0.3s
 BGM_TOTAL       equ bgmN*NOTE_SAMP    ; 211648 字节
 
 ; ---- 会话 26：BGM 独立 waveOut 流（与 PlaySound 音效混音并存）----
@@ -117,7 +120,7 @@ WHDR_ENDLOOP    equ 0008h
 .data
     align 4
     bgmBuf      db BGM_TOTAL dup (?)  ; 主页主题（双轨合成）waveOut 缓冲
-    bgmBufG     db BGM_TOTAL dup (?)  ; 会话 28 对战轨（旧 32 音单层×2）
+    bgmBufG     db BGM_TOTAL dup (?)  ; 会话 29 对战轨（轻音乐 16 音正弦×2）
     bgmDev      dd 0                  ; HWAVEOUT
     bgmLive     dd 0                  ; 1=独立流已在播
     bgmTrk      dd -1                 ; 当前曲目：-1 未开流 / 0 主页 / 1 对战
@@ -359,6 +362,57 @@ GA_C2:
     ret
 GenAdd endp
 
+; GenSoft -- 正弦叠加写 pBuf（会话 29 轻音乐轨）：相位 16.16 定点步进
+; step=(freq<<16)/SR，抛物线半周近似 sin（u*(32768-u)>>14 峰 16384，
+; 再按 amp/16384 缩放），叠加进既有字节；amp 小（≤28）、基准 96，
+; 结果恒在 8..240 安全区无需钳位
+GenSoft proc uses ecx edx esi edi pBuf: dword, freq: dword, nSamp: dword, amp: dword
+local ph: dword
+    mov ph, 0
+    mov eax, freq
+    shl eax, 16
+    xor edx, edx
+    mov ecx, SR
+    div ecx                           ; eax = 每样本相位步进
+    mov edi, eax
+    mov esi, pBuf
+    mov ecx, nSamp
+GS_L1:
+    mov eax, ph
+    add eax, edi
+    mov ph, eax
+    and eax, 0FFFFh                   ; p=周期内相位（16.16 低 16 位）
+    push eax
+    mov edx, 65536
+    sub edx, eax
+    cmp eax, 32768
+    jbe GS_NoMir
+    mov eax, edx                      ; 镜像回 0..32768
+GS_NoMir:
+    mov edx, 32768
+    sub edx, eax
+    imul eax, edx                     ; u*(32768-u) ≤ 2.68e8
+    shr eax, 14                       ; ≤16384
+    imul eax, amp
+    shr eax, 14                       ; ≤amp
+    pop edx                           ; p（定符号）
+    cmp edx, 32768
+    jae GS_Neg
+    movzx edx, byte ptr [esi]
+    add edx, eax
+    mov [esi], dl
+    jmp GS_Done
+GS_Neg:
+    movzx edx, byte ptr [esi]
+    sub edx, eax
+    mov [esi], dl
+GS_Done:
+    inc esi
+    dec ecx
+    jnz GS_L1
+    ret
+GenSoft endp
+
 ; ------------------------------------------------------------
 ; SndInit -- 启动时生成 BGM 文件与全部音效
 ; ------------------------------------------------------------
@@ -401,8 +455,14 @@ BG_Beat:
     .if ebx < bgmN
         jmp BG_Beat
     .endif
-    ; ---- 对战轨（会话 28）：原样恢复会话 24 单层方波（绝对写入，
-    ;      尾衰减 300 样本防爆音），32 音 ×2 遍，与主页轨等长 ----
+    ; ---- 对战轨（会话 29 轻音乐）：整轨铺 96 后正弦叠加旋律(±28)与
+    ;      低音(±12)——16 音 ×0.3s ×2 遍=9.6s，与主页轨等长；
+    ;      旧会话 28 方波跑动主题被指"太吵"，整段替换 ----
+    mov edi, OFFSET bgmBufG
+    mov eax, 060606060h
+    mov ecx, BGM_TOTAL/4
+    cld
+    rep stosd
     xor ebx, ebx
 BG2_Rep:
     xor esi, esi
@@ -410,14 +470,28 @@ BG2_Note:
     mov eax, ebx
     imul eax, eax, gameN
     add eax, esi
-    imul eax, eax, NOTE_SAMP
+    imul eax, eax, GAME_SAMP
     mov edx, OFFSET bgmBufG
     add edx, eax
     mov eax, gameMel[esi*4]
-    invoke GenSquare, edx, eax, NOTE_SAMP, 300
+    invoke GenSoft, edx, eax, GAME_SAMP, 28
     inc esi
     .if esi < gameN
         jmp BG2_Note
+    .endif
+    xor esi, esi
+BG2_Bass:
+    mov eax, ebx
+    imul eax, eax, gameBassN
+    add eax, esi
+    imul eax, eax, GAME_SAMP*2
+    mov edx, OFFSET bgmBufG
+    add edx, eax
+    mov eax, gameBass[esi*4]
+    invoke GenSoft, edx, eax, GAME_SAMP*2, 12
+    inc esi
+    .if esi < gameBassN
+        jmp BG2_Bass
     .endif
     inc ebx
     .if ebx < gameReps

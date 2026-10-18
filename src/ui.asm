@@ -984,7 +984,8 @@ NE_EdNeg:
             mov rebindSlot, -1
         .endif
         .if rebindSlot != -1
-            ; ---- 改键等待：目标键位闪烁，按新键完成（占用则互换，会话 26），Esc 取消 ----
+            ; ---- 改键等待：目标键位闪烁，再点一个键位行=互换完成（会话 29
+            ;      全鼠标流程）；按任意裸键亦可（占用则互换，会话 26），Esc 取消 ----
             inc blinkTick
             .if esE != 0
                 mov rebindSlot, -1
@@ -1048,19 +1049,30 @@ UT_Scan2Next:
                 jmp UT_Scan2
 UT_Scan2Done:
             .endif
-            ; 等待中允许点击其他键位行切换目标 / 点重置按钮
+            ; 会话 29 全鼠标改键：等待中**再点另一个键位行 = 两槽互换
+            ; 键位**（即"闪烁后点击新键位完成更改"）；点同行 = 取消闪烁；
+            ; 键盘扫描仍保留，供绑到页面上没有的任意裸键
             .if lbE != 0
                 invoke NumSelHitTest
                 test eax, eax
-                js UTW_Next                ; 负值（重置/标题）不走切换
-                .if eax != rebindSlot
-                    mov rebindSlot, eax
-                    mov rebindCool, 3      ; 切换目标：冷却防残键误捕
+                js UTW_Next                ; 负值（重置/标题）不走互换
+                .if eax == rebindSlot
+                    mov rebindSlot, -1     ; 再点同一行 = 取消
+                .else
+                    mov ecx, eax           ; ecx=被点行 B
+                    mov eax, rebindSlot    ; eax=闪烁行 A
+                    mov edx, keyTable[eax*4]
+                    mov ebx, keyTable[ecx*4]
+                    mov keyTable[eax*4], ebx   ; A 得到 B 的键
+                    mov keyTable[ecx*4], edx   ; B 得到 A 的旧键（互换）
+                    mov rebindSlot, -1
                 .endif
 UTW_Next:
                 .if eax == -2
                     invoke InitKeyDefaults
                     mov rebindSlot, -1
+                .elseif eax == -1
+                    mov rebindSlot, -1     ; 点空白=取消闪烁（会话 29）
                 .endif
             .endif
         .else

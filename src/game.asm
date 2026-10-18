@@ -715,6 +715,14 @@ arenaTable dd ARENA1,
     stT37aL equ ($ - stT37a)
     stT37b  db "T37_MINE_STEPT_TRIP(expect1)="
     stT37bL equ ($ - stT37b)
+    stT38a  db "T38_CORNER_SLIDE_X(expect17)="
+    stT38aL equ ($ - stT38a)
+    stT38b  db "T38_CORNER_SLIDE_YHOLD(expect0)="
+    stT38bL equ ($ - stT38b)
+    stT38c  db "T38_CORNER_FULLSTOP_Y(expect0)="
+    stT38cL equ ($ - stT38c)
+    stT38d  db "T38_CORNER_FULLSTOP_X(expect0)="
+    stT38dL equ ($ - stT38d)
     stT15p  db "T15_LASER_TWOSTAGE(expect3)="
     stT15pL equ ($ - stT15p)
     stT16p  db "T16_REFL_TWOSTAGE(expect3)="
@@ -2958,6 +2966,83 @@ T37BadA:
 T37BadB:
     invoke Chk, offset stT37b, stT37bL, lGot, 1
 
+    ; ==== T38 卡墙角回归锁（会话 25 单轴滑移）：全空沙盒 + 第6行横向
+    ;  钢墙带 + 第10列纵向钢墙带（行0..5）。注意挡板是"细墙"渲染
+    ;  （WALL_THICK=8）：横带实体 = y[204,212)（第6行居中），纵带实体 =
+    ;  x[332,340)；相交判 open-interval（tank.bottom=ny+25 > 204 才挡）。
+    ;  案例A：坦克 (192,179)（底缘恰贴 204 阈值）以 45 度右下行进 10
+    ;  tick——y 轴每 tick 都被横墙带挡、x 轴全程畅通：旧版整目标被拒 ->
+    ;  x 纹丝不动（卡墙根）；新版单轴滑移 -> x 恰 +17px（10 tick 两 spd
+    ;  各 5 次，Σdx16 = 5*(724*2*64 + 724*3*64) = 1157440，进位链与
+    ;  奇偶顺序无关，floor/65536 = 17），y 钉死 179（Δy=0）。
+    ;  案例B：坦克 (307,179) 紧贴拐角（右缘 332 = 纵墙带左界，底缘
+    ;  204 = 横墙带上界）：每 tick dx/dy>=1 -> "仅 x"嵌纵墙、"仅 y"嵌
+    ;  横墙 -> 双轴全挡整体停车，x/y 均不许挪动（Δ=0，锁定滑移探针
+    ;  绝不把坦克挤进墙缝）。 ====
+    invoke Mark, 318
+    xor edi, edi
+T38Clr:
+    mov mapData[edi], TILE_EMPTY
+    inc edi
+    cmp edi, COLS*ROWS
+    jb T38Clr
+    xor ebx, ebx
+T38HWall:
+    mov eax, 6
+    imul eax, eax, COLS
+    add eax, ebx
+    mov mapData[eax], TILE_STEEL
+    inc ebx
+    cmp ebx, COLS
+    jb T38HWall
+    xor ebx, ebx
+T38VWall:
+    mov eax, ebx
+    imul eax, eax, COLS
+    add eax, 10
+    mov mapData[eax], TILE_STEEL
+    inc ebx
+    cmp ebx, 6                          ; 行 0..5（第 6 行已有横墙带）
+    jb T38VWall
+    ; ---- 案例A：贴墙滑行 ----
+    call ResetTanks
+    mov matchOver, 0
+    mov tanks[0*SIZEOF TANK].x, 192
+    mov tanks[0*SIZEOF TANK].y, 179
+    mov tanks[0*SIZEOF TANK].dir, 45
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    invoke SetDirInput, 0
+    invoke AdvanceTicks, 10
+    invoke SetDirInput, 99
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, 192
+    invoke Chk, offset stT38a, stT38aL, eax, 17
+    mov eax, tanks[0*SIZEOF TANK].y
+    sub eax, 179
+    invoke Chk, offset stT38b, stT38bL, eax, 0
+    ; ---- 案例B：真拐角整体停车 ----
+    call ResetTanks
+    mov matchOver, 0
+    mov tanks[0*SIZEOF TANK].x, 307
+    mov tanks[0*SIZEOF TANK].y, 179
+    mov tanks[0*SIZEOF TANK].dir, 45
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    invoke SetDirInput, 0
+    invoke AdvanceTicks, 10
+    invoke SetDirInput, 99
+    mov eax, tanks[0*SIZEOF TANK].y
+    sub eax, 179
+    invoke Chk, offset stT38c, stT38cL, eax, 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    sub eax, 307
+    invoke Chk, offset stT38d, stT38dL, eax, 0
+
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
     invoke Mark, 320
     cld
@@ -4671,17 +4756,94 @@ MP_MDone:
 MuzzlePoint endp
 
 ; ------------------------------------------------------------
+; MoveTryPos —— "坦克 ptank 平移到 (nxv,nyv) 是否放行"统一判定
+;   （会话 25 从 MoveTank 抽出：界外=3 / 墙=1 / 水=2，驭水/穿墙豁免、
+;    嵌墙脱离（用完次数仍可挪动/走出）逻辑原样内聚；只判定不消耗，
+;    穿墙计次仍由调用方在提交位移后按中心格变化执行）
+;   返回 eax：0=可通行，非 0=阻挡码
+; ------------------------------------------------------------
+MoveTryPos proc uses ebx esi edi nxv: dword, nyv: dword, ptank: dword
+    local lCRow:dword
+    mov eax, nxv
+    test eax, eax
+    js MTP_Out
+    cmp eax, MAP_W - TANK_SIZE
+    ja MTP_Out
+    mov eax, nyv
+    test eax, eax
+    js MTP_Out
+    cmp eax, MAP_H - TANK_SIZE
+    jbe MTP_In
+MTP_Out:
+    mov eax, 3                     ; 界外：任何技能都不放行（防 ghost 出图卡死）
+    ret
+MTP_In:
+    invoke TankBlocked, nxv, nyv   ; 挡板墙=矩形级 AABB；水=覆盖格任一整格
+    .if eax == 0
+        ret
+    .endif
+    mov esi, ptank
+    .if eax == 2
+        mov edx, (TANK ptr [esi]).effOn
+        .if edx & EFF_WATER
+            mov eax, 0             ; 驭水术穿水
+        .endif
+        ret
+    .endif
+    ; 墙（eax==1）
+    mov edx, (TANK ptr [esi]).effOn
+    .if edx & EFF_GHOST
+        mov edx, (TANK ptr [esi]).wallPass
+        .if edx > 0
+            mov eax, 0             ; 穿墙术放行（计次在提交端做）
+            ret
+        .else
+            ; 会话 21 修复随迁：次数耗尽但身体仍嵌墙 -> 允许"同墙格挪动"
+            ; 或"目标中心已出墙"的脱离位移，不消耗次数（防四面皆挡卡死）
+            mov edi, (TANK ptr [esi]).x
+            add edi, TANK_SIZE/2
+            shr edi, 5                  ; 当前中心列
+            mov eax, (TANK ptr [esi]).y
+            add eax, TANK_SIZE/2
+            shr eax, 5
+            mov lCRow, eax              ; 当前中心行（IsWallCell 毁 eax，先存）
+            invoke IsWallCell, edi, eax
+            .if eax != 0                ; 嵌在墙里才有脱离豁免
+                mov ecx, nxv
+                add ecx, TANK_SIZE/2
+                shr ecx, 5
+                mov edx, nyv
+                add edx, TANK_SIZE/2
+                shr edx, 5
+                .if ecx == edi && edx == lCRow
+                    mov eax, 0          ; 同墙格内挪动
+                .else
+                    invoke IsWallCell, ecx, edx
+                    .if eax == 0
+                        mov eax, 0      ; 目标中心已出墙 = 脱离
+                    .endif
+                .endif
+            .else
+                mov eax, 1              ; 未嵌墙（正常撞墙）：保持阻挡码
+            .endif
+        .endif
+    .endif
+    ret
+MoveTryPos endp
+
+; ------------------------------------------------------------
 ; MoveTank —— 坦克移动（水/钢/砖实心，冰/泥/空地可通行）
 ; 会话 19：沿航向角 moveF 前进(1)/后退(-1)，16.16 定点进位位移；
 ; 冰面：位移成功且四象限全在冰格 -> 刷新滑行 tick 并冻结当前航向角
 ; 泥土：四象限全在泥格 -> 本 tick 速度 DIRT_SPEED，否则 2/3 交替
 ; （会话 20：中心单点判定改为 TankTerrMajority 全点判定）
 ; 本函数绝不写 dir（旧 360 版致命 bug1：把动作码 mov 进 dir 清零航向）
+; 会话 25：判定走 MoveTryPos + 单轴滑移——整目标被挡时试"仅 x/仅 y"，
+; 斜向贴墙不再卡死（墙角滑行），两轴皆挡才整体停车
 ; ------------------------------------------------------------
 MoveTank proc uses esi edi ownerIdx: dword, moveF: dword, ang: dword
     local nx:dword, ny:dword, solid:dword, ptank:dword
     local spd:dword, dx16:dword, dy16:dword, accX:dword, accY:dword
-    local lCRow:dword
     ; ptank = &tanks[ownerIdx]（跨 invoke 保存，用局部变量存指针）
     mov eax, ownerIdx
     mov ecx, SIZEOF TANK
@@ -4748,88 +4910,58 @@ MT_RevDone:
     add edx, (TANK ptr [ecx]).y
     mov ny, edx
 
-    ; 硬边界保护：坦克整体必须在地图内。出界目标判为 solid=3
-    ; （任何技能都不放行）——否则 ghost 在边界墙上被 clamp 恒判定命中，
-    ; 会一直放行把坦克送出地图并永久卡死。
-    mov eax, nx
-    test eax, eax
-    js MT_Out
-    cmp eax, MAP_W - TANK_SIZE
-    ja MT_Out
-    mov eax, ny
-    test eax, eax
-    js MT_Out
-    cmp eax, MAP_H - TANK_SIZE
-    jbe MT_InMap
-MT_Out:
-    mov solid, 3                     ; 3=界外：不可放行
-    jmp MT_AfterBlock
-MT_InMap:
-    ; 目标位置整体阻挡判定：
-    ; 挡板墙 = 矩形级 AABB（与渲染一致）；水 = 覆盖格任一整格阻挡
-    invoke TankBlocked, nx, ny
+    ; 会话 25：阻挡判定抽入 MoveTryPos（界外/墙/水 + 驭水/穿墙/嵌墙脱离豁免）
+    invoke MoveTryPos, nx, ny, ptank
     mov solid, eax
-MT_AfterBlock:
-    ; 技能放行：驭水术穿过水(2)；穿墙术穿过墙(1)并计数
+    ; ---- 会话 25 卡墙角修复（单轴滑动）----
+    ; 整体被拒且两轴本 tick 都真的在移动时：依次试"仅 x"->"仅 y"，
+    ; 任一单轴可通行即只提交该轴（贴墙/贴水岸滑行），被拒轴的进位余数
+    ; 在提交端清零；两轴皆不可 = 真角落全挡，照旧整体停车。
     mov ecx, ptank
-    .if solid == 2
-        mov eax, (TANK ptr [ecx]).effOn
-        .if eax & EFF_WATER
-            mov solid, 0
+    .if solid != 0
+        mov eax, nx
+        cmp eax, (TANK ptr [ecx]).x
+        je MT_SlideDone
+        mov edx, ny
+        cmp edx, (TANK ptr [ecx]).y
+        je MT_SlideDone
+        mov edx, (TANK ptr [ecx]).y
+        invoke MoveTryPos, nx, edx, ptank
+        .if eax == 0
+            mov solid, 10                  ; 10=仅 x 轴放行
+            jmp MT_SlideDone
         .endif
-    .elseif solid == 1
-        mov eax, (TANK ptr [ecx]).effOn
-        .if eax & EFF_GHOST
-            mov eax, (TANK ptr [ecx]).wallPass
-            .if eax > 0
-                mov solid, 0
-            .else
-                ; 会话 21 修复：次数耗尽但身体仍在墙格内 -> 旧版四面皆挡
-                ; 彻底卡死在墙里直到死亡。现允许"脱离移动"：当前中心格
-                ; 是墙时放行 目标中心=本格（格内挪动）或 目标中心非墙
-                ; （走出）的位移，不消耗穿墙次数（薄墙本就贴边可出，
-                ; 此分支救的是厚砖/钢群里用完 3 次的情况）
-                ; 注：esi/edi 的保存靠 proc uses（GameUpdate 循环把 esi
-                ; 当槽位偏移跨 MoveTank 复用，裸破坏会越界崩溃）
-                mov esi, ptank
-                mov edi, (TANK ptr [esi]).x
-                add edi, TANK_SIZE/2
-                shr edi, 5                  ; 当前中心列
-                mov eax, (TANK ptr [esi]).y
-                add eax, TANK_SIZE/2
-                shr eax, 5
-                mov lCRow, eax              ; 当前中心行（IsWallCell 毁 eax，先存）
-                invoke IsWallCell, edi, eax
-                .if eax != 0                ; 嵌在墙里才有脱离豁免
-                    mov ecx, nx
-                    add ecx, TANK_SIZE/2
-                    shr ecx, 5
-                    mov edx, ny
-                    add edx, TANK_SIZE/2
-                    shr edx, 5
-                    .if ecx == edi && edx == lCRow
-                        mov solid, 0        ; 同墙格内挪动
-                    .else
-                        invoke IsWallCell, ecx, edx
-                        .if eax == 0
-                            mov solid, 0    ; 目标中心已出墙 = 脱离
-                        .endif
-                    .endif
-                .endif
-            .endif
+        mov ecx, ptank                     ; invoke 毁 ecx，重取坦克基址
+        mov eax, (TANK ptr [ecx]).x
+        invoke MoveTryPos, eax, ny, ptank
+        .if eax == 0
+            mov solid, 20                  ; 20=仅 y 轴放行
         .endif
+MT_SlideDone:
     .endif
 
     mov ecx, ptank
-    .if solid == 0
-        mov edx, nx
-        mov (TANK ptr [ecx]).x, edx
-        mov edx, ny
-        mov (TANK ptr [ecx]).y, edx
-        mov edx, accX
-        mov (TANK ptr [ecx]).subpxX, edx
-        mov edx, accY
-        mov (TANK ptr [ecx]).subpxY, edx
+    .if solid == 0 || solid == 10 || solid == 20
+        ; 全放行(0) / 单轴滑移(10=仅x, 20=仅y)。被拒轴不写坐标，
+        ; 且其进位余数清零——否则余量会偏置下一次同号位移（贴墙抖动）
+        .if solid != 20
+            mov edx, nx
+            mov (TANK ptr [ecx]).x, edx
+            mov edx, accX
+            mov (TANK ptr [ecx]).subpxX, edx
+        .else
+            mov edx, 0
+            mov (TANK ptr [ecx]).subpxX, edx
+        .endif
+        .if solid != 10
+            mov edx, ny
+            mov (TANK ptr [ecx]).y, edx
+            mov edx, accY
+            mov (TANK ptr [ecx]).subpxY, edx
+        .else
+            mov edx, 0
+            mov (TANK ptr [ecx]).subpxY, edx
+        .endif
         ; 穿墙计数：中心进入与上 tick 不同的墙格 -> 剩余次数-1
         mov eax, (TANK ptr [ecx]).x
         add eax, TANK_SIZE/2

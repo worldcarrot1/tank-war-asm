@@ -293,6 +293,20 @@ T37_MINE_PERSIST(expect1)=1
 T37_MINE_STEPT_TRIP(expect1)=1
  want 1
  OK
+MARK=318
+
+T38_CORNER_SLIDE_X(expect17)=17
+ want 17
+ OK
+T38_CORNER_SLIDE_YHOLD(expect0)=0
+ want 0
+ OK
+T38_CORNER_FULLSTOP_Y(expect0)=0
+ want 0
+ OK
+T38_CORNER_FULLSTOP_X(expect0)=0
+ want 0
+ OK
 MARK=320
 
 ST_FAILS=0

@@ -820,6 +820,9 @@ PS_VlOk:
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
+        inc demoT                        ; 会话 25：主页装饰动画时钟（gTick 仅对局
+                                         ; 推进，菜单里必须自带表针；演示页 mod 480
+                                         ; 取值，多走无副作用）
         .if dnE != 0
             inc menuSel
             .if menuSel > 6
@@ -1340,6 +1343,21 @@ UiTick endp
 ; ------------------------------------------------------------
 ; UiRender -- 按状态绘制；对局中委托 GfxRender
 ; ------------------------------------------------------------
+; 会话 25 主页装饰宏：18px 深色拾取底 + 描边 + 白图标（限 UiRender
+; 内使用，依赖局部 boxRc；pen 选换模式与演示页 2068..2073 一致）
+UMIconBox macro px, py, tp
+    mov boxRc.left, px
+    mov boxRc.top, py
+    mov boxRc.right, px+18
+    mov boxRc.bottom, py+18
+    invoke FillRect, hdcBack, addr boxRc, brushPickBg
+    invoke FrameRect, hdcBack, addr boxRc, brushMortar
+    invoke SelectObject, hdcBack, penIcon
+    mov penOld2, eax
+    invoke DrawPickupIcon, hdcBack, px+2, py+2, tp, 1
+    invoke SelectObject, hdcBack, penOld2
+endm
+
 UiRender proc uses ebx esi edi
     local rc:RECT
     local boxRc:RECT
@@ -1385,6 +1403,180 @@ UiRender proc uses ebx esi edi
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
+        ; ==== 会话 25 主页装饰（demoT 驱动；全部避开菜单文字区
+        ;      x380..680/y80..510 与点击/悬停带 x440..660）====
+        ; -- 左侧地形样本：钢墙 L 角 + 砖墙三连 + 水/冰/泥样块 --
+        mov boxRc.left, 40
+        mov boxRc.top, 148
+        mov boxRc.right, 176
+        mov boxRc.bottom, 162
+        invoke FillRect, hdcBack, addr boxRc, brushSteel
+        mov boxRc.left, 40
+        mov boxRc.top, 148
+        mov boxRc.right, 54
+        mov boxRc.bottom, 268
+        invoke FillRect, hdcBack, addr boxRc, brushSteel
+        mov ebx, 0
+UM_Brick:
+        mov eax, ebx
+        imul eax, eax, 26
+        add eax, 176
+        mov boxRc.left, 60
+        mov boxRc.top, eax
+        mov boxRc.right, 156
+        add eax, 18
+        mov boxRc.bottom, eax
+        invoke FillRect, hdcBack, addr boxRc, brushBrick
+        inc ebx
+        cmp ebx, 3
+        jb UM_Brick
+        mov boxRc.left, 60
+        mov boxRc.top, 262
+        mov boxRc.right, 148
+        mov boxRc.bottom, 300
+        invoke FillRect, hdcBack, addr boxRc, brushWater
+        mov boxRc.left, 68
+        mov boxRc.top, 270
+        mov boxRc.right, 132
+        mov boxRc.bottom, 272
+        invoke FillRect, hdcBack, addr boxRc, brushWave
+        mov boxRc.left, 80
+        mov boxRc.top, 286
+        mov boxRc.right, 144
+        mov boxRc.bottom, 288
+        invoke FillRect, hdcBack, addr boxRc, brushWave
+        mov boxRc.left, 160
+        mov boxRc.top, 262
+        mov boxRc.right, 258
+        mov boxRc.bottom, 300
+        invoke FillRect, hdcBack, addr boxRc, brushIce
+        mov boxRc.left, 168
+        mov boxRc.top, 268
+        mov boxRc.right, 250
+        mov boxRc.bottom, 270
+        invoke FillRect, hdcBack, addr boxRc, brushStreak
+        mov boxRc.left, 60
+        mov boxRc.top, 312
+        mov boxRc.right, 258
+        mov boxRc.bottom, 372
+        invoke FillRect, hdcBack, addr boxRc, brushDirt
+        mov boxRc.left, 72
+        mov boxRc.top, 320
+        mov boxRc.right, 78
+        mov boxRc.bottom, 326
+        invoke FillRect, hdcBack, addr boxRc, brushDirtDark
+        mov boxRc.left, 120
+        mov boxRc.top, 344
+        mov boxRc.right, 126
+        mov boxRc.bottom, 350
+        invoke FillRect, hdcBack, addr boxRc, brushDirtDark
+        mov boxRc.left, 168
+        mov boxRc.top, 326
+        mov boxRc.right, 174
+        mov boxRc.bottom, 332
+        invoke FillRect, hdcBack, addr boxRc, brushDirtDark
+        mov boxRc.left, 216
+        mov boxRc.top, 348
+        mov boxRc.right, 222
+        mov boxRc.bottom, 354
+        invoke FillRect, hdcBack, addr boxRc, brushDirtDark
+        mov boxRc.left, 96
+        mov boxRc.top, 356
+        mov boxRc.right, 102
+        mov boxRc.bottom, 362
+        invoke FillRect, hdcBack, addr boxRc, brushDirtDark
+        ; -- 样块旁的两枚"场上拾取物" --
+        UMIconBox 196, 208, SK_MINE
+        UMIconBox 222, 208, SK_NITRO
+        ; -- 右侧技能图标列（与 7 项菜单同 y 节拍，镜像在右缘）--
+        UMIconBox 930, 190, SK_LASER
+        UMIconBox 930, 236, SK_ICE_SHIELD
+        UMIconBox 930, 282, SK_GHOST
+        UMIconBox 930, 328, SK_MINE
+        UMIconBox 930, 374, SK_NITRO
+        ; -- 炮塔旋转展示：慢速整圈（demoT 18 秒一圈），秀连续转向引擎 --
+        mov eax, demoT
+        xor edx, edx
+        mov ecx, 360
+        div ecx
+        mov demoPt, edx
+        invoke SelectObject, hdcBack, brushP1
+        invoke DrawTank, hdcBack, 795, 300, demoPt
+        invoke SelectObject, hdcBack, menuFont
+        ; -- 底部巡逻双车道：P1 右行/P2 左行三角波 + 中间乒乓弹 --
+        mov boxRc.left, 0
+        mov boxRc.top, 644
+        mov boxRc.right, WND_W
+        mov boxRc.bottom, 646
+        invoke FillRect, hdcBack, addr boxRc, brushMortar
+        mov eax, demoT
+        xor edx, edx
+        mov ecx, 480
+        div ecx
+        mov demoPh, edx
+        cmp edx, 240
+        jb UM_P1F
+        mov eax, 480
+        sub eax, demoPh
+UM_P1F:
+        mov demoPt, eax
+        imul eax, eax, 3
+        add eax, 40
+        mov demoP1x, eax
+        mov ecx, 0
+        cmp demoPh, 240
+        jb UM_P1D
+        mov ecx, 180
+UM_P1D:
+        mov demoDir, ecx
+        invoke SelectObject, hdcBack, brushP1
+        invoke DrawTank, hdcBack, demoP1x, 578, demoDir
+        invoke SelectObject, hdcBack, menuFont
+        mov eax, demoT
+        add eax, 240
+        xor edx, edx
+        mov ecx, 480
+        div ecx
+        mov demoPh, edx
+        cmp edx, 240
+        jb UM_P2F
+        mov eax, 480
+        sub eax, demoPh
+UM_P2F:
+        mov demoPt, eax
+        imul eax, eax, 3
+        mov ecx, 912
+        sub ecx, eax
+        mov demoP1x, ecx
+        mov ecx, 180
+        cmp demoPh, 240
+        jb UM_P2D
+        xor ecx, ecx
+UM_P2D:
+        mov demoDir, ecx
+        invoke SelectObject, hdcBack, brushP2
+        invoke DrawTank, hdcBack, demoP1x, 616, demoDir
+        invoke SelectObject, hdcBack, menuFont
+        ; 乒乓弹：两车道之间 y602..610，300..660 折返（半周期 120 tick）
+        mov eax, demoT
+        xor edx, edx
+        mov ecx, 240
+        div ecx
+        mov demoPh, edx
+        cmp edx, 120
+        jb UM_BF
+        mov eax, 240
+        sub eax, demoPh
+UM_BF:
+        imul eax, eax, 3
+        add eax, 300
+        mov boxRc.left, eax
+        add eax, 8
+        mov boxRc.right, eax
+        mov boxRc.top, 602
+        mov boxRc.bottom, 610
+        invoke FillRect, hdcBack, addr boxRc, brushBullet
+        ; ==== 装饰结束：标题与 7 项菜单压在装饰上层 ====
         invoke UiTextZ, hdcBack, 385, 90, offset szTitle, colDark
         mov ebx, 0
 UM_Items:

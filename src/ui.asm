@@ -161,7 +161,7 @@ RST_H      equ 30
     penTank       dd ?                 ; 3px 近黑描边（卡通轮廓）
     uiOldPen      dd ?
     uiOldBr       dd ?
-    tankBarrel    dd 255, 404, 389, 371, 395, 393, 261, 426   ; 炮管斜置 4 顶点
+    tankBarrel    dd 523, 369, 657, 336, 663, 358, 529, 391   ; 炮管斜置 4 顶点（居中版）
 
     ; ---- 技能说明页数据（9 技能：名/描述，中英双语）----
     skillPage   dd 0                   ; 当前页 0..SKILL_COUNT-1
@@ -348,14 +348,14 @@ UiInit proc
     mov boxBrush, eax
     invoke CreateSolidBrush, 00A0A0A0h       ; 深夜模式容器边框（浅灰）
     mov boxBrushN, eax
-    ; ---- 会话 26 主页大立体坦克：三级明暗 + 3px 近黑卡通描边 ----
-    invoke CreateSolidBrush, 00F0F0F0h
+    ; ---- 会话 27 主页大坦克改参考图黄色卡通（三级黄 + 近黑粗描边）----
+    invoke CreateSolidBrush, 0040E0F0h       ; 受光面 RGB(240,224,64) 亮黄
     mov brushTankHi, eax
-    invoke CreateSolidBrush, 00C0C0C0h
+    invoke CreateSolidBrush, 0018B2D4h       ; 侧面 RGB(212,178,24) 中黄
     mov brushTankMid, eax
-    invoke CreateSolidBrush, 005A5A5Ah
+    invoke CreateSolidBrush, 000C7692h       ; 暗部/轮孔 RGB(146,118,12) 芥末暗黄
     mov brushTankDark, eax
-    invoke CreatePen, PS_SOLID, 3, 00141414h
+    invoke CreatePen, PS_SOLID, 4, 0008141Ch ; 4px 近黑卡通描边
     mov penTank, eax
     invoke CreateFontA, 30, 0, 0, 0, FW_NORMAL, 0, 0, 0,
            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -1411,45 +1411,47 @@ UiRender proc uses ebx esi edi
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
-        ; ==== 会话 26 主页：一张大立体卡通坦克（左下，白体+黑描边+
-        ;      三级明暗，参考黑白 3D 坦克图；会话 25 的地形样本/技能
-        ;      图标列/慢旋炮塔/巡逻车道多元素装饰被指"太嘈杂"，全部
-        ;      下架）。静止不随帧变化，也无需 demoT 时钟。 ====
+        ; ==== 会话 27 主页：参考图同款黄色卡通大坦克——居中偏下、
+        ;      静止；亮黄受光+中黄侧面+芥末暗黄轮孔/膛口，4px 近黑
+        ;      描边，斜炮管带制退环、圆顶炮塔、黄履带上一排黑色轮孔。
+        ;      （会话 26 灰阶侧视版与更早多元素装饰均已下架）====
         invoke SelectObject, hdcBack, penTank
         mov uiOldPen, eax
-        ; -- 落地投影 + 斜置炮管（侧面调） --
+        ; -- 落地投影 + 斜置炮管（中黄） --
         invoke SelectObject, hdcBack, brushTankMid
         mov uiOldBr, eax
-        invoke Ellipse, hdcBack, 46, 578, 372, 602
+        invoke Ellipse, hdcBack, 314, 543, 640, 567
         invoke Polygon, hdcBack, addr tankBarrel, 4
-        ; -- 炮口制退器 / 炮塔（受光调） --
+        ; -- 炮口制退环（亮黄）套膛口暗孔 --
         invoke SelectObject, hdcBack, brushTankHi
-        invoke Ellipse, hdcBack, 375, 365, 409, 399
-        invoke RoundRect, hdcBack, 138, 390, 268, 448, 56, 56
-        ; -- 舱盖（侧面调） --
-        invoke SelectObject, hdcBack, brushTankMid
-        invoke Ellipse, hdcBack, 180, 398, 212, 414
-        ; -- 车体（受光调）压在履带（暗部调）之上 --
-        invoke SelectObject, hdcBack, brushTankHi
-        invoke RoundRect, hdcBack, 62, 438, 340, 514, 36, 36
+        invoke Ellipse, hdcBack, 643, 330, 677, 364
         invoke SelectObject, hdcBack, brushTankDark
-        invoke RoundRect, hdcBack, 54, 492, 346, 580, 88, 88
-        ; -- 前后驱动轮 + 四负重轮（受光调） --
+        invoke Ellipse, hdcBack, 651, 338, 669, 356
+        ; -- 圆顶炮塔（亮黄）+ 舱盖（中黄） --
         invoke SelectObject, hdcBack, brushTankHi
-        invoke Ellipse, hdcBack, 48, 508, 104, 564
-        invoke Ellipse, hdcBack, 296, 508, 352, 564
-        invoke Ellipse, hdcBack, 112, 516, 152, 556
-        invoke Ellipse, hdcBack, 156, 516, 196, 556
-        invoke Ellipse, hdcBack, 200, 516, 240, 556
-        invoke Ellipse, hdcBack, 244, 516, 284, 556
-        ; -- 轮心盖（侧面调） --
+        invoke Ellipse, hdcBack, 406, 352, 536, 418
         invoke SelectObject, hdcBack, brushTankMid
-        invoke Ellipse, hdcBack, 68, 528, 84, 544
-        invoke Ellipse, hdcBack, 316, 528, 332, 544
-        invoke Ellipse, hdcBack, 126, 530, 138, 542
-        invoke Ellipse, hdcBack, 170, 530, 182, 542
-        invoke Ellipse, hdcBack, 214, 530, 226, 542
-        invoke Ellipse, hdcBack, 258, 530, 270, 542
+        invoke Ellipse, hdcBack, 448, 363, 480, 379
+        ; -- 车体 + 黄色履带带（亮黄；车体下缘压在履带上）--
+        invoke SelectObject, hdcBack, brushTankHi
+        invoke RoundRect, hdcBack, 330, 403, 608, 479, 36, 36
+        invoke RoundRect, hdcBack, 322, 457, 614, 545, 88, 88
+        ; -- 前后驱动轮 + 四负重轮：暗黄"轮孔"（参考图黑孔行）--
+        invoke SelectObject, hdcBack, brushTankDark
+        invoke Ellipse, hdcBack, 316, 473, 372, 529
+        invoke Ellipse, hdcBack, 564, 473, 620, 529
+        invoke Ellipse, hdcBack, 380, 481, 420, 521
+        invoke Ellipse, hdcBack, 424, 481, 464, 521
+        invoke Ellipse, hdcBack, 468, 481, 508, 521
+        invoke Ellipse, hdcBack, 512, 481, 552, 521
+        ; -- 轮心高光（中黄） --
+        invoke SelectObject, hdcBack, brushTankMid
+        invoke Ellipse, hdcBack, 336, 493, 352, 509
+        invoke Ellipse, hdcBack, 584, 493, 600, 509
+        invoke Ellipse, hdcBack, 394, 495, 406, 507
+        invoke Ellipse, hdcBack, 438, 495, 450, 507
+        invoke Ellipse, hdcBack, 482, 495, 494, 507
+        invoke Ellipse, hdcBack, 526, 495, 538, 507
         invoke SelectObject, hdcBack, uiOldPen
         invoke SelectObject, hdcBack, uiOldBr
         ; ==== 大坦克结束：标题与 7 项菜单压在上方 ====

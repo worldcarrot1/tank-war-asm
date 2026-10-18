@@ -80,16 +80,25 @@ NOTE_THIRD       equ 1101              ; 0.05s
     phFl        dd 0                ; 方波电平
     wrBytes     dd 0
     hFile       dd 0
-    ; 自创 32 音循环旋律（会话 24 改版：Am-F-C-G 四和弦电子跑动，
-    ; 每小节 8 音琶音+回折，尾小节 988(B5) 下折 587(D5) 导回 A 小调）
-    melody      dd 440, 659, 880, 659, 523, 659, 880, 1046
-                dd 349, 523, 698, 523, 440, 523, 698, 880
-                dd 523, 659, 784, 659, 523, 392, 523, 659
-                dd 392, 587, 784, 988, 880, 784, 659, 587
-    melodyN     = 32
-NOTE_SAMP       equ 3307              ; 0.15s @ 22050
-BGM_REPS        equ 2                 ; 2 遍 = 9.6s 循环
-BGM_TOTAL       equ BGM_REPS*melodyN*NOTE_SAMP   ; 211648 字节
+    ; 会话 27：双轨 64 拍 BGM（用户反馈"旋律太单调"）——主旋律
+    ; Am/F/C/G 四乐句带切分休止、八度大跳与最高音点缀，低音轨以
+    ; 8 分音符根音行进（Am→F→C→G），两轨方波线性叠加（GenAdd）。
+    ; 0=休止。循环尺寸不变：64 拍 × NOTE_SAMP = 211648 字节 9.6s
+    bgmMel      dd 440, 659, 880, 659, 0, 1046, 880, 0
+                dd 523, 659, 880, 1046, 880, 659, 523, 0
+                dd 698, 523, 440, 523, 0, 698, 880, 0
+                dd 1046, 880, 698, 523, 440, 0, 349, 0
+                dd 523, 659, 784, 1046, 784, 659, 0, 523
+                dd 659, 784, 1046, 1318, 1046, 784, 659, 0
+                dd 392, 494, 587, 784, 587, 494, 0, 392
+                dd 494, 587, 784, 988, 784, 587, 494, 392
+    bgmBass     dd 110, 0, 110, 0, 110, 0, 110, 0, 110, 0, 110, 0, 110, 0, 110, 0
+                dd 87, 0, 87, 0, 87, 0, 87, 0, 87, 0, 87, 0, 87, 0, 87, 0
+                dd 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0, 131, 0
+                dd 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0, 98, 0
+    bgmN        = 64
+NOTE_SAMP       equ 3307              ; 一拍 0.15s @ 22050
+BGM_TOTAL       equ bgmN*NOTE_SAMP    ; 211648 字节
 
 ; ---- 会话 26：BGM 独立 waveOut 流（与 PlaySound 音效混音并存）----
 WAVE_MAPPER     equ 0FFFFFFFFh
@@ -277,6 +286,59 @@ GN_Loop:
 GenNoise endp
 
 ; ------------------------------------------------------------
+; GenAdd -- 方波叠加进 pBuf（会话 27 双轨合成）：读取现值加/减
+; 包络（线性衰减到 0），钳位 8..240。静音中心 96。
+; 钳位用 jl/jle 显式带符号跳转（.if reg<8 会按无符号编译的陷阱）。
+; 入参：pBuf, freq, nSamp, delta
+; ------------------------------------------------------------
+GenAdd proc uses ebx esi edx pBuf: dword, freq: dword, nSamp: dword, delta: dword
+    local accSpd: dword
+    mov eax, delta
+    shl eax, 8
+    xor edx, edx
+    mov ebx, nSamp
+    div ebx
+    mov accSpd, eax                   ; 定点 8 位包络步长
+    mov esi, pBuf
+    xor ecx, ecx                      ; i（ecx 自由：非协议寄存器）
+GA_Loop:
+    mov eax, ecx                      ; 相位 = ((i*freq)/2/SR) & 1
+    mul freq
+    shr eax, 1
+    xor edx, edx
+    mov ebx, SR
+    div ebx
+    and eax, 1
+    mov bl, al                        ; bl=相位（SR 已用完）
+    mov eax, nSamp                    ; 摆幅 d = (n-i)*accSpd>>8
+    sub eax, ecx
+    imul eax, accSpd
+    shr eax, 8
+    movzx edx, byte ptr [esi]
+    test bl, bl
+    jz GA_Lo
+    add edx, eax
+    jmp GA_Clamp
+GA_Lo:
+    sub edx, eax
+GA_Clamp:
+    cmp edx, 8
+    jge GA_C1
+    mov edx, 8
+GA_C1:
+    cmp edx, 240
+    jle GA_C2
+    mov edx, 240
+GA_C2:
+    mov [esi], dl
+    inc esi
+    inc ecx
+    cmp ecx, nSamp
+    jb GA_Loop
+    ret
+GenAdd endp
+
+; ------------------------------------------------------------
 ; SndInit -- 启动时生成 BGM 文件与全部音效
 ; ------------------------------------------------------------
 SndInit proc uses ebx esi edi
@@ -289,25 +351,34 @@ SndInit proc uses ebx esi edi
     invoke CreateFileA, offset bgmPath, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0
     mov hFile, eax
     invoke WrHead, offset hdrBuf, BGM_TOTAL
+    ; ---- 双轨合成（会话 27）：先整轨铺 96（8bit 无符号静音中心），
+    ;      再逐拍把旋律轨(摆幅44)与低音轨(摆幅16)叠加进 bgmBuf ----
+    mov edi, OFFSET bgmBuf
+    mov eax, 060606060h
+    mov ecx, BGM_TOTAL/4
+    cld
+    rep stosd
     xor ebx, ebx
-BG_Rep:
-    xor esi, esi
-BG_Note:
+BG_Beat:
     mov eax, ebx
-    imul eax, eax, melodyN
-    add eax, esi
     imul eax, eax, NOTE_SAMP
     mov edx, OFFSET bgmBuf
     add edx, eax
-    mov eax, melody[esi*4]
-    invoke GenSquare, edx, eax, NOTE_SAMP, 300
-    inc esi
-    .if esi < melodyN
-        jmp BG_Note
+    mov eax, bgmMel[ebx*4]
+    .if eax != 0
+        invoke GenAdd, edx, eax, NOTE_SAMP, 44
+    .endif
+    mov eax, ebx
+    imul eax, eax, NOTE_SAMP
+    mov edx, OFFSET bgmBuf
+    add edx, eax
+    mov eax, bgmBass[ebx*4]
+    .if eax != 0
+        invoke GenAdd, edx, eax, NOTE_SAMP, 16
     .endif
     inc ebx
-    .if ebx < BGM_REPS
-        jmp BG_Rep
+    .if ebx < bgmN
+        jmp BG_Beat
     .endif
     .if hFile != -1
         invoke WriteFile, hFile, offset hdrBuf, 44, addr wrBytes, 0

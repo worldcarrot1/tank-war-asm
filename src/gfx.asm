@@ -209,63 +209,47 @@ GfxInit proc
 GfxInit endp
 
 ; ------------------------------------------------------------
-; DrawHud —— 底部信息条两行制（会话 23 拆分）：
-;   第一行（玩家介绍）：坦克色块图标 14x14 + 玩家名
-;   第二行（积分板）：得分 + 剩余命数，独立一行不与玩家混排
+; DrawHud —— 会话 27 重排：所有玩家块作为一组按 numPlayers 水平
+;   居中（旧版固定 4 槽左起）；不再显示生命数（一命制下无信息量）；
+;   每块 = 相应颜色小坦克（DrawTank 25px 炮口朝右）+ 30px 大号
+;   得分（menuFont）+ 18px 玩家名（fontSmall），更醒目。
+;   文本白色由 GfxRender 预设（SetTextColor/SetBkMode）。
 ; ------------------------------------------------------------
+DrawTank PROTO hdc: dword, px: dword, py: dword, dirV: dword
 DrawHud proc uses ebx esi edi
-    local rc:RECT
+    local oldBr: dword
+    local x0: dword
+    ; ---- 组起点：total = n*212 + (n-1)*24，x0 = (MAP_W-total)/2 ----
+    mov eax, numPlayers
+    imul eax, eax, 212
+    mov ecx, numPlayers
+    dec ecx
+    imul ecx, ecx, 24
+    add eax, ecx
+    mov edx, MAP_W
+    sub edx, eax
+    shr edx, 1
+    mov x0, edx
     xor ebx, ebx
-DH_Slot:
+DH_Blk:
     .if ebx >= numPlayers
         ret
     .endif
-    mov eax, ebx
-    imul eax, eax, MAP_W/4
-    mov esi, eax                    ; x0（槽位区左缘）
-    ; 第一行：坦克颜色小图标（14x14，参照坦克深色方圆风格）
-    mov eax, esi
-    add eax, 10
-    mov rc.left, eax
-    add eax, 14
-    mov rc.right, eax
-    mov eax, MAP_H + 5
-    mov rc.top, eax
-    add eax, 14
-    mov rc.bottom, eax
+    ; ---- 玩家色小坦克（DrawTank 自理画笔），y 626..651 ----
     mov eax, ebx
     .if eax == 0
-        invoke FillRect, hdcBack, addr rc, brushP1
+        invoke SelectObject, hdcBack, brushP1
     .elseif eax == 1
-        invoke FillRect, hdcBack, addr rc, brushP2
+        invoke SelectObject, hdcBack, brushP2
     .elseif eax == 2
-        invoke FillRect, hdcBack, addr rc, brushP3
+        invoke SelectObject, hdcBack, brushP3
     .else
-        invoke FillRect, hdcBack, addr rc, brushP4
+        invoke SelectObject, hdcBack, brushP4
     .endif
-    invoke FrameRect, hdcBack, addr rc, brushMortar
-    ; 玩家名
-    mov eax, ebx
-    imul eax, eax, 16
-    add eax, offset playerName
-    lea edi, scoreBuf
-    xor ecx, ecx
-DH_Name:
-    mov dl, [eax+ecx]
-    .if dl == 0
-        jmp DH_NameDone
-    .endif
-    mov [edi+ecx], dl
-    inc ecx
-    .if ecx < 15
-        jmp DH_Name
-    .endif
-DH_NameDone:
-    mov byte ptr [edi+ecx], 0
-    mov eax, esi
-    add eax, 32
-    invoke TextOutA, hdcBack, eax, MAP_H+6, offset scoreBuf, ecx
-    ; 第二行（积分板）：分数两位 + "x命数"，槽位左缘起
+    mov oldBr, eax
+    invoke DrawTank, hdcBack, x0, 626, 0
+    ; ---- 大号得分：x0+31 起，30px，两位封顶 99（沿用旧口径）----
+    invoke SelectObject, hdcBack, menuFont
     mov eax, ebx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
@@ -278,26 +262,39 @@ DH_NameDone:
     div ecx
     add al, '0'
     add dl, '0'
-    lea edi, scoreBuf
+    mov edi, OFFSET scoreBuf
     mov [edi], al
     mov [edi+1], dl
-    mov byte ptr [edi+2], ' '
-    mov byte ptr [edi+3], 'x'
+    mov byte ptr [edi+2], 0
+    mov eax, x0
+    add eax, 31
+    invoke TextOutA, hdcBack, eax, 620, offset scoreBuf, 2
+    ; ---- 玩家名：x0+85 起，18px（≤15 字节截断，同旧版）----
+    invoke SelectObject, hdcBack, fontSmall
     mov eax, ebx
-    imul eax, eax, SIZEOF TANK
-    add eax, offset tanks
-    mov eax, (TANK ptr [eax]).lives
-    .if eax > 9
-        mov eax, 9
+    imul eax, eax, 16
+    add eax, offset playerName
+    mov edi, OFFSET scoreBuf
+    xor ecx, ecx
+DH_Nm:
+    mov dl, [eax+ecx]
+    .if dl == 0
+        jmp DH_NmDone
     .endif
-    add al, '0'
-    mov [edi+4], al
-    mov byte ptr [edi+5], 0
-    mov eax, esi
-    add eax, 10
-    invoke TextOutA, hdcBack, eax, MAP_H+30, offset scoreBuf, 5
+    mov [edi+ecx], dl
+    inc ecx
+    .if ecx < 15
+        jmp DH_Nm
+    .endif
+DH_NmDone:
+    mov byte ptr [edi+ecx], 0
+    mov eax, x0
+    add eax, 85
+    invoke TextOutA, hdcBack, eax, 630, offset scoreBuf, ecx
+    invoke SelectObject, hdcBack, oldBr
+    add x0, 212 + 24
     inc ebx
-    jmp DH_Slot
+    jmp DH_Blk
 DrawHud endp
 
 ; ------------------------------------------------------------

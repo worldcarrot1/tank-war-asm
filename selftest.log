@@ -91,6 +91,9 @@ MARK=151
 
 MARK=152
 
+T15_LASER_TWOSTAGE(expect3)=3
+ want 3
+ OK
 MARK=153
 
 T15_LASER_KILL(expect0)=0
@@ -106,6 +109,9 @@ MARK=161
 
 MARK=162
 
+T16_REFL_TWOSTAGE(expect3)=3
+ want 3
+ OK
 MARK=163
 
 T16_REFL_KILL(expect0)=0

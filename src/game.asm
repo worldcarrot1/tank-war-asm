@@ -711,6 +711,10 @@ arenaTable dd ARENA1,
     stT35L  equ ($ - stT35)
     stT36   db "T36_GHOST_ESCAPE(expect1)="
     stT36L  equ ($ - stT36)
+    stT15p  db "T15_LASER_TWOSTAGE(expect3)="
+    stT15pL equ ($ - stT15p)
+    stT16p  db "T16_REFL_TWOSTAGE(expect3)="
+    stT16pL equ ($ - stT16p)
     stWntS  db " want "
     stWntSL equ ($ - stWntS)
     stOKS   db " OK", 13, 10
@@ -1805,7 +1809,8 @@ T13Bad:
     mov lGot, eax
     invoke Chk, offset stT14c, stT14cL, lGot, 2
 
-    ; ==== T15 激光炮：任意角射线穿墙直线伤害（会话 19 修正：1HP 即杀） ====
+    ; ==== T15 激光炮：会话 22 两段式（一段持续虚线预览不限时；再按技能键
+    ;      起 78 tick(1.3s) 倒计时后发射穿墙直线伤害；1HP 即杀） ====
     invoke Mark, 151
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
@@ -1820,17 +1825,40 @@ T13Bad:
     mov tanks[0*SIZEOF TANK].skill, SK_LASER
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                ; 进入瞄准（aimT=42，本 tick 已减到 41）
+    invoke GameUpdate                ; 第一段：进入预览（aimT=0）
     mov inputTable[20], 0
     invoke Mark, 152
-    invoke AdvanceTicks, 41          ; 41 后 aimT=0 -> 发射
+    invoke AdvanceTicks, 100         ; 第一段挂 100 tick：绝不发射（旧版 42 tick 即 a/b FAIL）
+    mov lPass, 0
+    mov eax, tanks[1*SIZEOF TANK].hp
+    .if eax == TANK_HP
+        inc lPass                    ; a) P2 完好
+    .endif
+    mov ecx, prevTank
+    mov edx, prevN
+    .if ecx == 0 && edx == 2
+        inc lPass                    ; b) 两段预览持续挂载（缓冲未清）
+    .endif
+    ; 第二段：再按技能键 -> 78 tick 倒计时
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                ; 二段起爆（aimT=78，本 tick 已减到 77）
+    mov inputTable[20], 0
+    invoke AdvanceTicks, 40          ; 77-40=37 tick 未走完：仍不可发射
+    mov eax, tanks[1*SIZEOF TANK].hp
+    .if eax == TANK_HP
+        inc lPass                    ; c) 二段第 40 tick 未提前发射
+    .endif
+    invoke Chk, offset stT15p, stT15pL, lPass, 3
     invoke Mark, 153
+    invoke AdvanceTicks, 41          ; 倒计时走完 -> 发射
     invoke Chk, offset stT15a, stT15aL, tanks[1*SIZEOF TANK].hp, 0
     invoke Chk, offset stT15b, stT15bL, laserN, 2
     invoke Chk, offset stT15c, stT15cL, tanks[0*SIZEOF TANK].alive, 1
     mov mapData[13*COLS+10], TILE_EMPTY  ; 还原走廊
 
-    ; ==== T16 反射激光：预览/实弹同构的 16.16 进位反射路径（7 次反弹=9 点） ====
+    ; ==== T16 反射激光：同款两段式；预览/实弹同构的 16.16 进位反射路径
+    ;      （7 次反弹=9 点）。会话 19 修正：1HP 下全路径含自己 -> P1 阵亡 ====
     invoke Mark, 161
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 32
@@ -1844,11 +1872,32 @@ T13Bad:
     mov tanks[0*SIZEOF TANK].skill, SK_REFLASER
     mov prevUse[0], 0
     mov inputTable[20], 1
-    invoke GameUpdate                ; 进入瞄准：本 tick 起每 tick 跑 SimReflectPath
+    invoke GameUpdate                ; 第一段：进入预览
     mov inputTable[20], 0
     invoke Mark, 162
-    invoke AdvanceTicks, 41          ; 到时发射
+    invoke AdvanceTicks, 100         ; 旧版 42 tick 即发射，P2(200,416) 在走廊必死
+    mov lPass, 0
+    mov eax, tanks[1*SIZEOF TANK].hp
+    .if eax == TANK_HP
+        inc lPass                    ; a) P2 100 tick 完好
+    .endif
+    mov ecx, prevTank
+    mov edx, prevN
+    .if ecx == 0 && edx == 9
+        inc lPass                    ; b) 反射预览 9 点持续挂载
+    .endif
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                ; 二段起爆
+    mov inputTable[20], 0
+    invoke AdvanceTicks, 40
+    mov eax, tanks[1*SIZEOF TANK].hp
+    .if eax == TANK_HP
+        inc lPass                    ; c) 二段第 40 tick 未提前发射
+    .endif
+    invoke Chk, offset stT16p, stT16pL, lPass, 3
     invoke Mark, 163
+    invoke AdvanceTicks, 41          ; 倒计时走完 -> 全路径伤害
     invoke Chk, offset stT16a, stT16aL, tanks[1*SIZEOF TANK].hp, 0
     invoke Chk, offset stT16b, stT16bL, laserN, 9
     invoke Chk, offset stT16c, stT16cL, tanks[0*SIZEOF TANK].alive, 0
@@ -4191,6 +4240,17 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         invoke EndPhantom, slotIdx
         ret
     .endif
+    ; 会话 22 两段式激光：预览态（aimSkill 非空且 aimT=0）再按 = 进入
+    ; 1.3s 发射倒计时；倒计时中再按忽略。skill 已在第一段消耗。
+    mov eax, (TANK ptr [ecx]).aimSkill
+    .if eax != SKILL_NONE
+        mov edx, (TANK ptr [ecx]).aimT
+        .if edx == 0
+            mov (TANK ptr [ecx]).aimT, LASER_FIRE_TICKS
+            invoke SndPlay, 4            ; 倒计时哔声复用：二段确认起爆
+        .endif
+        ret
+    .endif
     mov eax, (TANK ptr [ecx]).skill
     .if eax == SKILL_NONE
         ret
@@ -4207,7 +4267,9 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         mov ecx, ptank
         mov edx, (TANK ptr [ecx]).skill
         mov (TANK ptr [ecx]).aimSkill, edx
-        mov (TANK ptr [ecx]).aimT, LASER_AIM_TICKS
+        ; 会话 22：第一段只挂预览（aimT=0 -> GU_Aim 每 tick 刷虚线不限时），
+        ; 再按一次技能键才进 LASER_FIRE_TICKS 倒计时（见上方 re-press 分支）
+        mov (TANK ptr [ecx]).aimT, 0
         invoke RefreshLaserPreview, slotIdx
     .elseif eax == SK_GHOST
         mov ecx, ptank
@@ -4948,15 +5010,16 @@ GU_NoMove:
     ; ---- 技能：效果计时 / 拾取 / 使用键（边沿）/ 换位绑定检查 ----
     invoke EffTick, ebx
     ; 拾取：中心格 = 拾取物格 -> 覆盖持有（连续拾取覆盖前一个）
-    ; 瞄准中 / 换位等待中不拾取（防止激光 + 新技能双技能并发）
+    ; 激光瞄准进行中（会话 22 起：一段预览也算，aimSkill 非空即拦）/
+    ; 换位等待中不拾取（防止激光 + 新技能双技能并发）
     .if pickupType != 0
         mov eax, ebx
         imul eax, eax, SIZEOF TANK
         add eax, offset tanks
         mov edx, (TANK ptr [eax]).alive
         .if edx != 0
-        mov edx, (TANK ptr [eax]).aimT
-        .if edx == 0
+        mov edx, (TANK ptr [eax]).aimSkill
+        .if edx == SKILL_NONE
         mov edx, (TANK ptr [eax]).swapBul
         .if edx == -1                ; 无换位绑定（勿写 < 0：无符号恒假）
         mov edx, (TANK ptr [eax]).effOn
@@ -5263,8 +5326,14 @@ GU_Aim:
     mov eax, ebx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
-    mov ecx, (TANK ptr [eax]).aimT
-    .if ecx == 0
+    mov ecx, (TANK ptr [eax]).aimSkill
+    .if ecx == SKILL_NONE
+        ; 会话 22 兜底：死亡经 DamageTank 路径只清 aim 字段不清预览缓冲
+        ; -> 该槽瞄准已结束但 prevTank 仍指向它时，虚线会永挂，这里回收
+        cmp prevTank, ebx
+        jne GU_ANext
+        mov prevTank, -1
+        mov prevN, 0
         jmp GU_ANext
     .endif
     ; 瞄准期间死亡：取消瞄准（死人不开炮）
@@ -5276,8 +5345,13 @@ GU_Aim:
         mov prevN, 0
         jmp GU_ANext
     .endif
+    mov ecx, (TANK ptr [eax]).aimT
+    .if ecx == 0
+        invoke RefreshLaserPreview, ebx   ; 一段：预览持续刷新，永不自动发射
+        jmp GU_ANext
+    .endif
     dec (TANK ptr [eax]).aimT
-    invoke RefreshLaserPreview, ebx   ; 预览随位置/朝向刷新
+    invoke RefreshLaserPreview, ebx       ; 二段：倒计时中预览仍随位置/朝向刷新
     mov eax, ebx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks

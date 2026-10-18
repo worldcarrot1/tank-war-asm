@@ -193,9 +193,9 @@ RST_H      equ 30
     sKN1        db "ICE SHIELD", 0
     sKD1        db "7s shield: immune to bullets, freezes 2x2 tiles nearby", 0
     sKN2        db "LASER", 0
-    sKD2        db "0.7s aim, then a wall-piercing laser beam", 0
+    sKD2        db "hold dashed preview; press again, fires after 1.3s", 0
     sKN3        db "BOUNCE LASER", 0
-    sKD3        db "preview bouncing path 0.7s, the whole path deals damage", 0
+    sKD3        db "live bounce preview; press again, 1.3s then hits path", 0
     sKN4        db "GHOST", 0
     sKD4        db "drive through walls up to 3 times within 4s", 0
     sKN5        db "MINE", 0
@@ -211,9 +211,9 @@ RST_H      equ 30
     kCN1        dw 051B0h,076FEh, 0
     kCD1        dw 089E6h,053D1h,0540Eh,00020h,00037h,00020h,079D2h,062A4h,076FEh,073AFh,07ED5h,0FF0Ch,0671Fh,095F4h,0514Dh,075ABh,05B50h,05F39h,04F24h,05BB3h,0FF0Ch,05E76h,05728h,08EABh,08FB9h,094FAh,05F00h,00020h,00032h,00078h,00032h,00020h,051B0h,09762h, 0
     kCN2        dw 06FC0h,05149h,070AEh, 0
-    kCD2        dw 07784h,051C6h,00020h,00030h,0002Eh,00037h,00020h,079D2h,0540Eh,053D1h,05C04h,07A7Fh,05899h,076F4h,07EBFh,06FC0h,05149h,0FF0Ch,07A7Fh,0900Fh,04E00h,05207h,05899h,04F53h,04E0Eh,05766h,0514Bh, 0
+    kCD2        dw 09884h,089C8h,0865Ah,07EBFh,08DEFh,05F84h,0FF0Ch,0518Dh,06309h,00020h,00031h,0002Eh,00033h,00073h,00020h,0540Eh,053D1h,05C04h,07A7Fh,05899h,06FC0h,05149h, 0
     kCN3        dw 053CDh,05C04h,06FC0h,05149h, 0
-    kCD3        dw 09884h,089C8h,053CDh,05F39h,08DEFh,05F84h,00020h,00030h,0002Eh,00037h,00020h,079D2h,0FF0Ch,0968Fh,0540Eh,06574h,06761h,08DEFh,05F84h,0540Ch,065F6h,09020h,06210h,04F24h,05BB3h, 0
+    kCD3        dw 06301h,07EEDh,09884h,089C8h,053CDh,05F39h,08DEFh,05F84h,0FF0Ch,0518Dh,06309h,00020h,00031h,0002Eh,00033h,00073h,00020h,0540Eh,05168h,08DEFh,05F84h,04F24h,05BB3h, 0
     kCN4        dw 07A7Fh,05899h,0672Fh, 0
     kCD4        dw 00034h,00020h,079D2h,05185h,053EFh,07A7Fh,08D8Ah,05899h,04F53h,0884Ch,09A76h,0FF0Ch,06700h,0591Ah,07A7Fh,08D8Ah,00020h,00033h,00020h,06B21h, 0
     kCN5        dw 05730h,096F7h, 0

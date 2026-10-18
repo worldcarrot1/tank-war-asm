@@ -85,8 +85,8 @@ PLAYER_P2   equ 1                   ; 本地第二坦克（对练用）
 ; 再按各自"技能键"发动；连续拾取覆盖前一个。
 SKILL_NONE      equ 0
 SK_ICE_SHIELD   equ 1               ; 冰盾：挡一次伤害 + 周围 2x2 冰面
-SK_LASER        equ 2               ; 激光炮：0.7s 后穿墙直线激光
-SK_REFLASER     equ 3               ; 反射激光：预览反弹路径 0.7s 后全路径伤害
+SK_LASER        equ 2               ; 激光炮：一段持续虚线预览，再按 1.3s 后穿墙直线激光
+SK_REFLASER     equ 3               ; 反射激光：持续预览反弹路径，再按 1.3s 后全路径伤害
 SK_GHOST        equ 4               ; 穿墙术：4s 或 3 次穿墙
 SK_MINE         equ 5               ; 地雷：隐藏雷 2s 后生效（含自己）
 SK_NITRO        equ 6               ; 燃油加速：50% 加速（与地形叠加）
@@ -96,7 +96,7 @@ SK_PHANTOM      equ 9               ; 定格术：原地虚影 x2，实像免伤
 SKILL_COUNT     equ 9
 PICKUP_PERIOD   equ 600             ; 10s @ 60tick
 PICKUP_SIZE     equ 18              ; 拾取物边长（像素）
-LASER_AIM_TICKS equ 42              ; 0.7s 瞄准延迟
+LASER_FIRE_TICKS equ 78             ; 二段再按后 1.3s 发射（会话 22 两段式；一段预览不限时）
 SHIELD_TICKS    equ 420             ; 冰盾 7s
 GHOST_TICKS     equ 240             ; 穿墙 4s
 GHOST_USES      equ 3               ; 穿墙 3 次

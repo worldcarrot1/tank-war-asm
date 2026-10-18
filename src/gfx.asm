@@ -209,7 +209,9 @@ GfxInit proc
 GfxInit endp
 
 ; ------------------------------------------------------------
-; DrawHud —— 底部计分条：坦克色块图标 + 玩家名 + 分数（每人均分）
+; DrawHud —— 底部信息条两行制（会话 23 拆分）：
+;   第一行（玩家介绍）：坦克色块图标 14x14 + 玩家名
+;   第二行（积分板）：得分 + 剩余命数，独立一行不与玩家混排
 ; ------------------------------------------------------------
 DrawHud proc uses ebx esi edi
     local rc:RECT
@@ -221,13 +223,13 @@ DH_Slot:
     mov eax, ebx
     imul eax, eax, MAP_W/4
     mov esi, eax                    ; x0（槽位区左缘）
-    ; 坦克颜色小图标（14x14，参照坦克深色方圆风格）
+    ; 第一行：坦克颜色小图标（14x14，参照坦克深色方圆风格）
     mov eax, esi
     add eax, 10
     mov rc.left, eax
     add eax, 14
     mov rc.right, eax
-    mov eax, MAP_H + 9
+    mov eax, MAP_H + 5
     mov rc.top, eax
     add eax, 14
     mov rc.bottom, eax
@@ -262,8 +264,8 @@ DH_NameDone:
     mov byte ptr [edi+ecx], 0
     mov eax, esi
     add eax, 32
-    invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, ecx
-    ; 分数（两位，槽位区右侧）
+    invoke TextOutA, hdcBack, eax, MAP_H+6, offset scoreBuf, ecx
+    ; 第二行（积分板）：分数两位 + "x命数"，槽位左缘起
     mov eax, ebx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
@@ -292,8 +294,8 @@ DH_NameDone:
     mov [edi+4], al
     mov byte ptr [edi+5], 0
     mov eax, esi
-    add eax, MAP_W/4 - 60
-    invoke TextOutA, hdcBack, eax, MAP_H+10, offset scoreBuf, 5
+    add eax, 10
+    invoke TextOutA, hdcBack, eax, MAP_H+30, offset scoreBuf, 5
     inc ebx
     jmp DH_Slot
 DrawHud endp
@@ -940,7 +942,7 @@ BR_Done:
         invoke SelectObject, hdcBack, penOld2
     .endif
 
-    ; 2) 画坦克（ebx=槽位号，y 偏移 HUD_H）
+    ; 2) 画坦克（ebx=槽位号；地图从 y=0 渲染，HUD 在 MAP_H 之下）
     xor ebx, ebx
     mov esi, offset tanks
 TankLoop:
@@ -993,7 +995,7 @@ TankSkip:
         jmp TankLoop
     .endif
 
-    ; 3) 画子弹（黑色小圆，y 偏移 HUD_H）
+    ; 3) 画子弹（黑色小圆；同样 y 不偏移，地图原点即窗口原点）
     invoke SelectObject, hdcBack, brushBullet
     xor ebx, ebx
     mov esi, offset bullets

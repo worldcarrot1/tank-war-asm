@@ -40,9 +40,12 @@ SND_BOOM         equ 2
 SND_PICK         equ 3
 SND_COUNT        equ 4
 SND_SWAP         equ 5
+SND_MINE         equ 6                 ; 布雷确认（会话 23 新增）
 
 NOTE_SHOT        equ 2646              ; 0.12s
-NOTE_BOOM        equ 8599              ; 0.39s
+NOTE_BOOM        equ 8599              ; 0.39s（噪声 6200 + 低频轰鸣 2399）
+BOOM_NOISE       equ 6200
+BOOM_RUMBLE      equ 2399
 NOTE_HALF        equ 1652              ; 0.075s
 NOTE_CNT         equ 2205              ; 0.10s
 NOTE_THIRD       equ 1101              ; 0.05s
@@ -58,6 +61,7 @@ NOTE_THIRD       equ 1101              ; 0.05s
     sndPickBuf  db 3460 dup (?)     ; 头+0.15s
     sndCntBuf   db 2360 dup (?)     ; 头+0.10s
     sndSwapBuf  db 3460 dup (?)     ; 头+0.15s
+    sndMineBuf  db 2300 dup (?)     ; 头+2*0.05s（布雷闷双响，会话 23）
     tmpBuf      db 4096 dup (?)     ; BGM 逐音符工作区
     hdrBuf      db 44 dup (0)       ; BGM 文件头
     rngSt       dd 12345            ; 噪声 LCG
@@ -232,6 +236,18 @@ GN_Loop:
 GenNoise endp
 
 ; ------------------------------------------------------------
+; GenBoomMix -- 爆炸混合（会话 23 电子音）：
+;   前段 6200 样本白噪爆裂 + 后段 55Hz 低频方波轰鸣长衰减
+; ------------------------------------------------------------
+GenBoomMix proc uses esi pBuf: dword
+    invoke GenNoise, pBuf, BOOM_NOISE
+    mov esi, pBuf
+    add esi, BOOM_NOISE
+    invoke GenSquare, esi, 55, BOOM_RUMBLE, 1600
+    ret
+GenBoomMix endp
+
+; ------------------------------------------------------------
 ; SndInit -- 启动时生成 BGM 文件与全部音效
 ; ------------------------------------------------------------
 SndInit proc uses ebx esi edi
@@ -261,25 +277,31 @@ BG_Note:
         jmp BG_Rep
     .endif
     invoke CloseHandle, hFile
-    ; ---- 开炮：下滑方波 0.12s ----
-    invoke GenSlide, offset sndShotBuf+44, 900, 280, NOTE_SHOT
+    ; ---- 会话 23 电子音重制 ----
+    ; 开炮：尖锐"pew"下滑方波 1500->140Hz，0.12s（旧 900->280 太闷）
+    invoke GenSlide, offset sndShotBuf+44, 1500, 140, NOTE_SHOT
     invoke DecayTail, offset sndShotBuf+44, NOTE_SHOT, 200
     invoke WrHead, offset sndShotBuf, NOTE_SHOT
-    ; ---- 爆炸：噪声 0.39s（小丑盒爆裂感：衰减 + 随机裂音）----
-    invoke GenNoise, offset sndBoomBuf+44, NOTE_BOOM
+    ; 爆炸：白噪爆裂 + 55Hz 低频轰鸣混合，0.39s
+    invoke GenBoomMix, offset sndBoomBuf+44
     invoke WrHead, offset sndBoomBuf, NOTE_BOOM
-    ; ---- 拾取：上升双音 E5->A5 ----
-    invoke GenSquare, offset sndPickBuf+44, 659, NOTE_HALF, 80
-    invoke GenSquare, offset sndPickBuf+44+NOTE_HALF, 880, NOTE_HALF, 240
-    invoke WrHead, offset sndPickBuf, NOTE_HALF*2
+    ; 拾取：明亮上行大三琶音 A5->E6->A6（芯片过关感）
+    invoke GenSquare, offset sndPickBuf+44, 880, NOTE_THIRD, 60
+    invoke GenSquare, offset sndPickBuf+44+NOTE_THIRD, 1318, NOTE_THIRD, 60
+    invoke GenSquare, offset sndPickBuf+44+NOTE_THIRD*2, 1760, NOTE_THIRD, 300
+    invoke WrHead, offset sndPickBuf, NOTE_THIRD*3
     ; ---- 倒计时哔 ----
     invoke GenSquare, offset sndCntBuf+44, 880, NOTE_CNT, 320
     invoke WrHead, offset sndCntBuf, NOTE_CNT
-    ; ---- 虚影/换位：三连琶音 C5-G5-C6 ----
-    invoke GenSquare, offset sndSwapBuf+44, 523, NOTE_THIRD, 60
-    invoke GenSquare, offset sndSwapBuf+44+NOTE_THIRD, 784, NOTE_THIRD, 60
-    invoke GenSquare, offset sndSwapBuf+44+NOTE_THIRD*2, 1046, NOTE_THIRD, 300
+    ; 虚影/换位：下行琶音 A6->E6->A5（与拾取上行形成"得到/失去"对照）
+    invoke GenSquare, offset sndSwapBuf+44, 1760, NOTE_THIRD, 60
+    invoke GenSquare, offset sndSwapBuf+44+NOTE_THIRD, 1318, NOTE_THIRD, 60
+    invoke GenSquare, offset sndSwapBuf+44+NOTE_THIRD*2, 880, NOTE_THIRD, 300
     invoke WrHead, offset sndSwapBuf, NOTE_THIRD*3
+    ; 布雷：两声低鸣 220->165Hz（闷双响，提示"脚下有雷"）
+    invoke GenSquare, offset sndMineBuf+44, 220, NOTE_THIRD, 60
+    invoke GenSquare, offset sndMineBuf+44+NOTE_THIRD, 165, NOTE_THIRD, 400
+    invoke WrHead, offset sndMineBuf, NOTE_THIRD*2
     ret
 SndInit endp
 
@@ -292,7 +314,7 @@ SndBgmStart proc
 SndBgmStart endp
 
 ; ------------------------------------------------------------
-; SndPlay -- 播放音效（id: 1开炮 2爆炸 3拾取 4倒计时 5虚影）
+; SndPlay -- 播放音效（id: 1开炮 2爆炸 3拾取 4倒计时 5虚影/换位 6布雷）
 ; sfxOn=0 时静默
 ; ------------------------------------------------------------
 SndPlay proc uses ebx id: dword
@@ -311,6 +333,8 @@ SndPlay proc uses ebx id: dword
         invoke PlaySoundA, offset sndCntBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
     .elseif eax == SND_SWAP
         invoke PlaySoundA, offset sndSwapBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_MINE
+        invoke PlaySoundA, offset sndMineBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
     .endif
     ret
 SndPlay endp

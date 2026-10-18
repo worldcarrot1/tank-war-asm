@@ -7,11 +7,11 @@
 ; ============================================================
 
 ; ---- 窗口与渲染 ----
-HUD_H       equ 32                  ; 顶部计分条高度（像素）
+HUD_H       equ 48                  ; 底部信息条高度（像素）：上行玩家标识、下行积分板（会话 23 拆分）
 MAP_W       equ 992                 ; 地图宽度（31 列 x 32，奇数宽保证镜像对称）
 MAP_H       equ 608                 ; 地图高度（19 行 x 32，奇数行保证单行底边界）
 WND_W       equ MAP_W               ; 窗口客户区宽度
-WND_H       equ MAP_H + HUD_H       ; 窗口客户区高度（地图 + 计分条）
+WND_H       equ MAP_H + HUD_H       ; 窗口客户区高度（地图 + 底部信息条）
 CELL        equ 32                  ; 地图格子边长（像素）
 
 COLS        equ MAP_W / CELL        ; 31 列
@@ -68,11 +68,12 @@ FIX_TBL64   equ 64                  ; 65536/1024：tbl 值 * 像素速度 * 64 =
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
 KEY_PER     equ 6                   ; 每玩家键位数：0前进1后退2左转3右转4开火5技能
 TANK_SIZE   equ 25                  ; 坦克碰撞/绘制边长（21 的 1.2 倍）
-TANK_SPEED  equ 3                   ; 每 tick 基础移动像素（偶 tick）（会话 21 降速）
-TANK_SPEED_HI equ 4                 ; 奇 tick（3/4 交替 = 平均 3.5，子弹 6 的 ~58%）
-DIRT_SPEED  equ 1                   ; 泥土上每 tick 移动像素（保持约半速以下的"陷住感"）
+TANK_SPEED  equ 2                   ; 每 tick 基础移动像素（偶 tick）（会话 23 降速）
+TANK_SPEED_HI equ 3                 ; 奇 tick（2/3 交替 = 平均 2.5，高于弹速 2）
+DIRT_SPEED  equ 1                   ; 泥土上每 tick 移动像素（半速以下的"陷住感"）
+NITRO_BONUS equ 1                   ; 燃油加速叠加像素/tick（2.5->3.5，约 +40%）
 TANK_HP     equ 1                   ; 一滴血（命中即淘汰）
-LIVES_INIT  equ 3                   ; 每辆坦克初始命数
+LIVES_INIT  equ 1                   ; 每辆坦克初始命数（会话 23：一命制，死亡即淘汰到回合结束）
 RESPAWN_TICKS equ 90                ; 阵亡后 1.5s 重生
 SPAWN_PROT_TICKS equ 150            ; 重生保护 2.5s（免伤+闪烁）
 FIRE_CD     equ 20                  ; 开火冷却 tick（§3）
@@ -115,13 +116,14 @@ EFF_WATER       equ 8
 EFF_PHANTOM     equ 16
 
 ; ---- 冰面滑行 ----
-ICE_SLIDE_MIN equ 6                 ; 滑行 tick 下限（6*3.5=21px 起步，可感）
-ICE_SLIDE_RNG equ 10                ; 6 + rand%10 -> 6..15 tick（21..52px）
+ICE_SLIDE_MIN equ 8                 ; 滑行 tick 下限（8*2.5=20px 起步，可感；会话 23 随降速上调）
+ICE_SLIDE_RNG equ 10                ; 8 + rand%10 -> 8..17 tick（20..42px）
 
 ; ---- 子弹（§3）----
 MAX_BULLETS     equ 56              ; 全场弹池
 MAX_PER_TANK    equ 10              ; 每辆坦克同屏上限
-BULLET_SPEED    equ 6               ; px/tick
+BULLET_SPEED    equ 2               ; px/tick（会话 23：应玩家要求低于坦克均速 2.5，
+                                    ;  注意这意味着坦克可以跑赢自己发出的子弹）
 BULLET_SIZE_PX  equ 8               ; 弹体 8x8
 BULLET_LIFE     equ 600             ; 存活 600 tick（10 秒）自动消失
 BULLET_MAX_BOUNCE equ 10            ; 反弹 >=10 次消失

@@ -116,8 +116,6 @@ RST_H      equ 30
     volumeLvl   dd 70                  ; 主音量 0..100
     sfxOn       dd 1                   ; 音效开关
     themeNight  dd 0                   ; 深夜模式（主页面黑风）
-    setSel      dd 0
-    rebindWait  dd 0
     prevUp      dd 0
     prevDown    dd 0
     prevLeft    dd 0
@@ -129,11 +127,8 @@ RST_H      equ 30
     mousePt     POINT <>               ; 鼠标客户区坐标（GetCursorPos+ScreenToClient）
     mouseX      dd 0
     mouseY      dd 0
-    rebindSlot  dd -1                  ; 人数页改键：正在等待新键的槽位（slot*5+动作），-1=无
+    rebindSlot  dd -1                  ; 人数页改键：正在等待新键的槽位（slot*KEY_PER+动作），-1=无
     rebindCool  dd 0                   ; 改键进入等待的防误捕冷却 tick
-    dbgRet      dd 999                 ; 最近一次 NumSelHitTest 返回（临时诊断）
-    dbgMX       dd 0                   ; DBG: HitTest 输入 x
-    dbgMY       dd 0                   ; DBG: HitTest 输入 y
     clickEvt    dd 0                   ; 1=本帧有待处理的鼠标点击（WndProc 置位）
     clickPX     dd 0                   ; 点击客户区坐标（消息 lParam）
     clickPY     dd 0
@@ -274,8 +269,10 @@ RST_H      equ 30
     szOn2       db "ON", 0
     szOff2      db "OFF", 0
     szNight     db "NIGHT MODE", 0
-    szSetHint   db "ESC: BACK   LEFT/RIGHT: VOLUME", 0
-    CN_SETHINT  dw 00045h,00073h,00063h,0FF1Ah,08FD4h,056DEh,00020h,00020h,05DE6h,053F3h,065B9h,05411h,0952Eh,0FF1Ah,08C03h,08282h,097F3h,091CFh, 0
+    szSetHint   db "MOUSE OR KEYS BOTH OK   ESC: BACK", 0
+    CN_SETHINT  dw 09F20h,06807h,0952Eh,076D8h,07686h,053EFh,00020h,00020h,00045h,0073h,0063h,0FF1Ah,08FD4h,056DEh, 0
+    CN_BACKBTN  dw 08FD4h,056DEh, 0                            ; 返回
+    CN_STARTBTN dw 05F00h,059CBh,06BD4h,08D5Bh, 0              ; 开始对局
     szReset     db "RESET ALL KEYS", 0
     szReb2      db "PRESS ANY KEY (EN IME! ESC=CANCEL)", 0
     szSetT      db "KEY SETTINGS", 0
@@ -285,7 +282,9 @@ RST_H      equ 30
     szLanB      db "BROADCASTING ON UDP PORT 28888 ...", 0
     szLanN      db "SEARCHING FOR PEERS ...", 0
     szLanF      db "PEER FOUND:", 0
-    szLanS      db "ENTER: START MATCH   ESC: BACK", 0
+    szLanS      db "CLICK/ENTER: START MATCH   ESC: BACK", 0
+    szStartBtn  db "START MATCH", 0
+    szBackBtn   db "BACK", 0
     szFont      db "Arial", 0
     wBuf        dd 64 dup (0)           ; 设置行宽字符缓冲
     szLangEN    db "LANGUAGE: ENGLISH", 0
@@ -319,7 +318,7 @@ RST_H      equ 30
     CN_LANB dw 6b63h,5728h,901ah,8fc7h,0020h,0055h,0044h,0050h,0020h,7aefh,53e3h,0020h,0032h,0038h,0038h,0038h,0038h,0020h,5e7fh,64adh,0020h,002eh,002eh,002eh, 0
     CN_LANN dw 6b63h,5728h,641ch,7d22h,5bf9h,624bh,0020h,002eh,002eh,002eh, 0
     CN_LANF dw 5df2h,53d1h,73b0h,5bf9h,624bh,003ah, 0
-    CN_LANS dw 56deh,8f66h,0ff1ah,5f00h,59cbh,6bd4h,8d5bh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
+    CN_LANS dw 70B9h,51FBh,6216h,56DEh,8F66h,0FF1Ah,5F00h,59CBh,6BD4h,8D5Bh,0020h,0045h,0073h,0063h,0FF1Ah,8FD4h,56DEh, 0
     colDark     dd 00232323h
     colGray     dd 00606060h
     colHi       dd 0000C06000h
@@ -442,8 +441,6 @@ MenuActivate proc
         mov skillPage, 0
         mov gameState, ST_SKILL
     .elseif menuSel == 3
-        mov setSel, 0
-        mov rebindWait, 0
         mov gameState, ST_SET
     .elseif menuSel == 4
         mov gameState, ST_LAN
@@ -664,46 +661,6 @@ NHT_Next:
     jmp NHT_Box
 NumSelHitTest endp
 
-; 带符号十进制写 pBuf，返回长度（临时诊断用）
-DbgW proc uses ebx ecx edi pBuf: dword, val: dword
-    mov eax, val
-    mov edi, pBuf
-    test eax, eax
-    jns DW_Pos
-    mov byte ptr [edi], '-'
-    inc edi
-    neg eax
-DW_Pos:
-    xor ebx, ebx                       ; 位数
-    mov ecx, 10
-    .if eax == 0
-        mov byte ptr [edi], '0'
-        inc edi
-        jmp DW_Done
-    .endif
-DW_Div:
-    xor edx, edx
-    div ecx
-    add dl, '0'
-    push edx
-    inc ebx
-    .if eax > 0
-        jmp DW_Div
-    .endif
-DW_Pop:
-    pop eax
-    mov [edi], al
-    inc edi
-    dec ebx
-    .if ebx > 0
-        jmp DW_Pop
-    .endif
-DW_Done:
-    mov eax, edi
-    sub eax, pBuf
-    ret
-DbgW endp
-
 ; ------------------------------------------------------------
 ; UT_QuitToMenu -- 从暂停/对局退出到主菜单（联机时断开重置）
 ; ------------------------------------------------------------
@@ -844,10 +801,10 @@ PS_VlOk:
             .endif
             jmp UT_Done
         .endif
-        ; 打满局数：Enter/Esc 回主菜单（用采样变量）
+        ; 打满局数：Enter/Esc/鼠标点击回主菜单（用采样变量；会话 23 加鼠标）
         mov eax, matchOver
         .if eax != 0
-            .if enE != 0 || esE != 0
+            .if enE != 0 || esE != 0 || lbE != 0
                 mov matchOver, 0
                 mov gameState, ST_MENU
             .endif
@@ -863,33 +820,6 @@ PS_VlOk:
 
     ; ---------- 主菜单 ----------
     .if gameState == ST_MENU
-        ; DBG
-        invoke SelectObject, hdcBack, fontSmall
-        lea edi, uiBuf
-        mov byte ptr [edi], 'M'
-        inc edi
-        mov eax, mouseX
-        invoke DbgW, edi, mouseX
-        add edi, eax
-        mov byte ptr [edi], ','
-        inc edi
-        invoke DbgW, edi, mouseY
-        add edi, eax
-        mov byte ptr [edi], '|'
-        inc edi
-        invoke DbgW, edi, lbE
-        add edi, eax
-        mov byte ptr [edi], '|'
-        inc edi
-        invoke DbgW, edi, menuSel
-        add edi, eax
-        mov byte ptr [edi], '|'
-        inc edi
-        invoke DbgW, edi, clickEvt
-        add edi, eax
-        mov byte ptr [edi], 0
-        invoke UiTextZ, hdcBack, 30, 20, offset uiBuf, colDark
-        invoke SelectObject, hdcBack, menuFont
         .if dnE != 0
             inc menuSel
             .if menuSel > 6
@@ -907,7 +837,7 @@ PS_VlOk:
             invoke MenuActivate
         .endif
         ; ---- 鼠标：悬停高亮 + 左键点击激活 ----
-        ; 菜单 5 项渲染矩形：x 440..660，y = 250+i*60 .. +34
+        ; 菜单 7 项渲染矩形：x 440..660，y = 190+i*46 .. +34（与 UiRender UM_Items 同几何）
         ; 鼠标坐标需在窗口客户区内才参与 hover（多屏 DPI 下 GetCursorPos 可能返回界外乱值）
         mov eax, mouseX
         .if eax < 0 || eax >= WND_W
@@ -917,8 +847,11 @@ PS_VlOk:
         .if eax < 0 || eax >= WND_H
             jmp UT_MMouseDone
         .endif
+        xor ebx, ebx                   ; 会话 23 修复：循环计数器必须显式清零
+                                       ; （UiTick 虽 uses ebx，入口值=调用方残留，
+                                       ;  >=7 时整段 hover 静默跳过）
 UT_MMouse:
-        .if ebx >= 6
+        .if ebx >= 7                   ; 会话 23 修复：7 项（含语言切换）全部可点
             jmp UT_MMouseDone
         .endif
         mov eax, ebx
@@ -1007,6 +940,30 @@ UTN_Append:
 UTN_ScanDone:
                 .endif
             .endif
+            ; ---- 会话 23：改名中支持鼠标收尾（原先只能键盘 Enter/Esc，
+            ;      纯鼠标用户点名字进改名后被困在编辑态） ----
+            .if lbE != 0
+                invoke NumSelHitTest
+                test eax, eax
+                js NE_EdNeg
+                mov editSlot, -1             ; 点键位行：提交改名并进入改键等待
+                mov rebindSlot, eax
+                mov rebindCool, 3
+                jmp UT_Done
+NE_EdNeg:
+                .if eax == -1
+                    mov editSlot, -1         ; 点空白 = 提交改名
+                    jmp UT_Done
+                .elseif eax == -2
+                    mov editSlot, -1         ; 点重置 = 提交改名并重置键位
+                    invoke InitKeyDefaults
+                    jmp UT_Done
+                .else
+                    neg eax                  ; 点其他容器标题 = 切换编辑目标
+                    sub eax, 3
+                    mov editSlot, eax
+                .endif
+            .endif
             jmp UT_Done              ; 编辑改名中：屏蔽本页其他操作
         .endif
         ; 人数变少时改键目标可能指向已隐藏的容器 -> 清理
@@ -1075,7 +1032,6 @@ UT_Scan2Done:
             ; 等待中允许点击其他键位行切换目标 / 点重置按钮
             .if lbE != 0
                 invoke NumSelHitTest
-                mov dbgRet, eax                   ; DBG
                 test eax, eax
                 js UTW_Next                ; 负值（重置/标题）不走切换
                 .if eax != rebindSlot
@@ -1117,7 +1073,6 @@ UTW_Next:
             ; ---- 鼠标：键位容器改键 / 重置 / << >> 调人数与局数 / 数字区开始 ----
             .if lbE != 0
                 invoke NumSelHitTest
-                mov dbgRet, eax                   ; DBG
                 test eax, eax
                 js NHT_NegRet              ; 负值：重置/改名（勿写 >= 0：恒真）
                 mov rebindSlot, eax        ; 点击键位 -> 闪烁等待新键
@@ -1193,9 +1148,12 @@ SS_Vl1:
             .endif
             invoke SndVolume, volumeLvl
         .endif
-        .if lbE != 0 && mouseY >= 186 && mouseY < 222
+        ; 会话 23 修复：旧版外层守卫带着音量条专属的 y186..222，
+        ; 导致 sfx/深夜/<<>>/返回 全部点击区永远打不通；
+        ; 改为 lbE 判一次，各区域自带 y 带。
+        .if lbE != 0
             mov eax, mouseX
-            .if eax >= 412 && eax <= 612
+            .if eax >= 412 && eax <= 612 && mouseY >= 186 && mouseY < 222
                 sub eax, 412
                 mov ecx, 200
                 .if eax > 200
@@ -1208,7 +1166,7 @@ SS_Vl1:
                 invoke SndVolume, eax
             .endif
             mov eax, mouseX
-            .if eax >= 330 && eax < 400
+            .if eax >= 330 && eax < 400 && mouseY >= 186 && mouseY < 222
                 sub volumeLvl, 10
                 cmp volumeLvl, 0
                 jge SS_Vl2
@@ -1228,63 +1186,27 @@ SS_Vl2:
                     xor themeNight, 1
                 .endif
             .endif
-        .endif
-        .if rebindWait != 0
-            .if esE != 0
-                mov rebindWait, 0
-            .else
-                ; 扫描同人数页：0x8000 电平 + 收窄范围（排 Esc/Win/IME/鼠标）；
-                ; 进入重绑由回车触发，起点 0x20 已排除 Enter，无需冷却
-                mov scanVk, 20h
-UT_Scan:
-                mov eax, scanVk
-                .if eax > 0A5h
-                    jmp UT_ScanDone
+            ; 会话 23 补：>> 音量按钮（<< 已有，>> 此前漏接）
+            mov eax, mouseX
+            .if eax >= 616 && eax < 680 && mouseY >= 186 && mouseY < 222
+                add volumeLvl, 10
+                .if volumeLvl > 100
+                    mov volumeLvl, 100
                 .endif
-                .if eax == 1Bh
-                    jmp UT_ScanNext
-                .endif
-                .if eax > 5Ah && eax < 60h
-                    jmp UT_ScanNext
-                .endif
-                .if eax > 87h && eax < 0A0h
-                    jmp UT_ScanNext
-                .endif
-                invoke GetAsyncKeyState, eax
-                and eax, 8000h
-                .if eax != 0
-                    mov eax, scanVk
-                    mov edx, setSel
-                    mov keyTable[edx*4], eax
-                    mov rebindWait, 0
-                    jmp UT_ScanDone
-                .endif
-UT_ScanNext:
-                inc scanVk
-                jmp UT_Scan
-UT_ScanDone:
+                invoke SndVolume, volumeLvl
             .endif
-        .else
-            .if dnE != 0
-                inc setSel
-                .if setSel > MAX_PLAYERS*KEY_PER-1
-                    mov setSel, 0
-                .endif
-            .endif
-            .if upE != 0
-                .if setSel == 0
-                    mov setSel, MAX_PLAYERS*KEY_PER-1
-                .else
-                    dec setSel
-                .endif
-            .endif
-            .if enE != 0
-                mov rebindWait, 1
-            .endif
-            .if esE != 0
+            ; 会话 23 补：返回按钮（与 Esc 等价）
+            mov eax, mouseX
+            .if eax >= 440 && eax < 560 && mouseY >= 462 && mouseY < 498
                 mov gameState, ST_MENU
+                jmp UT_Done
             .endif
         .endif
+        .if esE != 0
+            mov gameState, ST_MENU
+        .endif
+        ; （会话 23 删除：本页不渲染键位行，旧 setSel↑↓/Enter 隐形改键块
+        ;   会在设置页误吞按键、悄悄改写 keyTable —— "键位页面有问题"元凶）
 
     ; ---------- 联机大厅 ----------
     .elseif gameState == ST_LAN
@@ -1313,13 +1235,26 @@ UT_ScanDone:
                 .endif
             .endif
         .endif
+        ; 会话 23：开始对局 / 返回按钮可点（开始 400..600 y410..450，返回 y460..500）
+        .if lbE != 0 && mouseX >= 400 && mouseX < 600 && peerKnown != 0
+            .if mouseY >= 410 && mouseY < 450
+                jmp UT_LanStart
+            .endif
+        .endif
         .if enE != 0 && peerKnown != 0
+UT_LanStart:
             mov numPlayers, 2
             invoke GameInit
             mov netMode, 1
             mov gameState, ST_PLAY
         .endif
+        .if lbE != 0 && mouseX >= 400 && mouseX < 600
+            .if mouseY >= 460 && mouseY < 500
+                jmp UT_LanBack
+            .endif
+        .endif
         .if esE != 0
+UT_LanBack:
             invoke NetShutdown
             mov peerKnown, 0
             mov gameState, ST_MENU
@@ -1342,9 +1277,14 @@ UT_ScanDone:
             mov gameState, ST_MENU
         .endif
         .if lbE != 0
-            ; 左箭头 130..210, 260..340 / 右箭头 778..858
+            ; 左箭头 130..210, 260..340 / 右箭头 778..858 / 返回 440..560, 516..552
             mov eax, mouseY
-            .if eax >= 260 && eax < 340
+            .if eax >= 516 && eax < 552
+                mov eax, mouseX
+                .if eax >= 440 && eax < 560
+                    mov gameState, ST_MENU
+                .endif
+            .elseif eax >= 260 && eax < 340
                 mov eax, mouseX
                 .if eax >= 130 && eax < 210
                     .if skillPage > 0
@@ -1376,8 +1316,14 @@ UT_ScanDone:
             mov gameState, ST_MENU
         .endif
         .if lbE != 0
+            ; 会话 23：←→ 翻页之外补鼠标（左右箭头同技能页 + 返回按钮）
             mov eax, mouseY
-            .if eax >= 260 && eax < 340
+            .if eax >= 516 && eax < 552
+                mov eax, mouseX
+                .if eax >= 440 && eax < 560
+                    mov gameState, ST_MENU
+                .endif
+            .elseif eax >= 260 && eax < 340
                 mov eax, mouseX
                 .if eax >= 130 && eax < 210 && demoPage > 0
                     dec demoPage
@@ -1550,7 +1496,7 @@ NT_Copied:
         .endif
         mov byte ptr [edi+ecx], 0
         invoke UiTextZ, hdcBack, boxRc.left, KBBOX_Y+8, offset uiBuf, colDark
-        ; 5 行键位：0上 1下 2左 3右 4开火 5技能
+        ; 每人 6 键（KEY_PER）：0前进 1后退 2左转 3右转 4开火 5技能（会话 23 修正旧注"5 行"）
         mov rowY, KBBOX_Y + KBROW_Y0
         xor esi, esi                     ; 动作 0..5
 NS_Row:
@@ -1700,10 +1646,15 @@ NS_BoxDone:
         .else
             invoke UiTextL, hdcBack, 494, 396, offset szOff2, offset CN_OFF2, colDark
         .endif
+        ; 会话 23：返回按钮（点击 = Esc 等价），绘制在点击区 440..560, 462..498
+        mov boxRc.left, 440
+        mov boxRc.top, 462
+        mov boxRc.right, 560
+        mov boxRc.bottom, 498
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke UiTextL, hdcBack, 474, 470, offset szBackBtn, offset CN_BACKBTN, colDark
         invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
         invoke SelectObject, hdcBack, menuFont
-
-        xor ebx, ebx
 
     ; ---------- 联机大厅 ----------
     .elseif gameState == ST_LAN
@@ -1716,6 +1667,23 @@ NS_BoxDone:
             invoke UiTextL, hdcBack, 350, 280, offset szLanN, offset CN_LANN, colGray
         .endif
         invoke UiTextL, hdcBack, 350, 360, offset szLanS, offset CN_LANS, colDark
+        ; 会话 23：按钮组（开始 400..600 y410..450 / 返回 y460..500，与点击区一致）
+        invoke SelectObject, hdcBack, fontSmall
+        mov edx, colGray
+        .if peerKnown != 0
+            mov edx, colHi
+        .endif
+        mov boxRc.left, 400
+        mov boxRc.top, 410
+        mov boxRc.right, 600
+        mov boxRc.bottom, 450
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke UiTextL, hdcBack, 446, 422, offset szStartBtn, offset CN_STARTBTN, edx
+        mov boxRc.top, 460
+        mov boxRc.bottom, 500
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke UiTextL, hdcBack, 474, 472, offset szBackBtn, offset CN_BACKBTN, colDark
+        invoke SelectObject, hdcBack, menuFont
 
     ; ---------- 技能说明页 ----------
     .elseif gameState == ST_SKILL
@@ -1778,6 +1746,13 @@ NS_BoxDone:
         mov byte ptr [edi+4], '0'+SKILL_COUNT
         mov byte ptr [edi+5], 0
         invoke UiTextZ, hdcBack, 470, 410, offset uiBuf, colDark
+        ; 会话 23：返回按钮（点击区 440..560, 516..552）
+        mov boxRc.left, 440
+        mov boxRc.top, 516
+        mov boxRc.right, 560
+        mov boxRc.bottom, 552
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke UiTextL, hdcBack, 474, 524, offset szBackBtn, offset CN_BACKBTN, colDark
         ; 底部提示
         invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
 
@@ -2006,7 +1981,7 @@ NS_BoxDone:
             invoke FillRect, hdcBack, addr boxRc, brushWave
             ; 空地（660..838）：留白透出页面底色（深夜模式不铺死色）
             ; 运动时间轴：480 tick 循环，tt = demoPh*120 + demoPt
-            ; （会话 21 降速重时：地面 3/4 交替均速 3.5px/tick，用 7/2 定点；
+            ; （会话 23 降速重时：地面 2/3 交替均速 2.5px/tick，用 5/2 定点；
             ;   泥地 1px/tick 不变，仍与真速一致）
             mov eax, demoPh
             imul eax, eax, 120
@@ -2014,36 +1989,36 @@ NS_BoxDone:
             .if eax < 170                 ; 泥地：1px/tick 陷住爬行，走满 170px 带宽
                 add eax, 150
                 mov demoP1x, eax
-            .elseif eax < 212             ; 出泥上冰：均速 3.5px/tick 滑行（41 tick 滑到水缘）
+            .elseif eax < 228             ; 出泥上冰：均速 2.5px/tick 滑行（58 tick 滑到水缘）
                 sub eax, 170
-                imul eax, eax, 7
+                imul eax, eax, 5
                 shr eax, 1
                 add eax, 320
                 mov demoP1x, eax
-            .elseif eax < 216             ; 冰尽头：余势缓停（1px/tick）
-                sub eax, 211
-                add eax, 463
+            .elseif eax < 232             ; 冰尽头：余势缓停（1px/tick）
+                sub eax, 227
+                add eax, 462
                 mov demoP1x, eax
-            .elseif eax < 300             ; 水面阻挡：冰缘原地小幅顶撞
+            .elseif eax < 292             ; 水面阻挡：冰缘原地小幅顶撞
                 shr eax, 2
                 and eax, 1
                 shl eax, 1
                 add eax, 465
                 mov demoP1x, eax
-            .elseif eax < 351             ; 驭水术生效：均速 3.5px/tick 穿水而过
-                sub eax, 300
-                imul eax, eax, 7
+            .elseif eax < 362             ; 驭水术生效：均速 2.5px/tick 穿水而过
+                sub eax, 292
+                imul eax, eax, 5
                 shr eax, 1
                 add eax, 465
                 mov demoP1x, eax
-            .elseif eax < 386             ; 开阔地：正常速推进
-                sub eax, 351
-                imul eax, eax, 7
+            .elseif eax < 410             ; 开阔地：正常速推进
+                sub eax, 362
+                imul eax, eax, 5
                 shr eax, 1
-                add eax, 640
+                add eax, 637
                 mov demoP1x, eax
             .else                         ; 循环末停住，回卷重演
-                mov demoP1x, 759
+                mov demoP1x, 754
             .endif
             ; 驭水徽章：坦克中心骑在水面上（x 478..648）时框浅色外圈
             mov eax, demoP1x
@@ -2141,6 +2116,13 @@ NS_BoxDone:
         mov byte ptr [edi+4], '6'
         mov byte ptr [edi+5], 0
         invoke UiTextZ, hdcBack, 470, 165, offset uiBuf, colDark
+        ; 会话 23：返回按钮（点击区 440..560, 516..552）
+        mov boxRc.left, 440
+        mov boxRc.top, 516
+        mov boxRc.right, 560
+        mov boxRc.bottom, 552
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke UiTextL, hdcBack, 474, 524, offset szBackBtn, offset CN_BACKBTN, colDark
         invoke UiTextL, hdcBack, 360, 560, offset szSkHint, offset CN_SKHINT, colGray
     .endif
 

@@ -577,7 +577,7 @@ arenaTable dd ARENA1,
     nbIdx       dd ?
     nbDir       dd ?
     ; ---- 会话 19 自测字符串：长度用 ($ - 标签) 自动计算，无需手工数字节 ----
-    stT1    db "T1_FWD_DIR0_X(expect172)="
+    stT1    db "T1_FWD_DIR0_X(expect132)="
     stT1L   equ ($ - stT1)
     stT2    db "T2_ACTIVE_AFTER_FIRE(expect1)="
     stT2L   equ ($ - stT2)
@@ -643,11 +643,11 @@ arenaTable dd ARENA1,
     stT18bL equ ($ - stT18b)
     stT18c  db "T18_MINE_GONE(expect1)="
     stT18cL equ ($ - stT18c)
-    stT19a  db "T19_NORM_DX(expect4or5)="
+    stT19a  db "T19_NORM_DX(expect2or3)="
     stT19aL equ ($ - stT19a)
-    stT19b  db "T19_BOOST_DX(expect+2)="
+    stT19b  db "T19_BOOST_DX(expect+1)="
     stT19bL equ ($ - stT19b)
-    stT19c  db "T19_MUD_BOOST(expect3)="
+    stT19c  db "T19_MUD_BOOST(expect2)="
     stT19cL equ ($ - stT19c)
     stT20a  db "T20_SWAPPED(expect1)="
     stT20aL equ ($ - stT20a)
@@ -711,6 +711,10 @@ arenaTable dd ARENA1,
     stT35L  equ ($ - stT35)
     stT36   db "T36_GHOST_ESCAPE(expect1)="
     stT36L  equ ($ - stT36)
+    stT37a  db "T37_MINE_PERSIST(expect1)="
+    stT37aL equ ($ - stT37a)
+    stT37b  db "T37_MINE_STEPT_TRIP(expect1)="
+    stT37bL equ ($ - stT37b)
     stT15p  db "T15_LASER_TWOSTAGE(expect3)="
     stT15pL equ ($ - stT15p)
     stT16p  db "T16_REFL_TWOSTAGE(expect3)="
@@ -1411,7 +1415,7 @@ STClear13:
     rep movsb
     call OpenLog
 
-    ; ==== T1 dir=0 前进 40 tick：32+140=172（会话 21 降速：3/4 交替 40 tick 恰 140px） ====
+    ; ==== T1 dir=0 前进 40 tick：32+100=132（会话 23 降速：2/3 交替 40 tick 恰 100px） ====
     invoke Mark, 10
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
@@ -1421,7 +1425,7 @@ STClear13:
     invoke SetDirInput, 0
     invoke AdvanceTicks, 40
     invoke SetDirInput, 99
-    invoke Chk, offset stT1, stT1L, tanks[0*SIZEOF TANK].x, 172
+    invoke Chk, offset stT1, stT1L, tanks[0*SIZEOF TANK].x, 132
 
     ; ==== T2 开火 -> 一颗弹在飞 ====
     invoke Mark, 20
@@ -1525,7 +1529,7 @@ T5Opp:
 T5Log:
     invoke Chk, offset stT5, stT5L, lGot, 1
 
-    ; ==== T6 冰面滑行：站上冰格向开放邻居驱动 1 tick，slide 应落在 6..15 ====
+    ; ==== T6 冰面滑行：站上冰格向开放邻居驱动 1 tick，slide 应落在 8..17 ====
     invoke Mark, 60
     xor esi, esi
 T6Find:
@@ -1562,16 +1566,17 @@ T6Found:
     invoke SetDirInput, 99
     mov eax, tanks[0*SIZEOF TANK].slide
     mov lGot, 0
-    cmp eax, 6
+    cmp eax, 8
     jb T6Bad
-    cmp eax, 15
+    cmp eax, 17
     ja T6Bad
     mov lGot, 1
 T6Bad:
 T6Log:
     invoke Chk, offset stT6, stT6L, lGot, 1
 
-    ; ==== T7 P2 驾驶：dir=180 + 前进键（槽24），40 tick 后停于细边界墙 x=20 ====
+    ; ==== T7 P2 驾驶：dir=180 + 前进键（槽24），60 tick 后停于细边界墙 x=20
+    ;      （会话 23 降速：均 2.5px/tick，60 tick 走满 140px 撞界） ====
     invoke Mark, 70
     call ResetTanks
     mov tanks[1*SIZEOF TANK].x, 160
@@ -1580,7 +1585,7 @@ T6Log:
     mov tanks[1*SIZEOF TANK].subpxX, 0
     mov tanks[1*SIZEOF TANK].subpxY, 0
     mov inputTable[24], 1
-    invoke AdvanceTicks, 40
+    invoke AdvanceTicks, 60
     mov inputTable[24], 0
     mov eax, tanks[1*SIZEOF TANK].x
     mov lGot, 0
@@ -1973,7 +1978,7 @@ T17BadB:
 T18Bad:
     invoke Chk, offset stT18c, stT18cL, lGot, 1
 
-    ; ==== T19 燃油加速 + 奇偶步长：常速 3/4 交替；加速 +2；泥地叠加=3 ====
+    ; ==== T19 燃油加速 + 奇偶步长：常速 2/3 交替；加速 +1；泥地叠加=2 ====
     invoke Mark, 191
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 96
@@ -1996,7 +2001,7 @@ T18Bad:
     sub eax, 96
     mov lGot, eax
     invoke Chk, offset stT19a, stT19aL, lGot, lWant
-    ; b) 加速一步 = 常速 + 2
+    ; b) 加速一步 = 常速 + NITRO_BONUS
     mov tanks[0*SIZEOF TANK].skill, SK_NITRO
     mov prevUse[0], 0
     mov inputTable[20], 1
@@ -2010,13 +2015,13 @@ T18Bad:
     mov ecx, gTick
     and ecx, 1
     add eax, ecx
-    add eax, 2
+    add eax, NITRO_BONUS
     mov lWant, eax
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, ebx
     mov lGot, eax
     invoke Chk, offset stT19b, stT19bL, lGot, lWant
-    ; c) 泥地叠加：DIRT_SPEED(1) + 加速(2) = 3 恒定（与奇偶无关）
+    ; c) 泥地叠加：DIRT_SPEED(1) + 加速(NITRO_BONUS=1) = 2 恒定（与奇偶无关）
     mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].subpxX, 0
     mov tanks[0*SIZEOF TANK].subpxY, 0
@@ -2027,7 +2032,7 @@ T18Bad:
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 96
     mov lGot, eax
-    invoke Chk, offset stT19c, stT19cL, lGot, 3
+    invoke Chk, offset stT19c, stT19cL, lGot, 2
     mov mapData[13*COLS+3], TILE_EMPTY
 
     ; ==== T20 换位术：UP 发射换位弹 -> 再按与弹互换；朝向继承 fireAng ====
@@ -2055,7 +2060,7 @@ T20Clr:
     mov inputTable[20], 1
     invoke GameUpdate                      ; 发射换位弹（绑定 swapBul）
     mov inputTable[20], 0
-    invoke AdvanceTicks, 20                ; 弹上飞约 120px
+    invoke AdvanceTicks, 60                ; 弹上飞约 120px（会话 23：弹速 2，60 tick）
     mov inputTable[20], 1
     invoke GameUpdate                      ; 再按 -> DoSwap
     mov inputTable[20], 0
@@ -2406,15 +2411,15 @@ STWallR:
     jne T25Bad
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, lX0
-    cmp eax, 21
+    cmp eax, 15
     jb T25Bad
-    cmp eax, 27
+    cmp eax, 19
     ja T25Bad
     mov eax, tanks[0*SIZEOF TANK].y
     sub eax, lY0
-    cmp eax, 21
+    cmp eax, 15
     jb T25Bad
-    cmp eax, 27
+    cmp eax, 19
     ja T25Bad
     mov lGot, 1
 T25Bad:
@@ -2472,7 +2477,7 @@ ST26E:
     invoke Chk, offset stT26, stT26L, lPass, 5
 
     ; ==== T27 45 度弹道积分（回滚版 45 度提速失效回归锁）：
-    ;      16.16 定点 -> 60 tick 精确 254px/轴（|v| 任意角恒 6） ====
+    ;      16.16 定点 -> 60 tick 精确 84px/轴（|v| 任意角恒 2） ====
     invoke Mark, 271
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 64
@@ -2523,15 +2528,15 @@ ST27Found:
     mov eax, (BULLET ptr [esi]).x
     sub eax, stBulX0
     mov lTmp, eax
-    cmp eax, 250
+    cmp eax, 83
     jb ST27Bad
-    cmp eax, 257
+    cmp eax, 86
     ja ST27Bad
     mov eax, (BULLET ptr [esi]).y
     sub eax, stBulY0
-    cmp eax, 250
+    cmp eax, 83
     jb ST27Bad
-    cmp eax, 257
+    cmp eax, 86
     ja ST27Bad
     mov lGot, 1
 ST27Bad:
@@ -2575,7 +2580,7 @@ ST28Done:
     ; ==== T29 斜弹撞墙反弹：|vx|/|vy| 取反保模（16.16 定点反弹回归锁） ====
     invoke Mark, 291
     mov tanks[0*SIZEOF TANK].alive, 0      ; 阵亡坦克不参与命中，防回流弹干扰
-    invoke AdvanceTicks, 120
+    invoke AdvanceTicks, 320               ; 会话 23 弹速 2：320 tick 补走 ~453px/轴必撞边界
     mov eax, stBulIdx
     imul eax, eax, SIZEOF BULLET
     add eax, offset bullets
@@ -2640,7 +2645,7 @@ ST29Log:
     cmp eax, 0
     jne T30Bad                             ; 滑行向量必须仍是出冰瞬间的 0
     mov eax, tanks[0*SIZEOF TANK].slide
-    cmp eax, 6                             ; 仍在滑行（冰上刷新 6..15）
+    cmp eax, 6                             ; 仍在滑行（冰上刷新 8..17，已耗 2 tick）
     jb T30Bad
     mov lGot, 1
 T30Bad:
@@ -2727,21 +2732,21 @@ T32ClrCol:
     jne T32A
     inc lPass
 T32A:
-    ; b) 驾驶同步推进 dx 理论~13（会话 21 均速 3.5），容差 [5,19]
+    ; b) 驾驶同步推进 dx 理论~10（会话 23 均速 2.5），容差 [3,15]
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 96
-    cmp eax, 5
+    cmp eax, 3
     jb T32B
-    cmp eax, 19
+    cmp eax, 15
     ja T32B
     inc lPass
 T32B:
-    ; c) dy 理论~32，容差 [22,40]（转向没把车钉在原地）
+    ; c) dy 理论~23，容差 [14,30]（转向没把车钉在原地）
     mov eax, tanks[0*SIZEOF TANK].y
     sub eax, 96
-    cmp eax, 22
+    cmp eax, 14
     jb T32C
-    cmp eax, 40
+    cmp eax, 30
     ja T32C
     inc lPass
 T32C:
@@ -2773,10 +2778,10 @@ T32C:
     invoke GameUpdate
     mov inputTable[0], 0
     mov lPass, 0
-    ; a) 半个车身在泥上：dx>=3（正常速下限）；旧判定中心在泥 -> dx=1
+    ; a) 半个车身在泥上：dx>=2（正常速下限，会话 23 均速 2/3）；旧判定中心在泥 -> dx=1
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 115
-    cmp eax, 3
+    cmp eax, 2
     jb T33A
     inc lPass
 T33A:
@@ -2906,6 +2911,52 @@ T34ClrB:
     .endif
 T36Bad:
     invoke Chk, offset stT36, stT36L, lGot, 1
+
+    ; ==== T37 地雷保留（会话 23 回归锁）：修复前 GU_Mine 对"没踩到"误跳
+    ;      GU_MineClear -> 生效瞬间无人踩中地雷就凭空消失 ====
+    invoke Mark, 317
+    call ResetTanks
+    ; 自净摆位：row13 col2..5 清空，P1 立于 (96,416)（中心格 13*COLS+3）
+    mov ecx, 13*COLS+2
+    mov byte ptr mapData[ecx],   TILE_EMPTY
+    mov byte ptr mapData[ecx+1], TILE_EMPTY
+    mov byte ptr mapData[ecx+2], TILE_EMPTY
+    mov byte ptr mapData[ecx+3], TILE_EMPTY
+    mov tanks[0*SIZEOF TANK].x, 96
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].protT, 0
+    mov tanks[0*SIZEOF TANK].respawnT, 0
+    mov tanks[0*SIZEOF TANK].lives, 1
+    mov tanks[0*SIZEOF TANK].skill, SK_MINE
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                      ; 布雷（雷在 13 行 col3）
+    mov inputTable[20], 0
+    ; 坦克挪离雷格（瞬移即可：无驾驶输入不触发移动判定）
+    mov tanks[0*SIZEOF TANK].x, 600
+    invoke AdvanceTicks, 250               ; 远超 120 tick 生效期
+    mov lGot, 0
+    cmp mineCell[0], -1
+    je T37BadA
+    mov lGot, 1
+T37BadA:
+    invoke Chk, offset stT37a, stT37aL, lGot, 1
+    ; 重新踩上雷格 -> 即刻引爆且雷清除
+    mov tanks[0*SIZEOF TANK].x, 96
+    invoke GameUpdate
+    mov lGot, 0
+    cmp tanks[0*SIZEOF TANK].alive, 0
+    jne T37BadB
+    cmp mineCell[0], -1
+    jne T37BadB
+    mov lGot, 1
+T37BadB:
+    invoke Chk, offset stT37b, stT37bL, lGot, 1
 
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
     invoke Mark, 320
@@ -4124,6 +4175,7 @@ PM_Found:
     mov mineArm[ecx*4], MINE_ARM_TICKS
     mov eax, slotIdx
     mov mineOwner[ecx*4], eax
+    invoke SndPlay, 6                 ; 布雷确认：闷双响（会话 23 电子音新音效）
     mov eax, 1
     ret
 PlaceMine endp
@@ -4617,7 +4669,7 @@ MuzzlePoint endp
 ; MoveTank —— 坦克移动（水/钢/砖实心，冰/泥/空地可通行）
 ; 会话 19：沿航向角 moveF 前进(1)/后退(-1)，16.16 定点进位位移；
 ; 冰面：位移成功且四象限全在冰格 -> 刷新滑行 tick 并冻结当前航向角
-; 泥土：四象限全在泥格 -> 本 tick 速度 DIRT_SPEED，否则 3/4 交替
+; 泥土：四象限全在泥格 -> 本 tick 速度 DIRT_SPEED，否则 2/3 交替
 ; （会话 20：中心单点判定改为 TankTerrMajority 全点判定）
 ; 本函数绝不写 dir（旧 360 版致命 bug1：把动作码 mov 进 dir 清零航向）
 ; ------------------------------------------------------------
@@ -4637,7 +4689,7 @@ MoveTank proc uses esi edi ownerIdx: dword, moveF: dword, ang: dword
     .if eax != 0
         mov eax, DIRT_SPEED
     .else
-        ; 3/4 交替（平均 3.5 = 子弹 6 的 ~58%）：奇数 tick 用 HI
+        ; 3/4 交替 -> 2/3 交替（会话 23：平均 2.5，略高于弹速 2）：奇数 tick 用 HI
         mov eax, TANK_SPEED
         mov edx, gTick
         test edx, 1
@@ -4645,11 +4697,11 @@ MoveTank proc uses esi edi ownerIdx: dword, moveF: dword, ang: dword
         mov eax, TANK_SPEED_HI
 MT_SpdEven:
     .endif
-    ; 燃油加速：+2（3->5, 4->6 平均 5.5 ≈ +57%），与泥地减速叠加
+    ; 燃油加速：+NITRO_BONUS（会话 23：均速 2.5->3.5 约 +40%），与泥地减速叠加
     mov ecx, ptank
     mov edx, (TANK ptr [ecx]).effOn
     .if edx & EFF_NITRO
-        add eax, 2
+        add eax, NITRO_BONUS
     .endif
     mov spd, eax
 
@@ -4798,8 +4850,8 @@ MT_AfterBlock:
         ; 冰面判定：四象限全点（会话 20：与泥土同因，车已离冰不应再滑行）
         invoke TankTerrMajority, ptank, TILE_ICE
         .if eax != 0
-            invoke RngBelow, ICE_SLIDE_RNG   ; 0..4
-            add eax, ICE_SLIDE_MIN           ; 6..15 tick
+            invoke RngBelow, ICE_SLIDE_RNG   ; 0..9
+            add eax, ICE_SLIDE_MIN           ; 8..17 tick
             mov ecx, ptank
             mov edx, ang                     ; 冻结本 tick 实际使用角：滑行中转向不改轨迹
             mov (TANK ptr [ecx]).sdir, edx
@@ -5383,7 +5435,8 @@ GU_Mine:
     xor esi, esi
 GU_MTank:
     .if esi >= MAX_PLAYERS
-        jmp GU_MineClear              ; 没踩到：地雷保留
+        jmp GU_MineNext               ; 没踩到：地雷保留（会话 23 修复：旧版误跳
+                                      ; GU_MineClear，生效瞬间无人踩即凭空消失）
     .endif
     mov eax, esi
     imul eax, eax, SIZEOF TANK

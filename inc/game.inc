@@ -68,9 +68,9 @@ FIX_TBL64   equ 64                  ; 65536/1024：tbl 值 * 像素速度 * 64 =
 MAX_PLAYERS equ 4                   ; slot 槽位（M1 只激活 0/1）
 KEY_PER     equ 6                   ; 每玩家键位数：0前进1后退2左转3右转4开火5技能
 TANK_SIZE   equ 25                  ; 坦克碰撞/绘制边长（21 的 1.2 倍）
-TANK_SPEED  equ 4                   ; 每 tick 基础移动像素（偶 tick）
-TANK_SPEED_HI equ 5                 ; 奇 tick（4/5 交替 = 平均 4.5，比子弹慢 25%）
-DIRT_SPEED  equ 2                   ; 泥土上每 tick 移动像素（减速）
+TANK_SPEED  equ 3                   ; 每 tick 基础移动像素（偶 tick）（会话 21 降速）
+TANK_SPEED_HI equ 4                 ; 奇 tick（3/4 交替 = 平均 3.5，子弹 6 的 ~58%）
+DIRT_SPEED  equ 1                   ; 泥土上每 tick 移动像素（保持约半速以下的"陷住感"）
 TANK_HP     equ 1                   ; 一滴血（命中即淘汰）
 LIVES_INIT  equ 3                   ; 每辆坦克初始命数
 RESPAWN_TICKS equ 90                ; 阵亡后 1.5s 重生
@@ -115,8 +115,8 @@ EFF_WATER       equ 8
 EFF_PHANTOM     equ 16
 
 ; ---- 冰面滑行 ----
-ICE_SLIDE_MIN equ 6                 ; 滑行 tick 下限（6*4.5=27px 起步，可感）
-ICE_SLIDE_RNG equ 10                ; 6 + rand%10 -> 6..15 tick（27..67px）
+ICE_SLIDE_MIN equ 6                 ; 滑行 tick 下限（6*3.5=21px 起步，可感）
+ICE_SLIDE_RNG equ 10                ; 6 + rand%10 -> 6..15 tick（21..52px）
 
 ; ---- 子弹（§3）----
 MAX_BULLETS     equ 56              ; 全场弹池

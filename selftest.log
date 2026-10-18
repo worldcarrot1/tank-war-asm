@@ -1,7 +1,7 @@
 MARK=10
 
-T1_FWD_DIR0_X(expect212)=212
- want 212
+T1_FWD_DIR0_X(expect172)=172
+ want 172
  OK
 MARK=20
 
@@ -54,8 +54,8 @@ T10_P1_SCORE(expect1)=1
  OK
 MARK=110
 
-T11_DIRT_2T_DISP(expect4)=4
- want 4
+T11_DIRT_2T_DISP(expect2)=2
+ want 2
  OK
 MARK=120
 
@@ -143,14 +143,14 @@ T18_MINE_GONE(expect1)=1
  OK
 MARK=191
 
-T19_NORM_DX(expect4or5)=5
- want 5
- OK
-T19_BOOST_DX(expect+2)=7
- want 7
- OK
-T19_MUD_BOOST(expect4)=4
+T19_NORM_DX(expect4or5)=4
  want 4
+ OK
+T19_BOOST_DX(expect+2)=6
+ want 6
+ OK
+T19_MUD_BOOST(expect3)=3
+ want 3
  OK
 MARK=201
 
@@ -263,6 +263,21 @@ MARK=313
 
 T33_TERR_EDGE(expect2)=2
  want 2
+ OK
+MARK=314
+
+T34_SHIELD_EXPIRE(expect2)=2
+ want 2
+ OK
+MARK=315
+
+T35_PROT_NOBURN(expect2)=2
+ want 2
+ OK
+MARK=316
+
+T36_GHOST_ESCAPE(expect1)=1
+ want 1
  OK
 MARK=320
 

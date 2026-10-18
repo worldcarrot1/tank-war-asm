@@ -84,7 +84,7 @@ public prevTank
     keyTable    dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] VK 码: 0前进1后退2左转3右转4开火5技能
     inputTable  dd MAX_PLAYERS*KEY_PER dup (0)   ; [slot*KEY_PER+动作] 每 tick 快照 0/1
     prevUse     dd MAX_PLAYERS dup (0)  ; 技能键上帧状态（边沿检测）
-    gTick       dd 0                 ; 全局 tick 计数（坦克 4/5 交替速度用）
+    gTick       dd 0                 ; 全局 tick 计数（坦克 3/4 交替速度用）
     shakeT      dd 0                 ; 坦克爆炸震屏剩余 tick
     testLives   dd LIVES_INIT        ; 自测时置 1（击杀即淘汰，保持旧断言）
     testNoShuffle dd 0               ; 自测置 1：不换图/不随机出生（保持 ARENA1 确定性）
@@ -577,7 +577,7 @@ arenaTable dd ARENA1,
     nbIdx       dd ?
     nbDir       dd ?
     ; ---- 会话 19 自测字符串：长度用 ($ - 标签) 自动计算，无需手工数字节 ----
-    stT1    db "T1_FWD_DIR0_X(expect212)="
+    stT1    db "T1_FWD_DIR0_X(expect172)="
     stT1L   equ ($ - stT1)
     stT2    db "T2_ACTIVE_AFTER_FIRE(expect1)="
     stT2L   equ ($ - stT2)
@@ -601,7 +601,7 @@ arenaTable dd ARENA1,
     stT9cL  equ ($ - stT9c)
     stT10   db "T10_P1_SCORE(expect1)="
     stT10L  equ ($ - stT10)
-    stT11   db "T11_DIRT_2T_DISP(expect4)="
+    stT11   db "T11_DIRT_2T_DISP(expect2)="
     stT11L  equ ($ - stT11)
     stT12a  db "T12_SELFKILL_HP(expect0)="
     stT12aL equ ($ - stT12a)
@@ -647,7 +647,7 @@ arenaTable dd ARENA1,
     stT19aL equ ($ - stT19a)
     stT19b  db "T19_BOOST_DX(expect+2)="
     stT19bL equ ($ - stT19b)
-    stT19c  db "T19_MUD_BOOST(expect4)="
+    stT19c  db "T19_MUD_BOOST(expect3)="
     stT19cL equ ($ - stT19c)
     stT20a  db "T20_SWAPPED(expect1)="
     stT20aL equ ($ - stT20a)
@@ -705,6 +705,12 @@ arenaTable dd ARENA1,
     stT32L  equ ($ - stT32)
     stT33   db "T33_TERR_EDGE(expect2)="
     stT33L  equ ($ - stT33)
+    stT34   db "T34_SHIELD_EXPIRE(expect2)="
+    stT34L  equ ($ - stT34)
+    stT35   db "T35_PROT_NOBURN(expect2)="
+    stT35L  equ ($ - stT35)
+    stT36   db "T36_GHOST_ESCAPE(expect1)="
+    stT36L  equ ($ - stT36)
     stWntS  db " want "
     stWntSL equ ($ - stWntS)
     stOKS   db " OK", 13, 10
@@ -1401,7 +1407,7 @@ STClear13:
     rep movsb
     call OpenLog
 
-    ; ==== T1 dir=0 前进 40 tick：32+180=212（4/5 交替 40 tick 恰 180px） ====
+    ; ==== T1 dir=0 前进 40 tick：32+140=172（会话 21 降速：3/4 交替 40 tick 恰 140px） ====
     invoke Mark, 10
     mov tanks[0*SIZEOF TANK].x, 32
     mov tanks[0*SIZEOF TANK].y, 416
@@ -1411,7 +1417,7 @@ STClear13:
     invoke SetDirInput, 0
     invoke AdvanceTicks, 40
     invoke SetDirInput, 99
-    invoke Chk, offset stT1, stT1L, tanks[0*SIZEOF TANK].x, 212
+    invoke Chk, offset stT1, stT1L, tanks[0*SIZEOF TANK].x, 172
 
     ; ==== T2 开火 -> 一颗弹在飞 ====
     invoke Mark, 20
@@ -1642,7 +1648,7 @@ T9ClrB:
     invoke AdvanceTicks, 350         ; 判分定格（ROUND_JUDGE_TICKS=300）
     invoke Chk, offset stT10, stT10L, tanks[0*SIZEOF TANK].score, 1
 
-    ; ==== T11 泥土减速：泥格向开放邻居推 2 tick，位移 |dx|+|dy|=4 ====
+    ; ==== T11 泥土减速：泥格向开放邻居推 2 tick，位移 |dx|+|dy|=2（会话 21：泥速 1）====
     invoke Mark, 110
     xor esi, esi
 T11Find:
@@ -1652,12 +1658,12 @@ T11Find:
     .if esi < COLS*ROWS
         jmp T11Find
     .endif
-    mov lGot, 4                      ; 无泥格：跳过（视为通过）
+    mov lGot, 2                      ; 无泥格：跳过（视为通过）
     jmp T11Log
 T11Found:
     invoke FindOpenNeighbor, esi
     .if eax == 99
-        mov lGot, 4
+        mov lGot, 2
         jmp T11Log
     .endif
     invoke ToAngle, eax
@@ -1697,7 +1703,7 @@ T11dyPos:
     add eax, ecx
     mov lGot, eax
 T11Log:
-    invoke Chk, offset stT11, stT11L, lGot, 4
+    invoke Chk, offset stT11, stT11L, lGot, 2
 
     ; ==== T12 反弹自伤：贴右钢界朝右出炮，出膛即撞墙反弹自击。
     ;      会话 19 修正语义：1HP 下自伤 = 直接淘汰（旧标签 expect2 作废） ====
@@ -1918,7 +1924,7 @@ T17BadB:
 T18Bad:
     invoke Chk, offset stT18c, stT18cL, lGot, 1
 
-    ; ==== T19 燃油加速 + 奇偶步长：常速 4/5 交替；加速 +2；泥地叠加=4 ====
+    ; ==== T19 燃油加速 + 奇偶步长：常速 3/4 交替；加速 +2；泥地叠加=3 ====
     invoke Mark, 191
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 96
@@ -1961,7 +1967,7 @@ T18Bad:
     sub eax, ebx
     mov lGot, eax
     invoke Chk, offset stT19b, stT19bL, lGot, lWant
-    ; c) 泥地叠加：DIRT_SPEED(2) + 加速(2) = 4 恒定（与奇偶无关）
+    ; c) 泥地叠加：DIRT_SPEED(1) + 加速(2) = 3 恒定（与奇偶无关）
     mov tanks[0*SIZEOF TANK].x, 96
     mov tanks[0*SIZEOF TANK].subpxX, 0
     mov tanks[0*SIZEOF TANK].subpxY, 0
@@ -1972,7 +1978,7 @@ T18Bad:
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 96
     mov lGot, eax
-    invoke Chk, offset stT19c, stT19cL, lGot, 4
+    invoke Chk, offset stT19c, stT19cL, lGot, 3
     mov mapData[13*COLS+3], TILE_EMPTY
 
     ; ==== T20 换位术：UP 发射换位弹 -> 再按与弹互换；朝向继承 fireAng ====
@@ -2329,7 +2335,8 @@ STWallR:
     jb STWallR
 
     ; ==== T25 dir 纯度（回滚版致命 bug1 回归锁）：45 度前进 10 tick，
-    ;      dir 仍 =45 且两轴位移均落在 28..36（0.707 分量） ====
+    ;      dir 仍 =45 且两轴位移均落在 21..27（会话 21 降速：35px 路程
+    ;      x 0.707 分量 ~ 24.7） ====
     invoke Mark, 251
     call ResetTanks
     mov tanks[0*SIZEOF TANK].x, 104
@@ -2350,15 +2357,15 @@ STWallR:
     jne T25Bad
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, lX0
-    cmp eax, 28
+    cmp eax, 21
     jb T25Bad
-    cmp eax, 36
+    cmp eax, 27
     ja T25Bad
     mov eax, tanks[0*SIZEOF TANK].y
     sub eax, lY0
-    cmp eax, 28
+    cmp eax, 21
     jb T25Bad
-    cmp eax, 36
+    cmp eax, 27
     ja T25Bad
     mov lGot, 1
 T25Bad:
@@ -2671,21 +2678,21 @@ T32ClrCol:
     jne T32A
     inc lPass
 T32A:
-    ; b) 驾驶同步推进 dx 理论~17，容差 [8,26]
+    ; b) 驾驶同步推进 dx 理论~13（会话 21 均速 3.5），容差 [5,19]
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 96
-    cmp eax, 8
+    cmp eax, 5
     jb T32B
-    cmp eax, 26
+    cmp eax, 19
     ja T32B
     inc lPass
 T32B:
-    ; c) dy 理论~40，容差 [30,52]（转向没把车钉在原地）
+    ; c) dy 理论~32，容差 [22,40]（转向没把车钉在原地）
     mov eax, tanks[0*SIZEOF TANK].y
     sub eax, 96
-    cmp eax, 30
+    cmp eax, 22
     jb T32C
-    cmp eax, 52
+    cmp eax, 40
     ja T32C
     inc lPass
 T32C:
@@ -2717,10 +2724,10 @@ T32C:
     invoke GameUpdate
     mov inputTable[0], 0
     mov lPass, 0
-    ; a) 半个车身在泥上：dx>=4（正常速下限）；旧判定中心在泥 -> dx=2
+    ; a) 半个车身在泥上：dx>=3（正常速下限）；旧判定中心在泥 -> dx=1
     mov eax, tanks[0*SIZEOF TANK].x
     sub eax, 115
-    cmp eax, 4
+    cmp eax, 3
     jb T33A
     inc lPass
 T33A:
@@ -2744,6 +2751,112 @@ T33A:
 T33B:
     mov byte ptr mapData[13*COLS+3], TILE_EMPTY
     invoke Chk, offset stT33, stT33L, lPass, 2
+
+    ; ==== T34 冰盾 7s 限时（会话 21 回归锁）：修复前 shieldT 从未初始化，
+    ;      EffTick 到期分支永不执行 -> 冰盾成了永久盾 ====
+    invoke Mark, 314
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].protT, 0
+    mov tanks[0*SIZEOF TANK].skill, SK_ICE_SHIELD
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 发动冰盾
+    mov inputTable[20], 0
+    ; 清弹池：防前序测试残弹在长推进中击穿盾/击杀致回合重开（假通过）
+    mov edi, offset bullets
+    xor ecx, ecx
+T34ClrB:
+    mov (BULLET ptr [edi]).active, 0
+    add edi, SIZEOF BULLET
+    inc ecx
+    .if ecx < MAX_BULLETS
+        jmp T34ClrB
+    .endif
+    mov lPass, 0
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_SHIELD
+    .if eax != 0
+        inc lPass                        ; a) 发动后盾在
+    .endif
+    invoke AdvanceTicks, SHIELD_TICKS + 2
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_SHIELD
+    .if eax == 0
+        inc lPass                        ; b) 7s 到时自动消失（修复前此条 FAIL）
+    .endif
+    invoke Chk, offset stT34, stT34L, lPass, 2
+
+    ; ==== T35 重生保护期不吃盾（会话 21 回归锁）：修复前 DamageTank 先走
+    ;      冰盾分支，保护期被命中会白白烧掉一面盾还凭空铺冰 ====
+    invoke Mark, 315
+    call ResetTanks
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].protT, 150
+    mov tanks[0*SIZEOF TANK].skill, SK_ICE_SHIELD
+    mov prevUse[0], 0
+    mov inputTable[20], 1
+    invoke GameUpdate                    ; 保护期内发动冰盾
+    mov inputTable[20], 0
+    ; 贴一发弹（T14 同款压位手法，owner=P2 非自伤）
+    mov bullets[0].active, 1
+    mov bullets[0].owner, 1
+    mov bullets[0].age, 0
+    mov bullets[0].bounces, 0
+    mov bullets[0].vx, 0
+    mov bullets[0].vy, 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov bullets[0].x, eax
+    mov eax, tanks[0*SIZEOF TANK].y
+    mov bullets[0].y, eax
+    mov bullets[0].subpxX, 0
+    mov bullets[0].subpxY, 0
+    invoke GameUpdate
+    mov lPass, 0
+    mov eax, tanks[0*SIZEOF TANK].hp
+    .if eax != 0
+        inc lPass                        ; a) 保护期免伤
+    .endif
+    mov eax, tanks[0*SIZEOF TANK].effOn
+    and eax, EFF_SHIELD
+    .if eax != 0
+        inc lPass                        ; b) 盾未被浪费（修复前此条 FAIL）
+    .endif
+    invoke Chk, offset stT35, stT35L, lPass, 2
+
+    ; ==== T36 穿墙次数耗尽可脱离（会话 21 回归锁）：修复前 wallPass 用完
+    ;      且中心仍在墙格时四面目标皆挡 -> 封死墙里直到死亡 ====
+    invoke Mark, 316
+    call ResetTanks
+    mov byte ptr mapData[13*COLS+3], TILE_STEEL
+    mov byte ptr mapData[13*COLS+4], TILE_EMPTY
+    mov tanks[0*SIZEOF TANK].alive, 1
+    mov tanks[0*SIZEOF TANK].hp, TANK_HP
+    mov tanks[0*SIZEOF TANK].x, 100
+    mov tanks[0*SIZEOF TANK].y, 416
+    mov tanks[0*SIZEOF TANK].dir, 0
+    mov tanks[0*SIZEOF TANK].subpxX, 0
+    mov tanks[0*SIZEOF TANK].subpxY, 0
+    mov tanks[0*SIZEOF TANK].slide, 0
+    mov tanks[0*SIZEOF TANK].effOn, EFF_GHOST
+    mov tanks[0*SIZEOF TANK].wallPass, 0
+    mov tanks[0*SIZEOF TANK].effT, 360
+    mov tanks[0*SIZEOF TANK].lastCell, 13*COLS+3
+    invoke SetDirInput, 0                ; 朝右（同墙格内挪动 + 脱离方向皆右）
+    invoke GameUpdate
+    invoke SetDirInput, 99
+    mov lGot, 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    cmp eax, 100
+    jbe T36Bad                           ; 修复前：一步都动不了（FAIL）
+    mov eax, tanks[0*SIZEOF TANK].wallPass
+    .if eax == 0                         ; 脱离不消耗/不新增次数
+        mov lGot, 1
+    .endif
+T36Bad:
+    invoke Chk, offset stT36, stT36L, lGot, 1
 
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
     invoke Mark, 320
@@ -3283,6 +3396,13 @@ DamageTank proc uses ebx slotIdx: dword
     mov ebx, slotIdx
     imul ebx, ebx, SIZEOF TANK
     add ebx, offset tanks
+    ; 会话 21 修复：重生保护期最先判定并直接免疫 —— 旧版先走虚影/冰盾
+    ; 分支，保护期被命中会白白烧掉一面盾（并凭空铺开 2x2 冰面）
+    mov eax, (TANK ptr [ebx]).protT
+    .if eax > 0
+        mov eax, 2                   ; 保护期免伤（不消耗护盾/虚影）
+        ret
+    .endif
     mov eax, (TANK ptr [ebx]).effOn
     .if eax & EFF_PHANTOM
         mov eax, 2                   ; 定格虚影期间本体免疫一切伤害
@@ -4080,6 +4200,9 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         mov edx, (TANK ptr [ecx]).effOn
         or edx, EFF_SHIELD
         mov (TANK ptr [ecx]).effOn, edx
+        ; 会话 21 修复：启动 7s 限时（旧版漏初始化 shieldT，
+        ; EffTick 的到期分支永远不执行 -> 冰盾变成永久盾）
+        mov (TANK ptr [ecx]).shieldT, SHIELD_TICKS
     .elseif eax == SK_LASER || eax == SK_REFLASER
         mov ecx, ptank
         mov edx, (TANK ptr [ecx]).skill
@@ -4432,13 +4555,14 @@ MuzzlePoint endp
 ; MoveTank —— 坦克移动（水/钢/砖实心，冰/泥/空地可通行）
 ; 会话 19：沿航向角 moveF 前进(1)/后退(-1)，16.16 定点进位位移；
 ; 冰面：位移成功且四象限全在冰格 -> 刷新滑行 tick 并冻结当前航向角
-; 泥土：四象限全在泥格 -> 本 tick 速度 DIRT_SPEED，否则 4/5 交替
+; 泥土：四象限全在泥格 -> 本 tick 速度 DIRT_SPEED，否则 3/4 交替
 ; （会话 20：中心单点判定改为 TankTerrMajority 全点判定）
 ; 本函数绝不写 dir（旧 360 版致命 bug1：把动作码 mov 进 dir 清零航向）
 ; ------------------------------------------------------------
-MoveTank proc ownerIdx: dword, moveF: dword, ang: dword
+MoveTank proc uses esi edi ownerIdx: dword, moveF: dword, ang: dword
     local nx:dword, ny:dword, solid:dword, ptank:dword
     local spd:dword, dx16:dword, dy16:dword, accX:dword, accY:dword
+    local lCRow:dword
     ; ptank = &tanks[ownerIdx]（跨 invoke 保存，用局部变量存指针）
     mov eax, ownerIdx
     mov ecx, SIZEOF TANK
@@ -4451,7 +4575,7 @@ MoveTank proc ownerIdx: dword, moveF: dword, ang: dword
     .if eax != 0
         mov eax, DIRT_SPEED
     .else
-        ; 4/5 交替（平均 4.5 = 子弹 6 的 75%）：奇数 tick 用 HI
+        ; 3/4 交替（平均 3.5 = 子弹 6 的 ~58%）：奇数 tick 用 HI
         mov eax, TANK_SPEED
         mov edx, gTick
         test edx, 1
@@ -4459,7 +4583,7 @@ MoveTank proc ownerIdx: dword, moveF: dword, ang: dword
         mov eax, TANK_SPEED_HI
 MT_SpdEven:
     .endif
-    ; 燃油加速：+2（4->6, 5->7 平均 6.5 ≈ +44%），与泥地减速叠加
+    ; 燃油加速：+2（3->5, 4->6 平均 5.5 ≈ +57%），与泥地减速叠加
     mov ecx, ptank
     mov edx, (TANK ptr [ecx]).effOn
     .if edx & EFF_NITRO
@@ -4540,6 +4664,39 @@ MT_AfterBlock:
             mov eax, (TANK ptr [ecx]).wallPass
             .if eax > 0
                 mov solid, 0
+            .else
+                ; 会话 21 修复：次数耗尽但身体仍在墙格内 -> 旧版四面皆挡
+                ; 彻底卡死在墙里直到死亡。现允许"脱离移动"：当前中心格
+                ; 是墙时放行 目标中心=本格（格内挪动）或 目标中心非墙
+                ; （走出）的位移，不消耗穿墙次数（薄墙本就贴边可出，
+                ; 此分支救的是厚砖/钢群里用完 3 次的情况）
+                ; 注：esi/edi 的保存靠 proc uses（GameUpdate 循环把 esi
+                ; 当槽位偏移跨 MoveTank 复用，裸破坏会越界崩溃）
+                mov esi, ptank
+                mov edi, (TANK ptr [esi]).x
+                add edi, TANK_SIZE/2
+                shr edi, 5                  ; 当前中心列
+                mov eax, (TANK ptr [esi]).y
+                add eax, TANK_SIZE/2
+                shr eax, 5
+                mov lCRow, eax              ; 当前中心行（IsWallCell 毁 eax，先存）
+                invoke IsWallCell, edi, eax
+                .if eax != 0                ; 嵌在墙里才有脱离豁免
+                    mov ecx, nx
+                    add ecx, TANK_SIZE/2
+                    shr ecx, 5
+                    mov edx, ny
+                    add edx, TANK_SIZE/2
+                    shr edx, 5
+                    .if ecx == edi && edx == lCRow
+                        mov solid, 0        ; 同墙格内挪动
+                    .else
+                        invoke IsWallCell, ecx, edx
+                        .if eax == 0
+                            mov solid, 0    ; 目标中心已出墙 = 脱离
+                        .endif
+                    .endif
+                .endif
             .endif
         .endif
     .endif

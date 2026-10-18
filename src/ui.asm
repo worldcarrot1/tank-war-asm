@@ -2006,44 +2006,44 @@ NS_BoxDone:
             invoke FillRect, hdcBack, addr boxRc, brushWave
             ; 空地（660..838）：留白透出页面底色（深夜模式不铺死色）
             ; 运动时间轴：480 tick 循环，tt = demoPh*120 + demoPt
+            ; （会话 21 降速重时：地面 3/4 交替均速 3.5px/tick，用 7/2 定点；
+            ;   泥地 1px/tick 不变，仍与真速一致）
             mov eax, demoPh
             imul eax, eax, 120
             add eax, demoPt
-            .if eax < 150                 ; 泥地：1px/tick 半速爬行
+            .if eax < 170                 ; 泥地：1px/tick 陷住爬行，走满 170px 带宽
                 add eax, 150
                 mov demoP1x, eax
-            .elseif eax < 160             ; 离开泥地恢复正常速
-                sub eax, 150
-                imul eax, eax, 2
-                add eax, 300
-                mov demoP1x, eax
-            .elseif eax < 231             ; 冰面：滑行保持 2px/tick
-                sub eax, 160
-                imul eax, eax, 2
+            .elseif eax < 212             ; 出泥上冰：均速 3.5px/tick 滑行（41 tick 滑到水缘）
+                sub eax, 170
+                imul eax, eax, 7
+                shr eax, 1
                 add eax, 320
                 mov demoP1x, eax
-            .elseif eax < 235             ; 冰尽头：余势缓停（1px/tick）
-                sub eax, 230
-                add eax, 460
+            .elseif eax < 216             ; 冰尽头：余势缓停（1px/tick）
+                sub eax, 211
+                add eax, 463
                 mov demoP1x, eax
             .elseif eax < 300             ; 水面阻挡：冰缘原地小幅顶撞
                 shr eax, 2
                 and eax, 1
                 shl eax, 1
-                add eax, 463
-                mov demoP1x, eax
-            .elseif eax < 388             ; 驭水术生效：2px/tick 穿水而过
-                sub eax, 300
-                imul eax, eax, 2
                 add eax, 465
                 mov demoP1x, eax
-            .elseif eax < 452             ; 开阔地：正常速冲刺
-                sub eax, 388
-                imul eax, eax, 2
-                add eax, 639
+            .elseif eax < 351             ; 驭水术生效：均速 3.5px/tick 穿水而过
+                sub eax, 300
+                imul eax, eax, 7
+                shr eax, 1
+                add eax, 465
+                mov demoP1x, eax
+            .elseif eax < 386             ; 开阔地：正常速推进
+                sub eax, 351
+                imul eax, eax, 7
+                shr eax, 1
+                add eax, 640
                 mov demoP1x, eax
             .else                         ; 循环末停住，回卷重演
-                mov demoP1x, 765
+                mov demoP1x, 759
             .endif
             ; 驭水徽章：坦克中心骑在水面上（x 478..648）时框浅色外圈
             mov eax, demoP1x

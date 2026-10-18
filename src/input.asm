@@ -17,13 +17,50 @@ extern keyTable    :dword
 extern inputTable  :dword
 extern inputRestart :dword
 
+.data
+    ; ---- 会话34：开局武装 ----
+    ; GameInit/换局 调 InputArmHold 置 playArm=0，下一次 InputSample 先记录
+    ; "进场瞬间哪些键正被按住"（如按 Enter 确认开局=同时是 P2 开火键），
+    ; 这些键在松开一次之前一律报 0，防止开局走火。
+    inputArm dd MAX_PLAYERS*KEY_PER dup (0)
+    playArm  dd 1
+
 .code
+
+; ------------------------------------------------------------
+; InputArmHold —— 进入对局时调用（GameInit / 新一轮 ResetTanks 后）
+; ------------------------------------------------------------
+InputArmHold proc
+    mov playArm, 0
+    ret
+InputArmHold endp
 
 ; ------------------------------------------------------------
 ; InputSample —— 每 tick 调用一次，扫描全部键位
 ; ------------------------------------------------------------
 InputSample proc uses ebx esi edi
     local act: dword                 ; 动作计数（invoke 会破坏易失寄存器，不能寄存器计数）
+    .if playArm == 0
+        mov playArm, 1
+        xor ebx, ebx
+        mov esi, offset keyTable
+        mov edi, offset inputArm
+IAR_Loop:
+        mov eax, [esi]
+        invoke GetAsyncKeyState, eax
+        and eax, 8000h
+        mov ecx, 0
+        .if eax != 0
+            mov ecx, 1
+        .endif
+        mov dword ptr [edi], ecx
+        add esi, 4
+        add edi, 4
+        inc ebx
+        .if ebx < MAX_PLAYERS*KEY_PER
+            jmp IAR_Loop
+        .endif
+    .endif
     xor ebx, ebx                     ; slot
     mov esi, offset keyTable
     mov edi, offset inputTable
@@ -33,10 +70,18 @@ IS_Act:
     mov eax, [esi]
     invoke GetAsyncKeyState, eax
     and eax, 8000h
+    mov edx, ebx
+    imul edx, edx, KEY_PER
+    add edx, act                     ; edx = 槽位索引 slot*KEY_PER+action
     .if eax != 0
-        mov dword ptr [edi], 1
+        .if inputArm[edx*4] != 0
+            mov dword ptr [edi], 0   ; 进场按住未松：屏蔽（会话34）
+        .else
+            mov dword ptr [edi], 1
+        .endif
     .else
         mov dword ptr [edi], 0
+        mov inputArm[edx*4], 0       ; 已松开 -> 解除武装，恢复正常电平
     .endif
     add esi, 4
     add edi, 4

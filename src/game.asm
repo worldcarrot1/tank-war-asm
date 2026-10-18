@@ -27,6 +27,7 @@ FindOpenNeighbor PROTO :DWORD
 DamageTankRaw PROTO :DWORD
 EndPhantom   PROTO :DWORD
 SndPlay      PROTO :DWORD
+InputArmHold PROTO                   ; input.asm（会话34：开局武装，进场按住键先屏蔽到松一次）
 WallRectsHit PROTO :DWORD,:DWORD,:DWORD,:DWORD
 TankBlocked  PROTO :DWORD,:DWORD
 MuzzlePoint  PROTO :DWORD          ; 炮口分离偏移（eax=offx edx=offy）
@@ -3842,6 +3843,7 @@ GameInit proc uses ebx esi edi
     .endif
     mov arenaBagPos, ARENA_COUNT    ; 新比赛：重置洗牌袋（首局触发重洗）
     call ResetTanks                  ; 选图(不重复)+随机出生点+布坦克
+    invoke InputArmHold              ; 会话34：开局首帧采样前武装（防确定=Enter误发）
     ; 键位默认值改由 UiInit 启动时设一次；
     ; 此处不再重置，避免人数页自定义键位每局被洗掉
     mov tanks[0*SIZEOF TANK].score, 0
@@ -6700,6 +6702,7 @@ SCJ_Done:
                 jmp GU_Done
             .endif
             call ResetTanks                  ; 开新一轮（不清比分）
+            invoke InputArmHold              ; 会话34：新一轮同样武装，防上局按住键跨局误动
         .endif
         jmp GU_Done
     .endif

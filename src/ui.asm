@@ -275,7 +275,7 @@ RST_H      equ 30
     CN_BACKBTN  dw 08FD4h,056DEh, 0                            ; 返回
     CN_STARTBTN dw 05F00h,059CBh,06BD4h,08D5Bh, 0              ; 开始对局
     szReset     db "RESET ALL KEYS", 0
-    szReb2      db "PRESS ANY KEY (EN IME! ESC=CANCEL)", 0
+    szReb2      db "BLINK: CLICK 2ND ROW=SWAP / PRESS KEY / ESC", 0
     szSetT      db "KEY SETTINGS", 0
     szSetH      db "ENTER: REBIND   ESC: BACK", 0
     szRebind    db " <- PRESS ANY KEY", 0
@@ -310,7 +310,7 @@ RST_H      equ 30
     CN_OFF2     dw 5173h, 0                                    ; 关
     CN_NIGHT    dw 6DF1h,591Ch,6A21h,5F0Fh, 0                  ; 深夜模式
     CN_RESET dw 91cdh,7f6eh,6240h,6709h,66f4h,6539h,6309h,952eh, 0        ; 重置所有更改按键
-    CN_REB2 dw 8bf7h,6309h,4efbh,610fh,952eh,0FF08h,5148h,5207h,82f1h,6587h,8f93h,5165h,6cd5h,0FF09h, 0 ; 请按任意键（先切英文输入法）
+    CN_REB2 dw 95EAh,70C1h,4E2Dh,0FF1Ah,70B9h,53E6h,4E00h,884Ch,3Dh,4E92h,6362h,0FF0Ch,6309h,65B0h,952Eh,3Dh,7ED1h,5B9Ah,0FF0Ch,45h,73h,63h,3Dh,53D6h,6D88h, 0 ; 闪烁中：点另一行=互换，按新键=绑定，Esc=取消
     CN_KEYS dw 952eh,4f4dh, 0                                            ; 键位
     CN_SETT     dw 06E38h,0620Fh,08BBEh,07F6Eh, 0
     CN_SETH dw 56deh,8f66h,0ff1ah,6539h,952eh,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
@@ -991,9 +991,13 @@ NE_EdNeg:
                 mov rebindSlot, -1
             .else
                 ; 改键扫描：0x8000 电平（0x1 边沿位在焦点切换时不可靠），
-                ; 范围收窄 0x08..0x5A / 0x60..0x87 / 0xA0..0xA5 —— 排除
-                ; 鼠标键、Win/IME 保留区（0x85 误绑问题），Esc=取消专用；
-                ; 进入等待后 3 tick 冷却（rebindCool）防点击残键误捕获
+                ; 范围 0x08..0x5A / 0x60..0x80 / 0xA0..0xA5 —— 会话34 把旧上界
+                ; 0x87 收到 0x80：0x85 起中文输入法常报"按下"（VK_PROCESSKEY
+                ; 幻影），点击行后冷却 3 tick 的首次扫描就误绑 0x85 并静默
+                ; 退出等待态——"先闪烁再点第二行互换"因此永远等不到，用户只能
+                ; 按住新键+鼠标抢在幻影前捕获才改成功。0x81..0x9F 为未分配/
+                ; IME 区整体排除；Esc=取消专用；进入等待后 3 tick 冷却
+                ; （rebindCool）防点击残键误捕获
                 .if rebindCool > 0
                     dec rebindCool
                     jmp UT_Scan2Done
@@ -1010,7 +1014,7 @@ UT_Scan2:
                 .if eax > 5Ah && eax < 60h     ; Win 键区跳过
                     jmp UT_Scan2Next
                 .endif
-                .if eax > 87h && eax < 0A0h    ; 保留/IME 区跳过
+                .if eax >= 80h && eax < 0A0h   ; 未分配/IME 区跳过（会话34：0x85 幻影键）
                     jmp UT_Scan2Next
                 .endif
                 invoke GetAsyncKeyState, eax
@@ -1072,7 +1076,8 @@ UTW_Next:
                     invoke InitKeyDefaults
                     mov rebindSlot, -1
                 .elseif eax == -1
-                    mov rebindSlot, -1     ; 点空白=取消闪烁（会话 29）
+                    ; 会话34：闪烁中点空白改为忽略（旧"点空白=取消"在行带
+                    ; 边缘极易误触，用户以为"点了没反应"；取消走 Esc/再点同行）
                 .endif
             .endif
         .else

@@ -44,8 +44,12 @@ tank-war-asm/
 - 移动：WASD（撞墙不动，转向即时生效）
 - 开火：空格（约 0.33s 冷却），砖墙可打掉，钢墙挡子弹
 - 命中对方坦克扣血，血量归零判负；按 R 重新开始
-- 联机：局域网 UDP 直连（阶段 3 实现，当前为单机/等待联机状态）
+- 联机：双人 UDP 直连（协议 v1，已实测）——主菜单「联机大厅」局域网自动
+  互发现，跨网/互联网在「手动连接」输对方 IP，配合 ZeroTier 等虚拟局域网
+  可与好友对战；实操见 [docs/ONLINE_PLAY.md](docs/ONLINE_PLAY.md)，
+  协议规格见 [docs/PROTOCOL.md](docs/PROTOCOL.md)（联机模式不含换位术/定格虚影）
 
 ## 开发路线
 
-见 [docs/ROADMAP.md](docs/ROADMAP.md)。当前进度：**阶段 0 —— 工程骨架已建立**。
+见 [docs/ROADMAP.md](docs/ROADMAP.md)。当前进度：**M1（v2 对战版）完成，
+双人联机（协议 v1）已落地实测**。

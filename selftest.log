@@ -387,6 +387,47 @@ T45_SLIDE_CARRY_EDGE(expect1)=1
 T45_SLIDE_FRESH_EDGE0(expect1)=1
  want 1
  OK
+MARK=355
+
+T46A_SWAPMAGIC_QUANT(expect1)=1
+ want 1
+ OK
+T46B_MAGIC_PROBE_DROP(expect2)=2
+ want 2
+ OK
+T46C_FIRE_MIRRORBULLET(expect1)=1
+ want 1
+ OK
+T46D_EFF_SKILL_DEAD(expect4)=4
+ want 4
+ OK
+T46E_MINE_PUT_DEDUP(expect2)=2
+ want 2
+ OK
+T46F_LASER_PREV_AIM(expect1)=1
+ want 1
+ OK
+T46G_LSR_PATH_DEDUP(expect4)=4
+ want 4
+ OK
+T46H_PICK_CLEAR(expect1)=1
+ want 1
+ OK
+T46I_ICE_2X2(expect1)=1
+ want 1
+ OK
+T46J_SEQ_WINDOW6(expect6)=6
+ want 6
+ OK
+T46K_TAG_ECHO_DROP(expect2)=2
+ want 2
+ OK
+T46M_PARSE_IP(expect7)=7
+ want 7
+ OK
+T46N_ROLE_SPAWN_POOL(expect3)=3
+ want 3
+ OK
 MARK=342
 
 ST_FAILS=0

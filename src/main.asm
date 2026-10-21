@@ -30,8 +30,11 @@ UiForceNumSel PROTO                 ; ui.asm 直入人数选择页（tankwar num
 UiInit    PROTO                     ; ui.asm 界面
 UiTick    PROTO
 UiRender  PROTO
+UiForceLanAuto PROTO                ; ui.asm 自动大厅 netloop
+UiOnChar  PROTO :DWORD              ; ui.asm WM_CHAR 转发（手输 IP 编辑）
 extern gameState :dword
 extern netMode   :dword
+extern netPaused :dword
 extern pauseMode :dword
 extern volumeLvl :dword
 extern clickEvt  :dword
@@ -48,8 +51,10 @@ SndVolume  PROTO :DWORD
     selftestArg db "selftest"
     play2Arg    db "play2"
     numselArg   db "numsel"
+    netloopArg  db "netloop"
     play2Mode   dd 0
     numselMode  dd 0
+    netloopMode dd 0
     hInstance   dd ?
     hWnd        dd ?
     msg         MSG <?>
@@ -78,6 +83,9 @@ WndProc proc hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         shr eax, 16
         mov clickPY, eax
         mov clickEvt, 1
+        xor eax, eax
+    .elseif uMsg == WM_CHAR             ; 会话36：大厅手输 IP（ui 自行门控）
+        invoke UiOnChar, wParam
         xor eax, eax
     .elseif uMsg == WM_PAINT
         invoke BeginPaint, hWin, addr ps
@@ -142,6 +150,10 @@ WinMain proc
     .if numselMode != 0
         invoke UiForceNumSel
     .endif
+    ; "tankwar netloop"：直入联机大厅并自动握手开局（回环验收）
+    .if netloopMode != 0
+        invoke UiForceLanAuto
+    .endif
 
     ; ---- 主循环：固定步长逻辑 + 每帧渲染 ----
     invoke GetTickCount
@@ -176,11 +188,15 @@ ML_Pump:
         .if gameState == ST_PLAY   ; 2. 仅对局状态推进玩法（暂停时冻结）
             mov eax, pauseMode
             .if eax == 0
-                invoke InputSample
-                invoke GameUpdate
-                mov eax, netMode
-                .if eax != 0
-                    invoke NetFlush    ; 3. 联机对局：交换状态包
+                .if netPaused != 0
+                    invoke NetFlush    ; 会话36 掉线冻结：玩法停、收包继续（自愈）
+                .else
+                    invoke InputSample
+                    invoke GameUpdate
+                    mov eax, netMode
+                    .if eax != 0
+                        invoke NetFlush    ; 3. 联机对局：交换状态包
+                    .endif
                 .endif
             .endif
         .endif
@@ -279,5 +295,32 @@ ArgNext3:
     inc esi
     jmp ArgScan3
 NoNumSel:
+    ; 再扫 "netloop" -> 自动联机回环标志（会话36 双开验收）
+    invoke GetCommandLineA
+    mov esi, eax
+ArgScan4:
+    movzx eax, byte ptr [esi]
+    .if eax == 0
+        jmp NoNetLoop
+    .endif
+    mov ebx, esi
+    mov edi, offset netloopArg
+    mov ecx, 7
+ArgCmp4:
+    mov al, [ebx]
+    cmp al, [edi]
+    jne ArgNext4
+    inc ebx
+    inc edi
+    dec ecx
+    .if ecx != 0
+        jmp ArgCmp4
+    .endif
+    mov netloopMode, 1
+    jmp NoNetLoop
+ArgNext4:
+    inc esi
+    jmp ArgScan4
+NoNetLoop:
     invoke WinMain
 end start

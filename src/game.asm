@@ -34,7 +34,13 @@ MuzzlePoint  PROTO :DWORD          ; 炮口分离偏移（eax=offx edx=offy）
 SpawnBullet  PROTO :DWORD
 DamageTank   PROTO :DWORD
 SpawnIce2x2  PROTO :DWORD
+SpawnIce2x2At PROTO :DWORD,:DWORD
 SimReflectPath PROTO :DWORD,:DWORD,:DWORD,:DWORD
+EvtPush      PROTO :DWORD,:DWORD,:DWORD,:DWORD   ; 会话36：事件槽入队
+SpawnPickup  PROTO                  ; 同模块前向声明（T46 先用后定义）
+NetApplyPacket PROTO :DWORD         ; net.asm（会话36 T46：零 socket 喂包，eax=1 应用/0 丢弃）
+ParseIp      PROTO :DWORD,:DWORD,:DWORD ; net.asm（点分十进制[+":端口"] -> 网络序 u32）
+ST46PipChk   PROTO                   ; 同模块前向声明（T46 ParseIp 结果判定助手）
 
 ; ---- 输入快照（本模块定义，input.asm / ui.asm 写入）----
 public keyTable
@@ -74,6 +80,28 @@ public prevN
 public prevX
 public prevY
 public prevTank
+; ---- 会话36 联机同步新增对外接口 ----
+public SetNetSeed
+public netDumpOn
+public pickupTimer
+public mineCell
+public mineArm
+public mineOwner
+public evtPend
+public evtPendSeq
+public evtPendX
+public evtPendY
+public evtPendData
+public evtPendTtl
+public laserPendTtl
+public laserEvSeq
+public laserHitMask
+public gTick
+public rngMatch
+public SpawnIce2x2At
+extern netMode :dword                ; ui.asm（0=单机 1=联机对局）
+extern netRole :dword                ; net.asm（联机出生角色：1=B端对角互换）
+extern lobbySeed :dword              ; net.asm（cookie/自回声 tag 低16；T46 喂包注入）
 
 .data
     include trig.inc               ; 360 度整度三角表 x1024（tools/gen_trig.py 生成）
@@ -103,6 +131,13 @@ public prevTank
     seqSelf     dw 0                 ; 本端发包序号
     fireHappened dd 0                ; 本 tick P1 是否开火（发包 flag 用）
     rngState    dd 0                 ; xorshift32 状态
+    ; ---- 会话36：双随机流（B7 修串扰）----
+    ; rngMatch = 对局公共流：选图袋 / 出生点 / 道具生成——双方同种子即同序列，
+    ;            每 tick 消耗次数两侧必须完全一致；
+    ; rngState = 本地私有流：滑行随机等"只在车主机消耗"的调用留在这里，
+    ;            否则对手机不消耗 -> 第 2 回合起公共流分叉。
+    rngMatch    dd 0
+    netDumpOn   dd 0                 ; netloop 诊断：置 1 后 net.asm 每 tick 写转储
     ; ---- 技能系统 ----
     pickupType  dd 0                 ; 当前拾取物技能 id（0=无）
     pickupX     dd 0                 ; 拾取物左上像素
@@ -111,6 +146,19 @@ public prevTank
     mineCell    dd MAX_MINES dup (-1) ; 地雷格 index（-1=空槽）
     mineArm     dd MAX_MINES dup (0)  ; 生效倒计时 tick
     mineOwner   dd MAX_MINES dup (0)
+    ; ---- 会话36 事件槽（net.asm 每包读取，3 连发 + evtSeq 去重）----
+    ; 只有"本 tick/近期发生的动作"需要一次性广播；持续态（effOn/skill/hp）
+    ; 走 NET_PKT 常发字段，不入事件。
+    evtPend     dd 0                  ; EVT_*（0=无待播事件）
+    evtPendSeq  dd 0                  ; 1..255 环绕（0 保留=无）
+    evtPendX    dd 0                  ; MINE=中心格 index / ICE=中心格 index
+    evtPendY    dd 0                  ; 备用
+    evtPendData dd 0                  ; LASER_PREV=aimSkill / PICK=道具类型
+    evtPendTtl  dd 0                  ; 剩余重发包数（3->0）
+    evtSeqCtr   dd 0
+    mineLastCell dd -1                ; PlaceMine 成功时的格（供 EvtPush 携带）
+    laserPendTtl dd 0                 ; 'L' 光束折线包重发计数（FireAimedLaser 置 3）
+    laserEvSeq  dd 0                  ; 光束事件序号（接收端去重）
     ; 激光渲染路径（发射后显示）与预览路径（瞄准中虚线）
     laserN      dd 0
     laserX      dd MAX_LASER_PTS dup (0)
@@ -1382,6 +1430,55 @@ arenaTable dd ARENA1, ARENA2, ARENA3, ARENA4, ARENA5, ARENA6, ARENA7, ARENA8
     stT45aL equ ($ - stT45a)
     stT45b  db "T45_SLIDE_FRESH_EDGE0(expect1)="
     stT45bL equ ($ - stT45b)
+    ; ---- T46 联机编解码/喂包组（会话36，零 socket 直喂 NetApplyRx）----
+    stT46a  db "T46A_SWAPMAGIC_QUANT(expect1)="
+    stT46aL equ ($ - stT46a)
+    stT46b  db "T46B_MAGIC_PROBE_DROP(expect2)="
+    stT46bL equ ($ - stT46b)
+    stT46c  db "T46C_FIRE_MIRRORBULLET(expect1)="
+    stT46cL equ ($ - stT46c)
+    stT46d  db "T46D_EFF_SKILL_DEAD(expect4)="
+    stT46dL equ ($ - stT46d)
+    stT46e  db "T46E_MINE_PUT_DEDUP(expect2)="
+    stT46eL equ ($ - stT46e)
+    stT46f  db "T46F_LASER_PREV_AIM(expect1)="
+    stT46fL equ ($ - stT46f)
+    stT46g  db "T46G_LSR_PATH_DEDUP(expect4)="
+    stT46gL equ ($ - stT46g)
+    stT46h  db "T46H_PICK_CLEAR(expect1)="
+    stT46hL equ ($ - stT46h)
+    stT46i  db "T46I_ICE_2X2(expect1)="
+    stT46iL equ ($ - stT46i)
+    stT46j  db "T46J_SEQ_WINDOW6(expect6)="
+    stT46jL equ ($ - stT46j)
+    stT46k  db "T46K_TAG_ECHO_DROP(expect2)="
+    stT46kL equ ($ - stT46k)
+    stT46m  db "T46M_PARSE_IP(expect7)="
+    stT46mL equ ($ - stT46m)
+    stT46n  db "T46N_ROLE_SPAWN_POOL(expect3)="
+    stT46nL equ ($ - stT46n)
+    ; T46 喂包缓冲（NET_PKT 26B / NET_LSR 48B）与 ParseIp/角色快照暂存
+    st46Pkt   db SIZEOF NET_PKT dup (0)
+    st46Lsr   db SIZEOF NET_LSR dup (0)
+    st46A     db "10.0.0.5", 0
+    st46B     db "192.168.1.24:28888", 0
+    st46C     db "1.2.3.4:51000", 0
+    st46D     db "256.1.1.1", 0
+    st46E     db "1.2.3.", 0
+    st46F     db "8.8.8.8:0", 0
+    st46G     db "127.0.0.1 ", 0
+    st46Ip    dd 0
+    st46Port  dd 0
+    st46Res   dd 0
+    st46S0    dd 0          ; role0 快照：slot0 x/y/dir
+    st46S1    dd 0
+    st46S2    dd 0
+    st46S3    dd 0          ; slot1 x/y/dir
+    st46S4    dd 0
+    st46S5    dd 0
+    st46I2    dd 0
+    st46Ok    dd 0
+    st46Bad   dd 0
     ; ---- 会话35：DoSwap 换位脱身环表（理想位 -> 4px 环 -> 8px 环，共 25 候选）----
     swapRingX dw 0, -4, 4, 0, 0, -4, 4, -4, 4
               dw -8, 8, 0, 0, -8, 8, -8, 8, -4, 4, -4, 4, -8, 8, -8, 8
@@ -1441,6 +1538,83 @@ RngBelow proc limit: dword
     mov eax, edx
     ret
 RngBelow endp
+
+; ------------------------------------------------------------
+; RngNextMatch / RngBelowMatch —— 对局公共流（会话36）
+; 与上面两 proc 同形，只作用于 rngMatch；调用点必须与协议同步性匹配
+; （双方每 tick 消耗次数一致的位置才可用）。
+; ------------------------------------------------------------
+RngNextMatch proc
+    mov eax, rngMatch
+    .if eax == 0
+        mov eax, 2463534242
+    .endif
+    mov edx, eax
+    shl edx, 13
+    xor eax, edx
+    mov edx, eax
+    shr edx, 17
+    xor eax, edx
+    mov edx, eax
+    shl edx, 5
+    xor eax, edx
+    mov rngMatch, eax
+    ret
+RngNextMatch endp
+
+RngBelowMatch proc limit: dword
+    invoke RngNextMatch
+    xor edx, edx
+    div limit
+    mov eax, edx
+    ret
+RngBelowMatch endp
+
+; ------------------------------------------------------------
+; SetNetSeed —— 开局握手完成后（net.asm 已算 netSharedSeed =
+; 双方 lobbySeed 异或）调用：把两条流一起重播种，修 B2
+; "GameInit 只在 rngState==0 播种、大厅二次调用不重洗"的死结。
+; 种子 0 兜底黄金比例常数。单机路径永不调用 -> md5 中性。
+; ------------------------------------------------------------
+SetNetSeed proc seed: dword
+    mov eax, seed
+    .if eax == 0
+        mov eax, 09E3779B9h
+    .endif
+    mov rngMatch, eax
+    mov rngState, eax
+    ret
+SetNetSeed endp
+
+; ------------------------------------------------------------
+; EvtPush —— 一次性事件入队（会话36，仅联机生效）
+; net.asm PackState 读取后随接下来 3 个状态包重播，接收端按
+; evtPendSeq 去重（同 seq 只应用一次）。单机调用即刻返回，
+; 不污染任何状态 -> 回归基线中性。
+; ------------------------------------------------------------
+EvtPush proc kind: dword, px: dword, py: dword, pdata: dword
+    .if netMode == 0
+        ret
+    .endif
+    mov eax, evtSeqCtr
+    inc eax
+    and eax, 0FFh
+    .if eax == 0                      ; 0=无事件保留值，跳过
+        mov eax, 1
+    .endif
+    mov evtSeqCtr, eax
+    mov evtPendSeq, eax
+    mov eax, kind
+    mov evtPend, eax
+    mov eax, px
+    mov evtPendX, eax
+    mov eax, py
+    mov evtPendY, eax
+    mov eax, pdata
+    mov evtPendData, eax
+    mov evtPendTtl, 3
+    ret
+EvtPush endp
 
 ; ------------------------------------------------------------
 ; ParseArena —— 字符画 -> mapData / brickMask / 出生点
@@ -1516,7 +1690,7 @@ NA_Shuf:
         dec ecx
         mov eax, ecx
         inc eax
-        invoke RngBelow, eax          ; j = RngBelow(i+1)
+        invoke RngBelowMatch, eax       ; j = RngBelow(i+1)（会话36 入公共流）
         mov edi, eax                  ; j
         mov esi, ecx                  ; i
         mov eax, arenaBag[esi*4]
@@ -1553,7 +1727,7 @@ PRS_Try:
         jmp PRS_Done                  ; 放弃：保留 ParseArena 原出生点
     .endif
     inc tries
-    invoke RngBelow, COLS*ROWS
+    invoke RngBelowMatch, COLS*ROWS   ; 会话36：出生点=公共流（双方同种子同出生）
     mov cand, eax
     mov ebx, eax
     movzx eax, mapData[ebx]
@@ -1692,6 +1866,15 @@ RT_Spawn:
     .if numPlayers == 2 && ebx == 1
         mov esi, 3
     .endif
+    .if netMode != 0 && netRole != 0 && numPlayers == 2
+        ; 会话36：联机两端都以 slot0 为自机，B 端出生索引 0<->3 对角互换
+        ; （否则两端自机同点重叠；dir/spawnDir 按 spawnY 半场自洽跟随）
+        .if ebx == 0
+            mov esi, 3
+        .else
+            mov esi, 0
+        .endif
+    .endif
     mov eax, ebx
     imul eax, eax, SIZEOF TANK
     add eax, offset tanks
@@ -1705,6 +1888,15 @@ RT_Spawn:
     mov esi, ebx
     .if numPlayers == 2 && ebx == 1
         mov esi, 3
+    .endif
+    .if netMode != 0 && netRole != 0 && numPlayers == 2
+        ; 会话36：联机两端都以 slot0 为自机，B 端出生索引 0<->3 对角互换
+        ; （否则两端自机同点重叠；dir/spawnDir 按 spawnY 半场自洽跟随）
+        .if ebx == 0
+            mov esi, 3
+        .else
+            mov esi, 0
+        .endif
     .endif
     mov eax, esi
     mov eax, spawnX[eax*4]
@@ -1775,7 +1967,12 @@ RTClearB:
     mov roundOver, 0
     mov roundTimer, 0
     mov roundScored, 0
-    mov seqSelf, 0
+    ; 会话36（B7）：联机局发包序号跨回合递增，禁止每回合清零——
+    ; 两端回合切换时刻不同步，清零后 peerSeq 高值会把新序列号判成
+    ; "旧包"整轮丢弃。归一化只在 NetEnterMatch 开局时统一做一次。
+    .if netMode == 0
+        mov seqSelf, 0
+    .endif
     mov fireHappened, 0
     ret
 ResetTanks endp
@@ -4069,6 +4266,468 @@ T45BadA:
     mov byte ptr mapData[15*COLS+11], TILE_EMPTY
     mov byte ptr mapData[15*COLS+12], TILE_EMPTY
 
+    ; ==== T46 联机编解码/喂包回归（会话36）：零 socket 直喂 NetApplyRx，
+    ;      锁死 LSP 对调头归一化、量化/镜像、事件槽分发去重、seq 循环窗口、
+    ;      自回声 tag 防线、折线包、ParseIp、B 端出生互换、联机道具池剔除 ====
+    invoke Mark, 355
+    ; 弹池清空（开火计数需干净池）
+    mov ecx, MAX_BULLETS*(SIZEOF BULLET)/4
+    mov edi, offset bullets
+    xor eax, eax
+    rep stosd
+    ; ---- a) LSP 对调头 'T','W' 归一化接收 + tdir 量化还原(142->200) + 位/存活镜像 ----
+    mov byte ptr st46Pkt[0], 'T'
+    mov byte ptr st46Pkt[1], 'W'
+    mov word ptr st46Pkt[2], 1
+    mov dword ptr st46Pkt[4], 500
+    mov dword ptr st46Pkt[8], 300
+    mov byte ptr st46Pkt[12], 142
+    mov byte ptr st46Pkt[13], 1
+    invoke NetApplyPacket, addr st46Pkt
+    mov lPass, 0
+    .if eax == 1
+        .if tanks[PLAYER_PEER*SIZEOF TANK].dir == 200
+            .if tanks[PLAYER_PEER*SIZEOF TANK].x == 500
+                .if tanks[PLAYER_PEER*SIZEOF TANK].y == 300
+                    .if tanks[PLAYER_PEER*SIZEOF TANK].alive == 1
+                        mov lPass, 1
+                    .endif
+                .endif
+            .endif
+        .endif
+    .endif
+    invoke Chk, offset stT46a, stT46aL, lPass, 1
+    ; ---- b) 野 magic 'X' 拒收；探测形态 'T','W','N' 不误并入 W 类 ----
+    mov lPass, 0
+    mov byte ptr st46Pkt[0], 'X'
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 0
+        inc lPass
+    .endif
+    mov byte ptr st46Pkt[0], 'T'
+    mov byte ptr st46Pkt[1], 'W'
+    mov byte ptr st46Pkt[2], 'N'
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 0
+        inc lPass
+    .endif
+    invoke Chk, offset stT46b, stT46bL, lPass, 2
+    ; ---- c) 开火位 -> 对侧弹池 +1（镜像位 500,300 dir200 出膛）----
+    mov byte ptr st46Pkt[0], 'W'
+    mov byte ptr st46Pkt[1], 'T'
+    mov word ptr st46Pkt[2], 2
+    mov byte ptr st46Pkt[14], PKT_FIRE
+    invoke NetApplyPacket, addr st46Pkt
+    mov ecx, 0
+    mov eax, 0
+    mov esi, offset bullets
+ST46Cnt:
+    .if ecx >= MAX_BULLETS
+        jmp ST46CntD
+    .endif
+    cmp (BULLET ptr [esi]).active, 0
+    je ST46CntS
+    cmp (BULLET ptr [esi]).owner, PLAYER_PEER
+    jne ST46CntS
+    inc eax
+ST46CntS:
+    add esi, SIZEOF BULLET
+    inc ecx
+    jmp ST46Cnt
+ST46CntD:
+    mov lGot, 0
+    .if eax == 1
+        mov lGot, 1
+    .endif
+    invoke Chk, offset stT46c, stT46cL, lGot, 1
+    ; ---- d) effOn/skill 镜像 + B6 死亡位（DEAD -> alive0/hp0；eff/skill 仍透传）----
+    mov word ptr st46Pkt[2], 3
+    mov byte ptr st46Pkt[14], PKT_DEAD
+    mov byte ptr st46Pkt[15], EFF_SHIELD + EFF_WATER
+    mov byte ptr st46Pkt[16], SK_LASER
+    invoke NetApplyPacket, addr st46Pkt
+    mov lPass, 0
+    .if eax == 1
+        inc lPass
+    .endif
+    .if tanks[PLAYER_PEER*SIZEOF TANK].effOn == (EFF_SHIELD + EFF_WATER)
+        inc lPass
+    .endif
+    .if tanks[PLAYER_PEER*SIZEOF TANK].skill == SK_LASER
+        inc lPass
+    .endif
+    .if tanks[PLAYER_PEER*SIZEOF TANK].alive == 0
+        .if tanks[PLAYER_PEER*SIZEOF TANK].hp == 0
+            inc lPass
+        .endif
+    .endif
+    invoke Chk, offset stT46d, stT46dL, lPass, 4
+    ; ---- e) EVT_MINE 落对侧雷池（owner=对端/armed）；同 evtSeq 重发只认一次 ----
+    mov byte ptr st46Pkt[14], 0                 ; 复活位：无 DEAD -> apply 置 alive=1
+    mov word ptr st46Pkt[2], 4
+    mov byte ptr st46Pkt[17], EVT_MINE
+    mov byte ptr st46Pkt[18], 11
+    mov word ptr st46Pkt[20], 15*COLS+10
+    invoke NetApplyPacket, addr st46Pkt
+    mov lPass, 0
+    xor ebx, ebx
+    xor ecx, ecx
+    mov edx, -1
+ST46M1:
+    .if ebx >= MAX_MINES
+        jmp ST46M1D
+    .endif
+    cmp mineCell[ebx*4], 15*COLS+10
+    jne ST46M1N
+    inc ecx
+    mov edx, ebx
+ST46M1N:
+    inc ebx
+    jmp ST46M1
+ST46M1D:
+    mov edi, edx                         ; 命中槽位（仅 ecx==1 时有意义）
+    mov lPass, 0
+    .if ecx == 1
+        mov eax, mineOwner[edi*4]
+        .if eax == PLAYER_PEER
+            mov eax, mineArm[edi*4]
+            .if eax == MINE_ARM_TICKS
+                mov lPass, 1
+            .endif
+        .endif
+    .endif
+    mov word ptr st46Pkt[2], 5                 ; 新包序号、同 evtSeq=11 -> 去重不重放
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 1
+        xor ebx, ebx
+        xor ecx, ecx
+ST46M2:
+        .if ebx >= MAX_MINES
+            jmp ST46M2D
+        .endif
+        cmp mineCell[ebx*4], 15*COLS+10
+        jne ST46M2N
+        inc ecx
+ST46M2N:
+        inc ebx
+        jmp ST46M2
+ST46M2D:
+        .if ecx == 1
+            inc lPass
+        .endif
+    .endif
+    invoke Chk, offset stT46e, stT46eL, lPass, 2
+    ; ---- f) EVT_LASER_PREV -> 镜像二段瞄准（aimSkill/aimT 起爆倒计时）----
+    mov word ptr st46Pkt[2], 6
+    mov byte ptr st46Pkt[17], EVT_LASER_PREV
+    mov byte ptr st46Pkt[18], 12
+    mov byte ptr st46Pkt[24], SK_LASER
+    invoke NetApplyPacket, addr st46Pkt
+    mov lGot, 0
+    .if eax == 1
+        mov eax, tanks[PLAYER_PEER*SIZEOF TANK].aimSkill
+        mov ecx, tanks[PLAYER_PEER*SIZEOF TANK].aimT
+        .if eax == SK_LASER && ecx == LASER_FIRE_TICKS
+            mov lGot, 1
+        .endif
+    .endif
+    invoke Chk, offset stT46f, stT46fL, lGot, 1
+    ; ---- g) NET_LSR 折线包：照抄路径+清镜像瞄准 / 同 seq 去重 / 坏 npts 整包弃 ----
+    mov byte ptr st46Lsr[0], 'L'
+    mov byte ptr st46Lsr[1], 2
+    mov word ptr st46Lsr[2], 600
+    mov word ptr st46Lsr[4], 7
+    mov word ptr st46Lsr[8], 100
+    mov word ptr st46Lsr[10], 200
+    mov word ptr st46Lsr[12], 900
+    mov word ptr st46Lsr[14], 200
+    invoke NetApplyPacket, addr st46Lsr
+    mov lWant, eax
+    mov lPass, 0
+    .if lWant == 1
+        .if laserN == 2
+            .if laserLen == 600
+                .if laserX[0] == 100          ; 注：dd 数组下标按字节，[4]=第2元素
+                    .if laserY[0] == 200
+                        .if laserX[4] == 900
+                            .if laserY[4] == 200
+                                .if laserT == 48
+                                    ; 起爆防重：镜像二段瞄准被清
+                                    mov eax, tanks[PLAYER_PEER*SIZEOF TANK].aimSkill
+                                    .if eax == SKILL_NONE
+                                        mov lPass, 1
+                                    .endif
+                                .endif
+                            .endif
+                        .endif
+                    .endif
+                .endif
+            .endif
+        .endif
+    .endif
+    mov word ptr st46Lsr[8], 333               ; 同 seq=7 重发（异路径）-> 去重弃
+    invoke NetApplyPacket, addr st46Lsr
+    mov lWant, eax
+    .if lWant == 0
+        .if laserX[0] == 100
+            inc lPass
+        .endif
+    .endif
+    mov byte ptr st46Lsr[1], 11                ; 坏折点数 > MAX_LASER_PTS -> 整包弃
+    mov word ptr st46Lsr[4], 9
+    invoke NetApplyPacket, addr st46Lsr
+    mov lWant, eax
+    .if lWant == 0
+        .if laserN == 2
+            inc lPass
+        .endif
+    .endif
+    mov byte ptr st46Lsr[1], 3                 ; 新 seq=9 三点路径 -> 应用
+    mov word ptr st46Lsr[8], 7
+    mov word ptr st46Lsr[10], 8
+    mov word ptr st46Lsr[12], 9
+    mov word ptr st46Lsr[14], 10
+    mov word ptr st46Lsr[16], 11
+    mov word ptr st46Lsr[18], 12
+    invoke NetApplyPacket, addr st46Lsr
+    mov lWant, eax
+    .if lWant == 1
+        .if laserN == 3
+            .if laserX[4] == 9
+                .if laserY[4] == 10
+                    inc lPass
+                .endif
+            .endif
+        .endif
+    .endif
+    invoke Chk, offset stT46g, stT46gL, lPass, 4
+    ; ---- h) EVT_PICK -> 全场道具消失 + 计时复位（两端消幽灵道具）----
+    mov pickupType, SK_MINE
+    mov pickupTimer, 123
+    mov byte ptr st46Pkt[17], EVT_PICK
+    mov byte ptr st46Pkt[18], 13
+    mov word ptr st46Pkt[2], 10
+    invoke NetApplyPacket, addr st46Pkt
+    mov lGot, 0
+    .if eax == 1
+        .if pickupType == 0
+            .if pickupTimer == PICKUP_PERIOD
+                mov lGot, 1
+            .endif
+        .endif
+    .endif
+    invoke Chk, offset stT46h, stT46hL, lGot, 1
+    ; ---- i) EVT_ICE(evtX=格) -> 对侧 2x2 冰面（ShieldBurst 镜像语义）----
+    mov byte ptr mapData[15*COLS+10], TILE_EMPTY
+    mov byte ptr mapData[15*COLS+11], TILE_EMPTY
+    mov byte ptr mapData[16*COLS+10], TILE_EMPTY
+    mov byte ptr mapData[16*COLS+11], TILE_EMPTY
+    mov byte ptr st46Pkt[17], EVT_ICE
+    mov byte ptr st46Pkt[18], 14
+    mov word ptr st46Pkt[20], 15*COLS+10
+    mov word ptr st46Pkt[2], 11
+    invoke NetApplyPacket, addr st46Pkt
+    mov lGot, 0
+    .if mapData[15*COLS+10] == TILE_ICE
+        .if mapData[15*COLS+11] == TILE_ICE
+            .if mapData[16*COLS+10] == TILE_ICE
+                .if mapData[16*COLS+11] == TILE_ICE
+                    mov lGot, 1
+                .endif
+            .endif
+        .endif
+    .endif
+    invoke Chk, offset stT46i, stT46iL, lGot, 1
+    ; ---- j) seq 循环窗口六例（peerSeq=11 起）：30000收/10弃/60000收/65530收/
+    ;      3收(回绕，B7 根修)/65528弃 ----
+    mov byte ptr st46Pkt[17], 0
+    mov lPass, 0
+    mov word ptr st46Pkt[2], 30000
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 1
+        inc lPass
+    .endif
+    mov word ptr st46Pkt[2], 10
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 0
+        inc lPass
+    .endif
+    mov word ptr st46Pkt[2], 60000
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 1
+        inc lPass
+    .endif
+    mov word ptr st46Pkt[2], 65530
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 1
+        inc lPass
+    .endif
+    mov word ptr st46Pkt[2], 3
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 1
+        inc lPass
+    .endif
+    mov word ptr st46Pkt[2], 65528
+    invoke NetApplyPacket, addr st46Pkt
+    .if eax == 0
+        inc lPass
+    .endif
+    invoke Chk, offset stT46j, stT46jL, lPass, 6
+    ; ---- k) 自回声 tag 防线（会话36 回环实测死锁根修）：lobbySeed≠0 时
+    ;      evtY==低16(lobbySeed) 的包=链路回灌，先于 seq 窗丢弃；异 tag 正常应用 ----
+    mov lobbySeed, 0DEADBEEFh
+    mov word ptr st46Pkt[2], 101
+    mov dword ptr st46Pkt[4], 777
+    mov word ptr st46Pkt[22], 0BEEFh
+    invoke NetApplyPacket, addr st46Pkt
+    mov lWant, eax
+    mov eax, tanks[PLAYER_PEER*SIZEOF TANK].x
+    mov lPass, 0
+    .if lWant == 0
+        .if eax == 500
+            inc lPass
+        .endif
+    .endif
+    mov word ptr st46Pkt[22], 1234h
+    invoke NetApplyPacket, addr st46Pkt
+    mov eax, tanks[PLAYER_PEER*SIZEOF TANK].x
+    .if eax == 777
+        inc lPass
+    .endif
+    mov lobbySeed, 0
+    invoke Chk, offset stT46k, stT46kL, lPass, 2
+    ; ---- m) ParseIp 七例：纯 IP/带端口/自定义端口/首段>255 弃/尾点弃/":0" 弃/尾随空格容 ----
+    ; ST46PIP 结果判定助手（会话36）：edx=期望码 edi=期望ip(0=不查) ecx=期望端口(0=不查)
+    mov lPass, 0
+    invoke ParseIp, addr st46A, addr st46Ip, addr st46Port
+    mov st46Res, eax
+    mov edx, 1
+    mov edi, 0500000Ah
+    mov ecx, NET_PORT
+    call ST46PipChk
+    jne ST46MSK
+    inc lPass
+ST46MSK:
+    invoke ParseIp, addr st46B, addr st46Ip, addr st46Port
+    mov st46Res, eax
+    mov edx, 1
+    mov edi, 01801A8C0h
+    mov ecx, 28888
+    call ST46PipChk
+    jne ST46MSK2
+    inc lPass
+ST46MSK2:
+    invoke ParseIp, addr st46C, addr st46Ip, addr st46Port
+    mov st46Res, eax
+    mov edx, 1
+    mov edi, 04030201h
+    mov ecx, 51000
+    call ST46PipChk
+    jne ST46MSK3
+    inc lPass
+ST46MSK3:
+    invoke ParseIp, addr st46D, addr st46Ip, addr st46Port
+    mov st46Res, eax
+    mov edx, 0
+    xor edi, edi
+    xor ecx, ecx
+    call ST46PipChk
+    jne ST46MSK4
+    inc lPass
+ST46MSK4:
+    invoke ParseIp, addr st46E, addr st46Ip, addr st46Port
+    mov st46Res, eax
+    mov edx, 0
+    xor edi, edi
+    xor ecx, ecx
+    call ST46PipChk
+    jne ST46MSK5
+    inc lPass
+ST46MSK5:
+    invoke ParseIp, addr st46F, addr st46Ip, addr st46Port
+    mov st46Res, eax
+    mov edx, 0
+    xor edi, edi
+    xor ecx, ecx
+    call ST46PipChk
+    jne ST46MSK6
+    inc lPass
+ST46MSK6:
+    invoke ParseIp, addr st46G, addr st46Ip, addr st46Port
+    mov st46Res, eax
+    mov edx, 1
+    mov edi, 0100007Fh
+    mov ecx, NET_PORT
+    call ST46PipChk
+    jne ST46MSK7
+    inc lPass
+ST46MSK7:
+    invoke Chk, offset stT46m, stT46mL, lPass, 7
+    ; ---- n) B 端出生对角互换（netRole）+ 联机道具池剔除换位/定格 ----
+    mov netMode, 1
+    mov netRole, 0
+    invoke SetNetSeed, 0ABCD1234h
+    call ResetTanks
+    mov eax, tanks[0*SIZEOF TANK].x
+    mov st46S0, eax
+    mov eax, tanks[0*SIZEOF TANK].y
+    mov st46S1, eax
+    mov eax, tanks[0*SIZEOF TANK].dir
+    mov st46S2, eax
+    mov eax, tanks[1*SIZEOF TANK].x
+    mov st46S3, eax
+    mov eax, tanks[1*SIZEOF TANK].y
+    mov st46S4, eax
+    mov eax, tanks[1*SIZEOF TANK].dir
+    mov st46S5, eax
+    mov netRole, 1
+    invoke SetNetSeed, 0ABCD1234h
+    call ResetTanks
+    mov lPass, 0
+    mov eax, tanks[0*SIZEOF TANK].x
+    .if eax == st46S3
+        mov eax, tanks[0*SIZEOF TANK].y
+        .if eax == st46S4
+            mov eax, tanks[0*SIZEOF TANK].dir
+            .if eax == st46S5
+                inc lPass
+            .endif
+        .endif
+    .endif
+    mov eax, tanks[1*SIZEOF TANK].x
+    .if eax == st46S0
+        mov eax, tanks[1*SIZEOF TANK].y
+        .if eax == st46S1
+            mov eax, tanks[1*SIZEOF TANK].dir
+            .if eax == st46S2
+                inc lPass
+            .endif
+        .endif
+    .endif
+    mov st46Ok, 0
+    mov st46Bad, 0
+    mov st46I2, 0
+ST46Pool:
+    .if st46I2 >= 60
+        jmp ST46PoolD
+    .endif
+    invoke SpawnPickup
+    mov eax, pickupType
+    .if eax == SK_SWAP || eax == SK_PHANTOM
+        inc st46Bad
+    .elseif eax >= 1 && eax <= SKILL_COUNT
+        inc st46Ok
+    .endif
+    inc st46I2
+    jmp ST46Pool
+ST46PoolD:
+    .if st46Bad == 0 && st46Ok >= 30
+        inc lPass
+    .endif
+    mov netMode, 0
+    mov netRole, 0
+    invoke Chk, offset stT46n, stT46nL, lPass, 3
+
     ; ==== 收尾：还原地图 + 清空弹池 + FAIL 汇总 ====
     invoke Mark, 342
     cld
@@ -4088,6 +4747,34 @@ T45BadA:
 SelfTestRun endp
 
 ; ------------------------------------------------------------
+; ST46PipChk —— T46 ParseIp 判定助手（会话36）
+; 入（寄存器约定）：edx=期望返回码 edi=期望ip（0=跳过） ecx=期望端口（0=跳过）
+; 读 st46Res/st46Ip/st46Port；出：全中 ZF=1，任一不中 ZF=0（调用方 jne 跳过计分）
+; ------------------------------------------------------------
+ST46PipChk proc
+    mov eax, st46Res
+    cmp eax, edx
+    jne ST46PCBad
+    cmp edi, 0
+    je ST46PCPort
+    mov eax, st46Ip
+    cmp eax, edi
+    jne ST46PCBad
+ST46PCPort:
+    cmp ecx, 0
+    je ST46PCGood
+    mov eax, st46Port
+    cmp eax, ecx
+    jne ST46PCBad
+ST46PCGood:
+    mov eax, 1                       ; mov 不毁标志：ZF=1 透传
+    ret
+ST46PCBad:
+    mov eax, 0                       ; jne 跳转抵达：ZF=0 透传
+    ret
+ST46PipChk endp
+
+; ------------------------------------------------------------
 ; GameInit —— 随机选图解析 + 重置坦克/子弹
 ; tank0 = 出生点0（左上，朝下），tank1 = 出生点3（右下，朝上）
 ; ------------------------------------------------------------
@@ -4096,6 +4783,11 @@ GameInit proc uses ebx esi edi
     .if rngState == 0
         invoke GetTickCount
         mov rngState, eax
+        .if eax == 0
+            inc eax
+        .endif
+        mov rngMatch, eax            ; 会话36：公共流单机同样按开机时刻播种
+                                     ;  （联机时 SetNetSeed 会用共享种子覆盖）
     .endif
     mov arenaBagPos, ARENA_COUNT    ; 新比赛：重置洗牌袋（首局触发重洗）
     call ResetTanks                  ; 选图(不重复)+随机出生点+布坦克
@@ -4678,6 +5370,24 @@ DamageTank proc uses ebx slotIdx: dword
     .if eax & EFF_SHIELD
         ; 冰盾抵挡：消耗护盾 + 坦克周围生成 2x2 冰面
         and (TANK ptr [ebx]).effOn, not EFF_SHIELD
+        ; 会话36：联机局冰面只在车主机铺并广播 EVT_ICE 让对侧同格铺——
+        ; 镜像槽位置带时延差，两端各铺会永久分图；盾本身的消耗由
+        ; effOn 镜像字段自然同步，无需事件。
+        .if netMode != 0
+            .if slotIdx != PLAYER_SELF
+                mov eax, 0
+                ret
+            .endif
+            mov ecx, (TANK ptr [ebx]).x
+            add ecx, TANK_SIZE/2
+            shr ecx, 5
+            mov edx, (TANK ptr [ebx]).y
+            add edx, TANK_SIZE/2
+            shr edx, 5
+            imul edx, edx, COLS
+            add edx, ecx                 ; 中心格 index
+            invoke EvtPush, EVT_ICE, edx, 0, 0
+        .endif
         invoke SpawnIce2x2, slotIdx
         mov eax, 0
         ret
@@ -4704,22 +5414,10 @@ EndPhantom proc uses ebx slotIdx: dword
 EndPhantom endp
 
 ; ------------------------------------------------------------
-; SpawnIce2x2 —— 以坦克中心格为左上角生成 2x2 冰面
-; 只把空地格变成冰（不破坏墙/水/泥/边界）
+; SpawnIce2x2At —— 以 (cc,rr) 为左上角生成 2x2 冰面（只染空地）
+; 会话36：拆出坐标版，供联机事件 EVT_ICE 在对侧按权威格施加
 ; ------------------------------------------------------------
-SpawnIce2x2 proc uses ebx edi slotIdx: dword
-    local cc:dword, rr:dword
-    mov eax, slotIdx
-    imul eax, eax, SIZEOF TANK
-    add eax, offset tanks
-    mov ecx, (TANK ptr [eax]).x
-    add ecx, TANK_SIZE/2
-    shr ecx, 5
-    mov cc, ecx
-    mov edx, (TANK ptr [eax]).y
-    add edx, TANK_SIZE/2
-    shr edx, 5
-    mov rr, edx
+SpawnIce2x2At proc uses ebx edi cc: dword, rr: dword
     xor edi, edi                     ; dy
 SI2_Row:
     .if edi >= 2
@@ -4750,6 +5448,27 @@ SI2_Col:
 SI2_Next:
     inc ebx
     jmp SI2_Col
+SpawnIce2x2At endp
+
+; ------------------------------------------------------------
+; SpawnIce2x2 —— 以坦克中心格为左上角生成 2x2 冰面
+; 只把空地格变成冰（不破坏墙/水/泥/边界）
+; ------------------------------------------------------------
+SpawnIce2x2 proc uses ebx ecx edx slotIdx: dword
+    local cc:dword, rr:dword
+    mov eax, slotIdx
+    imul eax, eax, SIZEOF TANK
+    add eax, offset tanks
+    mov ecx, (TANK ptr [eax]).x
+    add ecx, TANK_SIZE/2
+    shr ecx, 5
+    mov cc, ecx
+    mov edx, (TANK ptr [eax]).y
+    add edx, TANK_SIZE/2
+    shr edx, 5
+    mov rr, edx
+    invoke SpawnIce2x2At, cc, rr
+    ret
 SpawnIce2x2 endp
 
 ; ------------------------------------------------------------
@@ -5511,6 +6230,15 @@ FL_LenDone:
     mov prevN, 0
     invoke SndPlay, 7                 ; 会话 33：激光发射啸声（300->1500Hz
                                       ;  上行正弦滑音，与开炮下行音区分）
+    ; 会话36：联机发射端把折线随 'L' 包广播（重发 3 包；laserX/Y/N/Len
+    ; 此刻已定且传播期间不变，net.asm 直接读全局组装）
+    .if netMode != 0 && slotIdx == PLAYER_SELF
+        mov eax, laserEvSeq
+        inc eax
+        and eax, 0FFFFh
+        mov laserEvSeq, eax
+        mov laserPendTtl, 3
+    .endif
     ret
 FireAimedLaser endp
 
@@ -5547,6 +6275,7 @@ PM_Found:
         ret
     .endif
     mov mineCell[ecx*4], eax
+    mov mineLastCell, eax              ; 会话36：供 TryUseSkill 广播事件取用
     mov mineArm[ecx*4], MINE_ARM_TICKS
     mov eax, slotIdx
     mov mineOwner[ecx*4], eax
@@ -5696,6 +6425,7 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         mov edx, (TANK ptr [ecx]).aimT
         .if edx == 0
             mov (TANK ptr [ecx]).aimT, LASER_FIRE_TICKS
+            invoke EvtPush, EVT_LASER_PREV, 0, 0, eax   ; 会话36：对侧镜像起同长倒计时
             invoke SndPlay, 4            ; 倒计时哔声复用：二段确认起爆
         .endif
         ret
@@ -5703,6 +6433,13 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
     mov eax, (TANK ptr [ecx]).skill
     .if eax == SKILL_NONE
         ret
+    .endif
+    ; 会话36：联机局 B 档技能双保险早退（拾取池已剔除，若历史遗留/未来
+    ; 表变更漏进来也拒发动——换位挪双车、虚影挡弹均依赖两端镜像一致）
+    .if netMode != 0
+        .if eax == SK_SWAP || eax == SK_PHANTOM
+            ret
+        .endif
     .endif
     .if eax == SK_ICE_SHIELD
         mov ecx, ptank
@@ -5732,6 +6469,7 @@ TryUseSkill proc uses ebx esi edi slotIdx: dword
         .if eax == 0
             ret                      ; 水域/雷槽满：不消耗
         .endif
+        invoke EvtPush, EVT_MINE, mineLastCell, 0, 0   ; 会话36：雷格广播
     .elseif eax == SK_NITRO
         mov ecx, ptank
         mov edx, (TANK ptr [ecx]).effOn
@@ -5852,17 +6590,29 @@ EffTick endp
 ; ------------------------------------------------------------
 ; SpawnPickup —— 随机挑一个可行格生成技能拾取物
 ; 可行 = 空地/冰/泥（非水非墙）；重试最多 128 次
+; 会话36：坐标+类型走 rngMatch 公共流（双方同位同型）；联机局
+; 类型池剔除换位术/定格虚影（B 档，两端发散见 docs/PROTOCOL.md），
+; 做法 = 7 项双射抽取 0..6 -> id 1..6,8，几何上不可能抽到被禁项，
+; 无重抽循环故无预算耗尽风险。
 ; ------------------------------------------------------------
 SpawnPickup proc uses ebx ecx edx
     mov ebx, 128
 SP_Try:
-    invoke RngBelow, COLS*ROWS
+    invoke RngBelowMatch, COLS*ROWS
     mov ecx, eax
     movzx eax, mapData[ecx]
     .if eax == TILE_EMPTY || eax == TILE_ICE || eax == TILE_DIRT
         ; 生成：随机挑一种技能
-        invoke RngBelow, SKILL_COUNT
-        inc eax
+        .if netMode != 0
+            invoke RngBelowMatch, SKILL_COUNT-2
+            inc eax                      ; 1..7
+            .if eax == SK_SWAP           ; 第 7 项映射到驭水（跳过换位/定格）
+                mov eax, SK_WATER
+            .endif
+        .else
+            invoke RngBelow, SKILL_COUNT
+            inc eax
+        .endif
         mov pickupType, eax
         mov eax, ecx
         xor edx, edx
@@ -6654,7 +7404,9 @@ GU_NoMove:
     ; 拾取：中心格 = 拾取物格 -> 覆盖持有（连续拾取覆盖前一个）
     ; 激光瞄准进行中（会话 22 起：一段预览也算，aimSkill 非空即拦）/
     ; 换位等待中不拾取（防止激光 + 新技能双技能并发）
-    .if pickupType != 0
+    ; 会话36：联机局镜像槽不拾取——道具在双方本地同位同型（公共流），
+    ; 谁拾走由车主机判定并经 skill 字段/EVT_PICK 广播，防双算。
+    .if pickupType != 0 && (netMode == 0 || ebx != PLAYER_PEER)
         mov eax, ebx
         imul eax, eax, SIZEOF TANK
         add eax, offset tanks
@@ -6690,6 +7442,7 @@ GU_NoMove:
                 mov pickupType, 0
                 mov eax, PICKUP_PERIOD
                 mov pickupTimer, eax
+                invoke EvtPush, EVT_PICK, 0, 0, edx   ; 会话36：对侧删幽灵道具
                 invoke SndPlay, 3    ; 拾取音
             .endif
         .endif
@@ -7061,7 +7814,18 @@ GU_Aim:
     add eax, offset tanks
     mov ecx, (TANK ptr [eax]).aimT
     .if ecx == 0
-        invoke FireAimedLaser, ebx
+        ; 会话36：联机镜像槽的激光不本地起爆——发射时刻与折线几何以
+        ; 'L' 光束包为准（FireAimedLaser 权威端算好路径随包广播），
+        ; 本端只负责把镜像 aimSkill 清掉并接收路径。
+        .if netMode == 0 || ebx != PLAYER_PEER
+            invoke FireAimedLaser, ebx
+        .else
+            ; 镜像倒计时到点：只清瞄准显示，光束以 'L' 包为准（可能早/晚
+            ; 一 tick 到达，两种顺序都安全：'L' 先到时这里 aimSkill 已空）
+            mov (TANK ptr [eax]).aimSkill, SKILL_NONE
+            mov prevTank, -1
+            mov prevN, 0
+        .endif
     .endif
 GU_ANext:
     inc ebx
@@ -7106,10 +7870,17 @@ GU_MTank:
     imul ecx, ecx, COLS
     add ecx, edx
     .if ecx == mineCell[ebx*4]
+        ; 会话36：联机局"外来的雷"（owner=PEER，随事件导入）不打镜像——
+        ; 车主机用自己的权威位置结算（两端引爆时刻只差时延，避免提前爆
+        ; +移开复活的双结算）；本方布雷打死镜像=观测命中表现，保留。
+        mov edx, mineOwner[ebx*4]
+        .if netMode != 0 && esi == PLAYER_PEER && edx == PLAYER_PEER
+            jmp GU_MineNext               ; 雷保留，等车主机自己踩/引爆清理
+        .endif
         push ebx
         invoke DamageTank, esi
         pop ebx
-        jmp GU_MineClear              ; 引爆后消失
+        jmp GU_MineClear                  ; 引爆后消失
     .endif
 GU_MTNext:
     inc esi

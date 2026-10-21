@@ -137,24 +137,80 @@ BULLET_SIZE_PX  equ 8               ; 弹体 8x8
 BULLET_LIFE     equ 600             ; 存活 600 tick（10 秒）自动消失
 BULLET_MAX_BOUNCE equ 10            ; 反弹 >=10 次消失
 
-; ---- 网络状态包（v1 兼容，M3 扩展为 slot 版）----
+; ---- 网络协议 v1（会话36）----
+; 单 UDP socket，收包按首字节分流：'W'=状态包 NET_PKT / 'T'=探测 NET_PROBE /
+; 'H'=握手 NET_HS / 'L'=激光折线 NET_LSR。
+; 注：状态包 magic 为 dw 'WT'（小端落内存字节 'W','T'），首字节即 'W'，
+;     与探测包 sig "TWNET01..."（首字节 'T'）天然分家；PROTOCOL.md 已同步 v1。
 NET_PKT STRUCT
-    magic   dw ?                     ; 标识 'TW'
-    seq     dw ?                     ; 包序号，用于丢弃乱序旧包
-    tx      dw ?                     ; 本端坦克 tile 坐标 x
-    ty      dw ?                     ; 本端坦克 tile 坐标 y
-    tdir    db ?                     ; 本端坦克朝向
-    thp     db ?                     ; 本端坦克血量
-    flags   db ?                     ; bit0: 本 tick 开火
-    pad     db ?                     ; 对齐填充
-    fireX   dw ?                     ; 开火时子弹初始位置
-    fireY   dw ?
-    fireDir db ?
-    pad2    db ?
-NET_PKT ENDS
+    magic     dw ?                    ; dw 'WT'，内存首字节 'W'
+    seq       dw ?                    ; 包序号：循环窗口判新（回绕安全）
+    tx        dd ?                    ; 本端坦克像素 x（v1 改全 dd，不再截高字）
+    ty        dd ?                    ; 本端坦克像素 y
+    tdir      db ?                    ; 航向角量化 0..255（q=(deg*256+128)/360）
+    thp       db ?                    ; 本端血量
+    flags     db ?                    ; bit0 本 tick 开火, bit1 本端已死（B6）
+    effOnLow  db ?                    ; 本端 effOn 低字节镜像（EFF_*）
+    skillId   db ?                    ; 本端持有未发动技能 id（显示用）
+    evtKind   db ?                    ; 事件槽类型 EVT_*（0=无）
+    evtSeq    db ?                    ; 事件序号（接收端去重：同值只认一次）
+    pad0      db ?
+    evtX      dw ?                    ; MINE/ICE=坦克中心格 index / PICK=0
+    evtY      dw ?                    ; 会话36：改作发送者 tag = lobbySeed 低 16
+                                      ;  （自回声识别；原"保留0"语义作废，
+                                      ;   收侧不读、事件生产者 py 恒 0）
+    evtData   db ?                    ; MINE=布雷方槽位 / PICK=道具类型 / LASER=aimSkill id
+    pad1      db ?
+NET_PKT ENDS                          ; 26B（成员按自然对齐恰落此偏移）
 
 NET_PKT_SIZE equ SIZEOF NET_PKT
-NET_PORT    equ 28888                ; 本地监听端口（收发同端口）
+NET_PORT     equ 28888                ; 首选监听端口（被占则退临时端口，B1）
+
+; ---- 探测包（大厅发现/反向发现，16B）----
+NET_PROBE STRUCT
+    sig     db 'TWNET01'             ; 7 字节标识（兼容 v0 大厅广播字串）
+    ver     db ?                     ; 协议版本 = 1
+    ptype   db ?                     ; 0=announce（我在找对手） 1=reply（回给临时端口）
+    start   db ?                     ; 会话36：发送端 myStart 标志（announce 搭载握手）
+    port    dw ?                     ; 发送端真实端口（网络序；固定 28888 或临时）
+    cookie  dd ?                     ; 发送端 lobbySeed（=GetTickCount，自回声过滤）
+NET_PROBE ENDS
+
+; ---- 激光折线包（会话36：发射端权威算好路径广播，接收端照抄起爆）----
+NET_LSR STRUCT
+    magic0  db 'L'                   ; 分流首字节
+    npts    db ?                     ; 折点数 2..10
+    len     dw ?                     ; 路径总长 px（laserLen，传播节奏用）
+    seq     dw ?                     ; 事件序号（去重）
+    skill   db ?                     ; SK_LASER / SK_REFLASER（保留：伤害规则标识）
+    pad     db ?
+    px      dw 20 dup (?)            ; laserX/laserY 交替（像素，<=992/608）
+NET_LSR ENDS                         ; 48B
+NET_LSR_SIZE equ SIZEOF NET_LSR
+
+; ---- 握手包（开局同步，16B）----
+NET_HS STRUCT
+    magic0  db 'H'                   ; 分流首字节
+    htype   db ?                     ; 0=HELLO（我在线，附种子） 1=START（我按下开始）
+    ver     db ?
+    pad     db ?
+    seed    dd ?                     ; 本机 lobbySeed（双方 xor 成 netSharedSeed）
+    rounds  dd ?                     ; 期望局数（取小）
+    cookie  dd ?                     ; 对端 cookie（仅 reply 校验用，可 0）
+NET_HS ENDS
+
+; ---- 协议常量 ----
+EVT_NONE        equ 0
+EVT_MINE        equ 1                 ; 布雷（evtX=中心格 index）
+EVT_LASER_PREV  equ 2                 ; 激光二段启动（evtData=aimSkill）
+EVT_LASER_FIRE  equ 3                 ; 保留：v1 走 NET_LSR 折线包，不占事件槽
+EVT_PICK        equ 4                 ; 道具被拾（evtData=类型）
+EVT_ICE         equ 5                 ; 冰盾碎冰（evtX=坦克中心格 index）
+PKT_FIRE        equ 1                 ; flags bit0
+PKT_DEAD        equ 2                 ; flags bit1
+NET_ANN_TICKS   equ 30                ; 大厅 announce 周期 tick
+NET_HS_TICKS    equ 8                 ; 大厅 HELLO/START 重发周期 tick
+NET_TIMEOUT     equ 120               ; 收包超时 2s = 掉线（PROTOCOL 既有规则）
 
 ; ============================================================
 ; 结构体定义

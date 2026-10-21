@@ -1,7 +1,7 @@
 # 开发路线图
 
 每个阶段结束都是一个「能跑、能看」的状态，随时可以停下来不烂尾。
-当前进度：**M1 已完成（v2 对战版：字符画地图 + 反弹弹道 + 水/冰 + 本地双坦克）**。
+当前进度：**M1 已完成（v2 对战版：字符画地图 + 反弹弹道 + 水/冰 + 本地双坦克）；会话 36 双人联机（协议 v1）打通并回环实测**。
 
 ## 阶段 0：工程骨架（已完成）
 
@@ -925,5 +925,81 @@
       骑过边缘继续一段再停；**设计边界告知**：若炮穿墙次数耗尽时
       车中心恰好深入 ≥3×3 实心墙块最内格，四邻皆墙仍无法跨格
       （防漂移滥用的取舍），普通 ≤2 格厚墙均可自爬脱出（T42a）
+
+### 2026-10-21 会话 36：双人联机全打通（协议 v1）+ 技能尽量全同步 + 手输 IP 跨网直连（用户："帮我看看怎么把 tankwar 联机实现"+"我的本意是能够和其他电脑上联机对战"）
+
+- [x] 现状核查：v0 骨架（NET_PKT/ST_LAN 大厅/"TWNET01" 广播发现/T28
+      量化自检）其实存在但从未跑通；逐行核验出 B1-B7 七个"打不成真局"
+      硬伤 + B8 跨网死路，立 8 步计划（plan 文件 moonlit-bouncing-swing）
+- [x] B1 端口：bind 28888 失败改**换新 socket 绑临时口** + getsockname
+      回读真实端口（同机双开可行的前提；换 socket 而非原地重绑避 LSP 假成功）
+- [x] B2 开局握手：lobbySeed=GetTickCount；announce 载荷带 cookie/start，
+      HELLO/START 冗余快路径；**双 Enter 才开局**（NetCanStart）；
+      netSharedSeed = lobbySeed xor hsPeerSeed -> SetNetSeed 写 rngMatch
+      共享流 -> 两端**同图同出生点同道具**；回合数取小；
+      netRole=种子大者当 B 方，出生槽位交换（slot0↔3/slot1↔0）分踞半场
+- [x] B3 输入隔离：netMode 下 slot1 六路本地输入清零（IS_Slot 扫描后
+      拦截），对手机械只吃网络包；R 键联机禁用（各端重洗图袋=炸同步）
+- [x] B4 掉线：对局 120 tick 无包 -> netLost（UI"连接丢失"覆盖层+冻结），
+      **任意一包即自愈**；Esc 回厅可重连（NetEnterLan 清握手态）
+- [x] B6 尸体复活死锁：PackState 带 flags bit1 死亡位，NetApplyRx 按位
+      判 alive/hp 覆盖（原无条件 alive=1 会把对面打复活、回合永不结束）
+- [x] B7 RNG 串扰+seq 回绕：滑行随机留 rngState 本机流（md5 中性）、
+      选图/出生点/道具走 rngMatch；ResetTanks 的 seqSelf=0 清零包进
+      netMode==0；seq 判定改**循环半圆窗口**（回绕安全，65530→3 收、
+      跨半圆乱包丢）
+- [x] B5 技能同步（分档落地）：NET_PKT 扩 26B（effOn 低字节/skillId
+      镜像 + 事件槽 evtKind/evtSeq/evtX/evtData，**连续 3 包重发 +
+      evtSeq 去重**）；EVT_MINE 落对侧雷池（owner=PLAYER_PEER）、
+      EVT_LASER_PREV 镜像起瞄、EVT_PICK 消幽灵道具、EVT_ICE 2×2 铺冰；
+      **激光发射端权威**：新增 NET_LSR 48B 折线包广播整条反弹路径，
+      收端照抄几何起爆（两端各自推演反弹必分叉）；
+      **B 档 v1 裁剪**：换位术/定格虚影 netMode 拾取池剔除
+      （SpawnPickup 取 1..7、7→8 重映射，永不发 {7,9}）+ TryUseSkill
+      早退双保险（DoSwap 挪两车/虚影判弹两端镜像差=永久发散，M3 事件层再补）
+- [x] B8 跨网手输直连：大厅底部"手动连接"编辑行（WM_CHAR 仅放行
+      0-9 . : 退格回车 Tab，聚焦期屏蔽菜单热键）；ParseIp 纯整数点分
+      解析（网络序 u32，默认口 28888，`:0`/超 255 段/空尾段/端口
+      >65535 拒收，尾随空格容忍）；manualMode 下 announce 由广播切
+      15 tick 定向单播，对方 reply 反向打开我方入站（等效最简打洞）；
+      **STUN 内嵌打洞列 M3.5 待办（跨网终验需与朋友约测，单人不可复现）**
+- [x] 本机 LSP 三怪癖实测围剿（合成输入+截屏+dump 对账定位）：
+      ①状态包首 dw 字节被对调落线（收端识别 'T','W' 形态且排除探测
+      sig 后原地换回）；②'H' 单字节被改写 0x44（故握手状态搭载探测
+      包，NET_HS 只作快路径，双字节 magic 'HS' 方案作废）；③广播源
+      端口随机化不可回（对端真实口一律取 announce 载荷 port 字段）；
+      ④单播必自回声（同 socket INADDR_ANY 自己发自己收）——三道过滤
+      跑在 seq 窗口与镜像写入之前：PKT 看 evtY=lobbySeed 低 16 tag
+      （lobbySeed==0 旁路保自检可直喂包）、LSR 看 seq==lastSentLsr、
+      PROBE/HS 看 cookie==lobbySeed；残余 1/65536 同 tag 撞车接受
+- [x] **ParseIp 生产级崩溃修复**：原 proc `uses ebp` 却 `xor ebp,ebp`
+      当段累加器——MASM 帧指针被毁，之后 `[ebp+8]` 取参变 `[8]` 空指针
+      AV，**手输 IP 回车必崩**（T46 自检喂包实测揪出，非仅测试问题）；
+      累加器改全局暂存 segAccS、uses 表去 ebp
+- [x] 新工具 tools/net_loopback_test.py：同机双开 netloop 全自动验收
+      （H 行一固定一临时口 / G 行逐字段相等 / 合成按键驱动一方开车——
+      镜像列跨机收敛双等式 / SPACE 后两端 b1≥1 / kill 一方 3.5s 内
+      幸存者 netLost 0→1），首轮 FAIL 定位为启动竞态误报（手测双开
+      握手完美），超时 15→30s+存活诊断后 **PASS**
+- [x] T46 组 13 项检查（零 socket 直喂 NetApplyRx）：量化往返 200°、
+      magic/探测拒收、开火镜像弹+1、死亡位、effOn/skill 镜像、地雷落
+      对侧+去重、激光起瞄、LSR 全链路+去重+坏 npts、道具消除、冰 2×2、
+      seq 窗口 6 例（含回绕）、tag 回声丢弃、ParseIp 7 例、netRole
+      出生交叉+联机道具池 60 抽无 {7,9}；踩坑两处已写入注释：
+      **dd 数组常量下标按字节**（laserX[1] 读到 0x84000000，应 laserX[4]）、
+      ml 不支持 mem==mem 比较（A2070，配 ST46PipChk 借 mov 不毁 ZF 透传）
+- [x] 回归门：build 零警告；selftest **46 组 110 断言 0 FAIL**，
+      基线换为 **203519bbbf3a0fede90c0539f53533eb ×6 稳定**，
+      前缀 diff 证明旧 97 断言行逐字节不变（仅 MARK=355 后插入）；
+      play2 冒烟存活无回归；netMode==0 全路径单机零影响
+- [x] 文档：PROTOCOL.md **整体重写 v1**（端口退避/四型分流/循环窗口/
+      事件表/死亡位/握手时序/掉线自愈/防回声/LSP 容错/手动直连/
+      技能分档/已知分歧/netdump 对账格式）；**新增 ONLINE_PLAY.md**
+      （局域网步骤/ZeroTier·SakuraFrp 组网示范/防火墙专用·公用坑/
+      四档判定流程/对称 NAT 为何留给 M3.5）；GAME_DESIGN §7 加 v1
+      前置注记；README 过时"阶段 3 实现中"两行改写
+- [ ] ⚠ 待用户手测（本会话无法单人完成）：同 LAN 双机互见→双 Enter→
+      同图对战→技能对射→Alt+F4 掉线 2s 弹层→Esc 回厅重连；
+      **跨网终验=与朋友互装 ZeroTier 输虚拟 IP 对战**（交付后约测项）
 
 

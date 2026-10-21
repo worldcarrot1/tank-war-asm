@@ -8,6 +8,7 @@
 NULL        equ 0
 FALSE       equ 0
 TRUE        equ 1
+INVALID_HANDLE_VALUE equ 0FFFFFFFFh  ; 会话36：net.asm 转储句柄判废
 
 ; ---- 窗口类 / 窗口样式 ----
 CS_HREDRAW          equ 0002h
@@ -24,6 +25,7 @@ IDC_ARROW           equ 32512
 WM_DESTROY  equ 0002h
 WM_PAINT    equ 000Fh
 WM_QUIT     equ 0012h
+WM_CHAR     equ 0102h               ; 会话36：大厅手输 IP 编辑行用
 PM_REMOVE   equ 0001h
 
 ; ---- 虚拟键码 ----
@@ -39,6 +41,7 @@ VK_R        equ 052h
 VK_S        equ 053h
 VK_W        equ 057h
 VK_ESCAPE   equ 01Bh
+VK_TAB      equ 009h                ; 会话36：大厅手输 IP 编辑焦点切换
 VK_B        equ 042h
 VK_F        equ 046h
 VK_G        equ 047h
@@ -64,6 +67,7 @@ SOCK_DGRAM      equ 2
 IPPROTO_UDP     equ 17
 FIONBIO         equ 8004667Eh
 INADDR_ANY      equ 0
+INADDR_LOOPBACK equ 0100007Fh       ; 127.0.0.1（主机字节序写法，同 INADDR_* 惯例）
 INVALID_SOCKET  equ -1
 SOCKET_ERROR    equ -1
 
@@ -136,6 +140,7 @@ WSADATA ENDS
 ; kernel32
 GetModuleHandleA PROTO stdcall :DWORD
 GetTickCount     PROTO stdcall
+GetCurrentProcessId PROTO stdcall        ; 会话36：dump 文件名/行内区分双实例
 Sleep            PROTO stdcall :DWORD
 ExitProcess      PROTO stdcall :DWORD
 GetCommandLineA  PROTO stdcall
@@ -202,6 +207,8 @@ bind            PROTO stdcall :DWORD,:DWORD,:DWORD
 sendto          PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 recvfrom        PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 closesocket     PROTO stdcall :DWORD
+getsockname     PROTO stdcall :DWORD,:DWORD,:DWORD   ; 会话36：临时端口回读
+ntohs           PROTO stdcall :DWORD                 ; 会话36：解析对端端口
 setsockopt      PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 SOL_SOCKET      equ 0FFFFh
 SO_BROADCAST    equ 00020h

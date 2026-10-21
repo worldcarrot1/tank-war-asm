@@ -16,6 +16,7 @@ include game.inc
 extern keyTable    :dword
 extern inputTable  :dword
 extern inputRestart :dword
+extern netMode      :dword           ; ui.asm（会话36：联机对局）
 
 .data
     ; ---- 会话34：开局武装 ----
@@ -94,11 +95,26 @@ IS_Act:
     .if ebx < MAX_PLAYERS
         jmp IS_Slot
     .endif
-    ; 固定重开键
-    invoke GetAsyncKeyState, VK_R
-    and eax, 8000h
-    .if eax != 0
-        mov inputRestart, 1
+    ; 会话36（B3）：联机局对手机械坦克完全由网络包驱动。本地热座若正配
+    ; 第二套键位（slot1）也照常扫描，会把远端坦克当 P2 开——这里采样完
+    ; 立即把 slot1 六路清零。其余槽位联机时本就闲置（numPlayers=2）。
+    .if netMode != 0
+        mov edi, offset inputTable
+        add edi, KEY_PER*4             ; slot1 起点
+        xor eax, eax
+        mov ecx, KEY_PER
+        rep stosd
+    .endif
+    ; 固定重开键（会话36：联机禁用——单机 R=整场重开会重洗地图袋/出生点，
+    ; 联机时两端各自洗牌 = 同步炸裂；掉线处理由 net.asm 超时负责）
+    .if netMode == 0
+        invoke GetAsyncKeyState, VK_R
+        and eax, 8000h
+        .if eax != 0
+            mov inputRestart, 1
+        .else
+            mov inputRestart, 0
+        .endif
     .else
         mov inputRestart, 0
     .endif

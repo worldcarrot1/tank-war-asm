@@ -148,6 +148,12 @@
 
 ## 7. 网络架构：2~4 人 UDP 全网状
 
+> **状态注记（会话 36）**：本节是 M3+ 的 4 人目标形态。其 2 人前置已在
+> 协议 v1 落地并实测（见 docs/PROTOCOL.md、docs/ONLINE_PLAY.md）：
+> 共享随机流 `rngMatch`（同图同出生点同道具）、状态镜像扩展
+> （effOn/skill/死亡位）、事件槽 + 「连续 3 包重发 + evtSeq 去重」雏形、
+> 掉线检测自愈、手输 IP 直连。本节 slot 化模型在 v1 之上继续演进。
+
 替换 v1 的 SELF/PEER 双槽模型：
 
 - `MAX_PLAYERS=4`，每人一个 `slot`（0~3），`slotSelf` 记本机驱动哪几个槽

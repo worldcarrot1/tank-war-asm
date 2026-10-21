@@ -80,6 +80,21 @@ SndBgmSetTrack PROTO :DWORD
 extern peerAddr  :sockaddr_in
 extern peerKnown :dword
 extern hSock     :dword
+; ---- 会话36：联机大厅 FSM / 掉线 / 手输直连接口 ----
+NetEnterLan   PROTO
+NetLobbyTick  PROTO
+NetLobbyState PROTO
+NetCanStart   PROTO
+NetSetStart   PROTO
+NetEnterMatch PROTO
+NetSetManual  PROTO :DWORD
+extern netLost     :dword
+extern ownPort     :dword
+extern isFixedPort :dword
+extern netDumpOn   :dword
+public netPaused
+public UiOnChar
+public UiForceLanAuto
 
 ; win32.inc 未收录的鼠标 API 原型与常量
 VK_LBUTTON     equ 001h
@@ -141,7 +156,19 @@ RST_H      equ 30
     recvTmp     db 64 dup (0)
     peerIpBuf   db 20 dup (0)
     peerIpLen   dd 0
+    ; ---- 会话36：大厅手输 IP + 掉线冻结 ----
+    ipEditMode  dd 0                   ; 1=Tab 聚焦编辑行（Enter 走连接不走开局）
+    ipBuf       db 32 dup (0)
+    ipLen       dd 0
+    manualErr   dd 0                   ; 1=ParseIp 失败红字提示
+    directOn    dd 0                   ; 1=已切手动直连模式
+    lanAuto     dd 0                   ; netloop：每 tick 自动 SetStart 并开局
+    netPaused   dd 0                   ; 1=掉线冻结玩法但继续收包（main 主循环读取）
+    prevTab     dd 0
+    lanSt       dd 0                   ; NetLobbyState 位图（渲染用）
+    lanBtnCol   dd 0                   ; 开始按钮色（FrameRect 毁 edx 兜底）
     uiBuf       db 96 dup (0)
+    nsTmp       db 16 dup (0)            ; NumStr 逆序暂存（会话36）
     menuBrush   dd ?
     menuFont    dd ?
     fontSmall   dd ?                   ; 键位容器用小字体（18px）
@@ -284,6 +311,16 @@ RST_H      equ 30
     szLanN      db "SEARCHING FOR PEERS ...", 0
     szLanF      db "PEER FOUND:", 0
     szLanS      db "CLICK/ENTER: START MATCH   ESC: BACK", 0
+    ; ---- 会话36：大厅四态/端口/手输/掉线 ----
+    szLanW      db "WAITING PEER ENTER ...", 0
+    szLanR      db "STARTING ...", 0
+    szLanBoth   db "PRESS ENTER: START MATCH (BOTH SIDES)", 0
+    szPort      db "LOCAL PORT:", 0
+    szManual    db "TAB: TYPE PEER IP[:PORT], ENTER TO CONNECT", 0
+    szDirect    db "DIRECT MODE:", 0
+    szBad       db "INVALID ADDRESS", 0
+    szLostEN    db "CONNECTION LOST - WAITING RECONNECT", 0
+    szTempEN    db "TEMP - SHARE FOR MANUAL", 0
     szStartBtn  db "START MATCH", 0
     szBackBtn   db "BACK", 0
     szFont      db "Arial", 0
@@ -320,6 +357,16 @@ RST_H      equ 30
     CN_LANN dw 6b63h,5728h,641ch,7d22h,5bf9h,624bh,0020h,002eh,002eh,002eh, 0
     CN_LANF dw 5df2h,53d1h,73b0h,5bf9h,624bh,003ah, 0
     CN_LANS dw 70B9h,51FBh,6216h,56DEh,8F66h,0FF1Ah,5F00h,59CBh,6BD4h,8D5Bh,0020h,0045h,0073h,0063h,0FF1Ah,8FD4h,56DEh, 0
+    CN_LANW dw 7B49h,5F85h,5BF9h,65B9h,6309h,0020h,0045h,006Eh,0074h,0065h,0072h,0020h,002Eh,002Eh,002Eh, 0
+    CN_LANR dw 5373h,5C06h,5F00h,59CBh,002Eh,002Eh,002Eh, 0
+    CN_LANBOTH dw 53CCh,65B9h,6309h,0020h,0045h,006Eh,0074h,0065h,0072h,0020h,5F00h,59CBh, 0
+    CN_PORT dw 672Ch,673Ah,7AEFh,53E3h,003Ah, 0
+    CN_MANUAL dw 6309h,0054h,0061h,0062h,8F93h,5BF9h,65B9h,0049h,0050h,003Ah,7AEFh,53E3h,0020h,56DEh,8F66h,8FDEh,63A5h, 0
+    CN_DIRECT dw 76F4h,8FDEh,6A21h,5F0Fh,003Ah, 0
+    CN_BAD dw 5730h,5740h,65E0h,6548h, 0
+    CN_LOST dw 8FDEh,63A5h,4E22h,5931h,0FF0Ch,7B49h,5F85h,91CDh,8FDEh,002Eh,002Eh,002Eh, 0
+    CN_TEMP dw 4E34h,65F6h,7AEFh,53E3h,0FF0Ch,624Bh,7ED9h,5BF9h,65B9h, 0
+    colErr      dd 000000CDh
     colDark     dd 00232323h
     colGray     dd 00606060h
     colHi       dd 0000C06000h
@@ -381,6 +428,111 @@ UiForceNumSel proc
     mov gameState, ST_NUMSEL
     ret
 UiForceNumSel endp
+
+; ------------------------------------------------------------
+; UiForceLanAuto -- 命令行 "tankwar netloop"：直入大厅 + 自动开局
+; 同机双开回环验收专用（tools/net_loopback_test.py）：开转储、进大厅、
+; 每 tick 自动 NetSetStart，NetCanStart 一真立即 NetEnterMatch。
+; 双方对称执行 -> 握手/种子协商走的全是真实代码路径。
+; ------------------------------------------------------------
+UiForceLanAuto proc
+    mov netDumpOn, 1
+    mov numPlayers, 2
+    mov lanAuto, 1
+    mov gameState, ST_LAN
+    invoke NetEnterLan
+    ret
+UiForceLanAuto endp
+
+; ------------------------------------------------------------
+; NumStr -- 无符号十进制转字符串（0 结尾），返回 eax=字符数
+; ------------------------------------------------------------
+NumStr proc uses ebx ecx edx esi value: dword, pBuf: dword
+    mov esi, pBuf
+    mov eax, value
+    .if eax == 0
+        mov byte ptr [esi], '0'
+        mov byte ptr [esi+1], 0
+        mov eax, 1
+        ret
+    .endif
+    xor ecx, ecx
+NS_Dig:
+    .if eax == 0
+        jmp NS_Out
+    .endif
+    xor edx, edx
+    mov ebx, 10
+    div ebx
+    add dl, '0'
+    mov nsTmp[ecx], dl
+    inc ecx
+    jmp NS_Dig
+NS_Out:
+    xor eax, eax
+NS_Wr:
+    .if eax >= ecx
+        mov byte ptr [esi+eax], 0
+        ret
+    .endif
+    mov edx, ecx
+    sub edx, eax
+    dec edx
+    movzx edx, byte ptr nsTmp[edx]
+    mov byte ptr [esi+eax], dl
+    inc eax
+    jmp NS_Wr
+NumStr endp
+
+; ------------------------------------------------------------
+; UiOnChar -- WndProc WM_CHAR 转发（main.asm 每字符调用）
+; 仅 ST_LAN 且 Tab 聚焦编辑行时生效；放行 0-9 . : 退格 回车；
+; 其余（含中文输入法合成字符）一律吞掉不响应，改键页不参与。
+; ------------------------------------------------------------
+UiOnChar proc wCh: dword
+    .if gameState != ST_LAN
+        ret
+    .endif
+    .if ipEditMode == 0
+        ret
+    .endif
+    mov eax, wCh
+    .if eax == 8                          ; Backspace
+        .if ipLen > 0
+            dec ipLen
+            mov ecx, ipLen
+            mov byte ptr ipBuf[ecx], 0
+        .endif
+        ret
+    .endif
+    .if eax == 13                         ; Enter -> 解析并直连
+        mov ecx, ipLen
+        mov byte ptr ipBuf[ecx], 0
+        invoke NetSetManual, addr ipBuf
+        .if eax == 0
+            mov manualErr, 1
+        .else
+            mov manualErr, 0
+            mov directOn, 1
+        .endif
+        ret
+    .endif
+    .if eax < '0'
+        ret
+    .endif
+    .if eax > '9' && eax != '.' && eax != ':'
+        ret
+    .endif
+    mov ecx, ipLen
+    .if ecx >= 28
+        ret
+    .endif
+    mov byte ptr ipBuf[ecx], al
+    inc ecx
+    mov byte ptr ipBuf[ecx], 0
+    mov ipLen, ecx
+    ret
+UiOnChar endp
 
 ; ------------------------------------------------------------
 ; UiTextZ -- 输出 0 结尾字符串
@@ -446,12 +598,14 @@ MenuActivate proc
         mov gameState, ST_SET
     .elseif menuSel == 4
         mov gameState, ST_LAN
-        invoke NetShutdown
-        invoke NetInit
-        mov peerKnown, 0
         mov discTimer, 0
-        invoke setsockopt, hSock, SOL_SOCKET, SO_BROADCAST,
-               addr oneVal, 4
+        mov ipEditMode, 0
+        mov manualErr, 0
+        mov lanAuto, 0
+        invoke NetEnterLan              ; 会话36：socket 常驻不再重建/关断
+        mov ipLen, 0
+        mov byte ptr ipBuf[0], 0
+        mov directOn, 0
     .elseif menuSel == 5
         invoke PostQuitMessage, NULL
     .else
@@ -671,10 +825,10 @@ UT_QuitToMenu proc
     mov matchOver, 0
     mov gameState, ST_MENU
     .if netMode != 0
-        invoke NetShutdown
-        mov netMode, 0
-        invoke NetInit
-        mov peerKnown, 0
+        mov netMode, 0                  ; 会话36：socket 常驻；清对端回大厅态
+        mov netPaused, 0
+        mov lanAuto, 0
+        invoke NetEnterLan
     .endif
     ret
 UT_QuitToMenu endp
@@ -685,6 +839,7 @@ UT_QuitToMenu endp
 UiTick proc uses ebx esi edi
     local upE:dword, dnE:dword, ltE:dword, rtE:dword
     local enE:dword, esE:dword, scanVk:dword
+    local tabE:dword
     local lbE:dword
 
     ; ---- 鼠标采样 ----
@@ -718,6 +873,8 @@ UiTick proc uses ebx esi edi
     mov enE, eax
     invoke KeyEdge, VK_ESCAPE, addr prevEsc
     mov esE, eax
+    invoke KeyEdge, VK_TAB, addr prevTab       ; 会话36：大厅编辑焦点
+    mov tabE, eax
 
     ; ---- 会话 28：BGM 分页——对局用旧主题，其余页面用主页新主题
     ;      （同轨直返，零开销）----
@@ -730,6 +887,15 @@ UiTick proc uses ebx esi edi
 
     ; ---------- 对局中：Esc 暂停 / 比赛结束回菜单 ----------
     .if gameState == ST_PLAY
+        ; 会话36：掉线冻结——玩法停摆但收包继续（main 主循环读 netPaused），
+        ; 对端任何一包到达即 netLost 自愈、冻结自动解除
+        mov eax, netMode
+        .if eax != 0
+            mov ecx, netLost
+            mov netPaused, ecx
+        .else
+            mov netPaused, 0
+        .endif
         ; 倒计时（pauseMode==2）：到 0 恢复对局；每秒哔一声
         mov eax, pauseMode
         .if eax == 2
@@ -1244,56 +1410,64 @@ SS_Vl2:
         ; （会话 23 删除：本页不渲染键位行，旧 setSel↑↓/Enter 隐形改键块
         ;   会在设置页误吞按键、悄悄改写 keyTable —— "键位页面有问题"元凶）
 
-    ; ---------- 联机大厅 ----------
+    ; ---------- 联机大厅（会话36：net.asm FSM 全面接线） ----------
     .elseif gameState == ST_LAN
-        inc discTimer
-        .if discTimer >= 30
-            mov discTimer, 0
-            mov bcastAddr.sin_family, AF_INET
-            invoke htons, 28888
-            mov bcastAddr.sin_port, ax
-            mov bcastAddr.sin_addr, INADDR_BROADCAST
-            invoke sendto, hSock, offset discBuf, 7, 0,
-                   addr bcastAddr, SIZEOF sockaddr_in
+        invoke NetLobbyTick
+        invoke NetLobbyState
+        mov lanSt, eax
+        .if peerKnown != 0
+            invoke IpToStr, addr peerAddr.sin_addr, offset peerIpBuf
+            mov peerIpLen, eax
         .endif
-        mov discLen, SIZEOF sockaddr_in
-        invoke recvfrom, hSock, offset recvTmp, 64, 0,
-               addr discFrom, addr discLen
-        .if eax >= 7
-            mov eax, dword ptr recvTmp[0]
-            .if eax == 454E5754h               ; "TWNE" (小端)
-                cmp byte ptr recvTmp[4], 'T'   ; "T01" 的 'T'
-                .if ZERO?
-                    invoke StrCopy, addr discFrom, addr peerAddr, 16
-                    mov peerKnown, 1
-                    invoke IpToStr, addr peerAddr.sin_addr, offset peerIpBuf
-                    mov peerIpLen, eax
+        ; netloop：每 tick 自动按下开始（双方对称即自动双 Enter 开局）
+        .if lanAuto != 0
+            invoke NetSetStart
+        .endif
+        ; 我按开始（Enter 或点开始按钮 400..600 y410..450）；编辑聚焦时屏蔽
+        .if ipEditMode == 0
+            .if enE != 0
+                invoke NetSetStart
+            .endif
+            .if lbE != 0 && mouseX >= 400 && mouseX < 600
+                .if mouseY >= 410 && mouseY < 450
+                    invoke NetSetStart
                 .endif
             .endif
         .endif
-        ; 会话 23：开始对局 / 返回按钮可点（开始 400..600 y410..450，返回 y460..500）
-        .if lbE != 0 && mouseX >= 400 && mouseX < 600 && peerKnown != 0
-            .if mouseY >= 410 && mouseY < 450
-                jmp UT_LanStart
-            .endif
-        .endif
-        .if enE != 0 && peerKnown != 0
-UT_LanStart:
-            mov numPlayers, 2
-            invoke GameInit
-            mov netMode, 1
+        ; 双 Enter + 握手齐 -> NetEnterMatch（同种子同图同出生点）
+        invoke NetCanStart
+        .if eax != 0
+            invoke NetEnterMatch
+            mov lanAuto, 0
+            mov ipEditMode, 0
             mov gameState, ST_PLAY
         .endif
-        .if lbE != 0 && mouseX >= 400 && mouseX < 600
-            .if mouseY >= 460 && mouseY < 500
-                jmp UT_LanBack
+        ; Tab 切换手输编辑焦点
+        .if tabE != 0
+            xor ipEditMode, 1
+            mov manualErr, 0
+        .endif
+        ; 点击手输行（x350..650 y316..346）聚焦编辑
+        .if lbE != 0 && mouseX >= 350 && mouseX < 650
+            .if mouseY >= 316 && mouseY < 346
+                mov ipEditMode, 1
             .endif
         .endif
+        ; 返回按钮（400..600 y460..500）
+        .if lbE != 0 && mouseX >= 400 && mouseX < 600
+            .if mouseY >= 460 && mouseY < 500
+                invoke NetEnterLan
+                mov gameState, ST_MENU
+            .endif
+        .endif
+        ; Esc：编辑中先退编辑；否则清握手状态回主菜单
         .if esE != 0
-UT_LanBack:
-            invoke NetShutdown
-            mov peerKnown, 0
-            mov gameState, ST_MENU
+            .if ipEditMode != 0
+                mov ipEditMode, 0
+            .else
+                invoke NetEnterLan
+                mov gameState, ST_MENU
+            .endif
         .endif
 
     ; ---------- 技能说明页：左右翻页 ----------
@@ -1416,6 +1590,19 @@ UiRender proc uses ebx esi edi
 
     .if gameState == ST_PLAY
         invoke GfxRender
+        ; 会话36：掉线横幅（netPaused 冻结期间玩法不动，收包继续）
+        mov eax, netMode
+        .if eax != 0
+            mov ecx, netLost
+            .if ecx != 0
+                mov boxRc.left, 240
+                mov boxRc.top, 258
+                mov boxRc.right, 752
+                mov boxRc.bottom, 334
+                invoke FrameRect, hdcBack, addr boxRc, boxCur
+                invoke UiTextL, hdcBack, 264, 268, offset szLostEN, offset CN_LOST, colErr
+            .endif
+        .endif
         jmp UR_Done
     .endif
 
@@ -1694,28 +1881,97 @@ NS_BoxDone:
         invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
         invoke SelectObject, hdcBack, menuFont
 
-    ; ---------- 联机大厅 ----------
+    ; ---------- 联机大厅（会话36：四态 + 端口 + 手输编辑行） ----------
     .elseif gameState == ST_LAN
         invoke UiTextL, hdcBack, 440, 130, offset szLanT, offset CN_LANT, colDark
-        invoke UiTextL, hdcBack, 350, 220, offset szLanB, offset CN_LANB, colGray
-        .if peerKnown != 0
-            invoke UiTextL, hdcBack, 350, 280, offset szLanF, offset CN_LANF, colFound
-            invoke UiTextZ, hdcBack, 530, 280, offset peerIpBuf, colFound
-        .else
-            invoke UiTextL, hdcBack, 350, 280, offset szLanN, offset CN_LANN, colGray
+        ; 本机监听端口行（B1 退避时展示临时端口，供跨网手输分享）
+        invoke UiTextL, hdcBack, 350, 196, offset szPort, offset CN_PORT, colGray
+        mov eax, ownPort
+        invoke NumStr, eax, offset uiBuf
+        invoke UiTextZ, hdcBack, 512, 196, offset uiBuf, colDark
+        .if isFixedPort == 0
+            invoke SelectObject, hdcBack, fontSmall
+            invoke UiTextL, hdcBack, 596, 202, offset szTempEN, offset CN_TEMP, colErr
+            invoke SelectObject, hdcBack, menuFont
         .endif
-        invoke UiTextL, hdcBack, 350, 360, offset szLanS, offset CN_LANS, colDark
-        ; 会话 23：按钮组（开始 400..600 y410..450 / 返回 y460..500，与点击区一致）
+        ; 对端发现状态
+        mov eax, lanSt
+        and eax, 1
+        .if eax != 0
+            invoke UiTextL, hdcBack, 350, 240, offset szLanF, offset CN_LANF, colFound
+            invoke UiTextZ, hdcBack, 530, 240, offset peerIpBuf, colFound
+        .elseif directOn != 0
+            invoke UiTextL, hdcBack, 350, 240, offset szDirect, offset CN_DIRECT, colGray
+            invoke UiTextZ, hdcBack, 500, 240, offset ipBuf, colGray
+        .else
+            invoke UiTextL, hdcBack, 350, 240, offset szLanN, offset CN_LANN, colGray
+        .endif
+        ; 开始流程四态（HELLO 齐后：按 Enter / 等待对方 / 即将开始）
+        mov eax, lanSt
+        and eax, 2
+        .if eax != 0
+            mov eax, lanSt
+            and eax, 0Ch
+            .if eax == 0Ch
+                invoke UiTextL, hdcBack, 350, 280, offset szLanR, offset CN_LANR, colHi
+            .elseif eax == 4
+                invoke UiTextL, hdcBack, 350, 280, offset szLanW, offset CN_LANW, colGray
+            .else
+                invoke UiTextL, hdcBack, 350, 280, offset szLanBoth, offset CN_LANBOTH, colDark
+            .endif
+        .endif
+        ; 手输直连提示 + 编辑框（Tab 聚焦；仅放行 0-9 . : 退格回车）
+        invoke SelectObject, hdcBack, fontSmall
+        invoke UiTextL, hdcBack, 350, 300, offset szManual, offset CN_MANUAL, colGray
+        invoke SelectObject, hdcBack, menuFont
+        mov edx, colDark
+        .if manualErr != 0
+            mov edx, colErr
+        .endif
+        mov boxRc.left, 350
+        mov boxRc.top, 316
+        mov boxRc.right, 650
+        mov boxRc.bottom, 346
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        .if manualErr != 0
+            mov edx, colErr
+        .else
+            mov edx, colDark
+        .endif
+        invoke SelectObject, hdcBack, fontSmall
+        mov ecx, ipLen
+        .if ipEditMode != 0
+            mov byte ptr ipBuf[ecx], '_'
+            mov byte ptr ipBuf[ecx+1], 0
+        .endif
+        invoke UiTextZ, hdcBack, 358, 322, offset ipBuf, edx
+        .if ipEditMode != 0
+            mov byte ptr ipBuf[ecx], 0
+        .endif
+        invoke SelectObject, hdcBack, menuFont
+        .if manualErr != 0
+            invoke UiTextL, hdcBack, 660, 322, offset szBad, offset CN_BAD, colErr
+        .endif
+        ; 按钮组（开始 400..600 y410..450 / 返回 y460..500，与点击区一致）
         invoke SelectObject, hdcBack, fontSmall
         mov edx, colGray
-        .if peerKnown != 0
+        invoke NetCanStart
+        .if eax != 0
             mov edx, colHi
+        .else
+            mov eax, lanSt
+            and eax, 1
+            .if eax != 0
+                mov edx, colDark
+            .endif
         .endif
+        mov lanBtnCol, edx                 ; FrameRect 可能毁 edx，落存再取
         mov boxRc.left, 400
         mov boxRc.top, 410
         mov boxRc.right, 600
         mov boxRc.bottom, 450
         invoke FrameRect, hdcBack, addr boxRc, boxCur
+        mov edx, lanBtnCol
         invoke UiTextL, hdcBack, 446, 422, offset szStartBtn, offset CN_STARTBTN, edx
         mov boxRc.top, 460
         mov boxRc.bottom, 500

@@ -12,3 +12,6 @@
 # 调试/构建产物（会话 19 起）
 tankwar.map
 *.png
+
+# 联机回环测试转储（tools/net_loopback_test.py 产物，会话36）
+netdump_*.txt

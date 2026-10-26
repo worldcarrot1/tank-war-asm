@@ -1,7 +1,9 @@
-# 网络协议设计（v1，会话 36 落地）
+# 网络协议设计（v1.1，会话 36 落地 / 会话 37 增中继 / 会话 51 增 STUN 反射包，纯增量兼容）
 
 > v0（2026-10-16）为纸面设计；v1 是**已实测**的实现口径（同机双开回环
 > `tools/net_loopback_test.py` 全绿 + 无头自检 T46 组 13 项断言）。
+> v1.1 新增**中继模式**（会话 37，`server/relay_server.c` + `NET_JOIN`/`NET_PING`
+> 两包型 + 对局内 RTT，`tools/relay_loopback_test.py` 全链绿），P2P 语义不变。
 > 结构体定义唯一真源在 `inc/game.inc`，本文件是其协议语义说明。
 >
 > 命中判定规则沿用 v0 注记：反弹弹可击毁任何坦克（含发射者自己），
@@ -12,7 +14,7 @@
 | 项 | 值 |
 |----|----|
 | 传输 | UDP，无连接，单 socket（收包按首字节分流） |
-| 拓扑 | P2P，两客户端直连，无服务器 |
+| 拓扑 | P2P 直连（LAN 广播/手输 IP/ZeroTier）；**可选 UDP 中继**（v1.1，跨任意 NAT，代价=一跳延迟） |
 | 监听端口 | 首选 28888；被占用则**换 socket 重绑临时端口**并用 `getsockname` 回读真实端口（B1，同机双开可行的前提） |
 | 发包节奏 | 对局中每逻辑 tick 一个状态包（60Hz）；大厅期 announce 每 30 tick（手动直连模式 15 tick）、HELLO 每 8 tick |
 | 同步模型 | 状态同步：只同步「结果状态」+「一次性事件」，不同步「输入」 |
@@ -32,6 +34,9 @@ RNG/浮点分叉都是灾难；状态同步把分叉代价限制在「弹道微�
 | `'T'` | NET_PROBE | 16B | 大厅发现：announce（0）/ reply（1），兼作握手兜底载体 |
 | `'H'` | NET_HS | 16B | 大厅握手：HELLO（0）/ START（1），带种子与局数 |
 | `'L'` | NET_LSR | 48B | 激光折线：发射端权威算好整条路径广播 |
+| `'J'` | NET_JOIN | 16B | 中继房间注册/续租（仅与服务器对话，v1.1） |
+| `'P'` | NET_PING | 16B | RTT 探测（对端自动 pong；服务器只转发，v1.1） |
+| `'S'` | NET_STUN | 18B | 公网观测点反射（仅服务器→双方，不转发，会话 51） |
 
 状态包 magic 为 `dw 'WT'`（小端落内存字节 `'W','T'`，首字节即 `'W'`），
 与探测包 sig `"TWNET01"`（首字节 `'T'`）天然分家——v0 文档写的 0x5457 系笔误。
@@ -66,6 +71,19 @@ RNG/浮点分叉都是灾难；状态同步把分叉代价限制在「弹道微�
 - bit1 死亡：`NetApplyRx` 见到置位 -> 镜像 `alive=0, hp=0`；未置位 -> `alive=1`。
   v0 的无条件 `alive=1` 会把对方尸体「打复活」，回合永不结束，v1 修正。
   死亡结算权在被死者本机（命中判定权威），对端只是镜像显示。
+
+### 断包外推（会话39，纯收端呈现层，线上格式零变更）
+
+- `NetApplyRx` 每次覆写镜像位置**前**，用 新包位置 − 旧镜像位置 得到
+  per-tick 位移估计，钳位 ±4px 存 `mirVX/mirVY`（氮气极速≈4.3 取 4 保守；
+  丢包后两包差跨多 tick 会顶满钳位，属可接受的短时过冲）。
+- `NetMirrorExtrap`（`NetFlush` 尾部，`NetCheckTimeout` 之后）：仅当
+  `netLost==0 ∧ peerKnown ∧ rxSeen ∧ 镜像存活 ∧ delta=netTick−lastRxTick ∈ 1..3`
+  时按 `v >> (delta-1)` 三档衰减推进并钳地图界；delta≥4 冻结等待 B4 掉线弹层。
+- 健康链路收包与外推同在 `NetFlush`：收包先把 `lastRxTick` 追平 `netTick`，
+  delta=0 恒不触发——单机回环/双机串流零回归（T50 断言 j、loopback 复测实证）。
+- MASM 注意：钳位不能用 `.if reg < -常量`（按无符号比较，`3 < -4` 为真），
+  已手写 `cmp` + 有符号跳转。
 
 ### 事件槽（evtKind/evtSeq/evtX/evtData）
 
@@ -202,7 +220,8 @@ HELLO/START 只是快路径冗余。
 等效最简 NAT 打洞（对同一公网出口/端口映射拓扑足够；对称 NAT 见下）。
 
 跨网对战实操（ZeroTier/SakuraFrp 组网、防火墙放行、对称 NAT 判定）见
-[ONLINE_PLAY.md](ONLINE_PLAY.md)。游戏自身不做 STUN 打洞，列入 M3.5。
+[ONLINE_PLAY.md](ONLINE_PLAY.md)。游戏自身不做 STUN 打洞；对称 NAT 场景由
+v1.1 **自建中继**覆盖（见「中继模式」节），零端口配置。
 
 ## 技能同步分档（v1 口径）
 
@@ -211,6 +230,90 @@ HELLO/START 只是快路径冗余。
 | A·镜像 | 冰盾/穿墙/氮气/驭水 | effOn+skillId 随状态包镜像；效果物理（水带矩形等）由两端用本车位+镜像位**对称**计算，天然收敛；盾挡弹在车主机结算 |
 | A·事件 | 激光（预览+折线包）/ 地雷 / 道具 | EVT_LASER_PREV + NET_LSR / EVT_MINE / 共享流同位同型 + EVT_PICK |
 | **B·v1 禁用** | 换位术 SK_SWAP、定格术 SK_PHANTOM | netMode 拾取池剔除（SpawnPickup 取 1..7，7→8 重映射，永不发 {7,9}）+ TryUseSkill 双保险早退。原因：DoSwap 同时挪两车/虚影判弹各自演算，两端镜像差会**永久发散**。要联机可用需「发动方权威+双坐标包」，属 M3 事件层 |
+
+## 中继模式（v1.1，会话 37：`relayMode`）
+
+大厅输入 `服务器IP[:端口]#房间号`（或命令行 `netrelay "ip#room"`）即进中继：
+`NetSetServer` 把 **peerAddr 钉死为服务器**，此后 'T'/'H'/'W'/'L'/'P' 全部单播
+给服务器，服务器**逐字节透传**给同房间配对的另一名成员——游戏协议零改动，
+直连能跑的一切（握手/事件槽/激光/RTT）经中继同样跑。代价=多一跳；好处=
+穿过任意 NAT（含对称 NAT，M3.5 STUN 的替代方案）。
+
+### 加入包（NET_JOIN，16 字节）——仅客户端↔服务器
+
+```
+0     1    magic0   'J'
+1     1    jtype    0=join/心跳（客户端发） 1=ack（服务器回）
+2     1    ver      = NET_VER
+3     1    st       ack 专用：0=WAIT(等待第二人) 1=PAIR(已配对) 2=FULL(房满)
+4     4    room     房间号 1..999999（ack 回显；客户端按 room 匹配认账）
+8     4    cookie   请求=本机 lobbySeed；ack 恒 0（自回声判据）
+```
+
+客户端每 60 tick（1s）续租一次（进厅立即首发；对局中 `NetTickClocks` 继续
+续租，防 10s 租约到期被回收断线）。收端 `NetHandleJP` 三道过滤：
+jtype==1、room==本机 relayRoom、（回声形态时）cookie!=lobbySeed。
+
+### RTT 包（NET_PING，16 字节）——客户端↔客户端（经服务器透明转发）
+
+```
+0     1    magic0   'P'
+1     1    rep      0=请求 1=pong（收方就地翻转回发，ts 不动）
+4     4    ts       请求方 GetTickCount 时间戳（pong 认账凭据）
+8     4    cookie   发送方 lobbySeed（回声过滤）
+```
+
+peerKnown 后每 30 tick 一发；pong 满足 `ts==lastPingTs && cookie!=本机种子`
+才计 `netRtt = GetTickCount - ts`。**样本未跨 tick 边界（GetTickCount 粒度
+~15.6ms）时按 1ms 计**，EWMA `netRttAvg=(3*旧+新)/4` 存平滑值。大厅右上
+`RTT n ms`、对局 HUD 右下 `PING  n`（`netMode && netRttOk` 才显示）。
+
+### STUN 反射包（NET_STUN，18 字节）——仅服务器→客户端（会话 51 步A）
+
+STUN 语义的最小实现：服务器把"**另一名成员在本机看来**的源 addr:port"（即
+其 NAT 映射后的公网出口）反射给每一方。配对期间每次 'J' ack 后向双方各追
+发一包（1s 一拍，自愈式；步B 直连升级将以此为原料）：
+
+```
+0     1    magic0   'S'
+1     1    ver      = NET_VER
+2     2    rsv      恒 0（预留子类型）
+4     4    peerIp   对端观测 IP，线上裸 4 字节（网络序，可直进 sockaddr）
+8     2    peerPort 对端观测端口，线上裸 2 字节（网络序 = sin_port 原字节）
+10    4    room     所在房间（LE，与 'J' ack 同口径）
+14    4    cookie   回显【收件人自己】最近一次 JOIN 携带的 lobbySeed
+```
+
+客户端 `NetHandleJP` 采信三道闸：`relayMode!=0` ∧ `room==relayRoom` ∧
+`cookie==本机 lobbySeed`（收件人自己的种子，第三方无从伪造；旧客户端分发
+器不认 'S' 自然忽略=向后兼容）。采信后**仅存储** `stunIp`（裸网络序 4B）/
+`stunPort`（xchg al,ah 转主机序）/ `stunSeen=1`，peerAddr 仍钉服务器，
+**行为零变化**。可见化两处：大厅中继行下小字 `STUN a.b.c.d:port`（可拿它
+手输试直连）；netdump B/T 行尾三列（对端 stunPort 应恒等于对方 H 行自报
+监听口——中继回环验收 1b 据此交叉对账）。
+
+### 服务器规则（`server/relay_server.c`）
+
+- 槽位按 **(源IP,源端口)** 认人（64 槽），10s 无 'J'/转发包回收；
+- 同房间按入房先后 `joinSeq` 取**最早两名**为对子，第三人 ack=FULL 且不
+  与对子互通（转发仅限对子之间）；未注册来源的非 'J' 包一律丢弃；
+- 'J' 由服务器自己消化，其余包原样 `sendto` 对端（含对端尚未入房的探测包，
+  无害）；
+- 会话 51：槽位新增 `cookie` 字段（常新自最近 JOIN）；配对态每次 'J' ack 后
+  向双方各发一包 'S'（互报观测端点）；收包侧 **'S' 不转发**（服务器专属魔法，
+  客户端注入的 'S' 直接丢弃）。
+
+### 握手尾巴（hsTail，修客机抢先开局主机永卡大厅）
+
+竞态：客机先收到主机 START 即 `NetEnterMatch`，大厅 FSM 停转——它自己带
+START 的 announce 还没轮到发出（15/30 tick 周期），主机 `gotStart` 永 0。
+直连对称时序掩盖了它，中继转发延迟把它放大成必现。修法：**进局瞬间置
+`hsTail`，300 tick（5s）内每 15 tick 经 NetFlush 补发一发 announce**——
+NET_PROBE 载荷天然带 `myStart`（偏移 9），卡住的 peer 大厅 'T' 分支置
+`gotStart` 即开局。收到对端首个 W（`AR_Live`）或回大厅（`NetEnterLan`）
+清零；对局期收端 `NF_Recv` 本就忽略 'T'，多发无害。直连双端同步开局时
+首个 W 在 1 tick 内到、尾巴在首发（第 15 tick）前即清，**回归基线逐字节
+不变**（T47 前后 md5 已证）。
 
 ## 已知分歧（状态同步固有，v1 接受）
 
@@ -226,20 +329,30 @@ M3 计划的事件重同步（关键分歧点强覆盖）暂不需要——回�
 
 ```
 H <isFixed> <lobbySeed> <port> <pid>          —— 开文件即写
-B <hello> <start> <myStart> <peerKnown> <tick> —— 大厅期每 16 tick
+B <hello> <start> <myStart> <peerKnown> <tick> <stunSeen> <stunPort> <stunIp>
+  —— 大厅期每 16 tick（会话 51 尾三列；快开局实例可能整局 0 行）
 G <sharedSeed> <maxRounds> <mapIndex>          —— NetEnterMatch 写（同种子证据）
 T <tick> <rx> <lost> <pk> <x0> <y0> <mx> <my> <a0> <a1> <hp1> <sk1> <ef1>
-  <aim1> <b0> <b1> <m0> <m1> <pick> <rngm>     —— 对局每 tick 一行
+  <aim1> <b0> <b1> <m0> <m1> <pick> <rngm> <rtt> <stunSeen> <stunPort> <stunIp>
+  —— 对局每 tick 一行
 ```
 
 T 行：rx=rxSeen 累计收包数、lost/pk=netLost/peerKnown；0=本端 1/mx my=镜像；
 hp1/sk1/ef1/aim1=镜像血量/技能/效果/瞄准；b=按 owner 弹计数、m=雷计数、
-pick=当前道具型、rngm=rngMatch 共享流值（两端同行应相等）。
+pick=当前道具型、rngm=rngMatch 共享流值（两端同行应相等）、
+**rtt=netRttAvg（会话 37 追加第 21 列，中继回环验收据此判 'P' 往返）**、
+**stunSeen/stunPort/stunIp（会话 51 追加 22~24 列，STUN 观测点；本端
+stunPort 应恒等于对端 H 行自报监听口，stunIp 为裸网络序 4 字节的十进制，
+环回=16777343）**。旧解析器按位取前 20/21 列，追加列天然兼容。
 
-## 联机建立流程（v1 实现版，替代 v0 四步）
+## 联机建立流程（v1.1 实现版，替代 v0 四步）
 
-1. 双方启动（bind 28888 或退避临时口），菜单进「联机大厅」，或大厅内手输 IP 直连
-2. announce/reply 互发现（LAN 广播+环回；跨网手动单播）
-3. HELLO 换种子 -> 双方按 Enter -> 共享种子开局（同图同出生点）
-4. 对局：每 tick 状态包 + 事件槽 + 激光折线包
+1. 双方启动（bind 28888 或退避临时口），菜单进「联机大厅」；二选一：
+   大厅内手输对端 IP 直连，或输 `中继服务器IP[:端口]#房间号` 走中继（v1.1）
+2. announce/reply 互发现（LAN 广播+环回；跨网手动单播；中继=服务器转手，
+   先 'J' 配对 WAIT->PAIR）
+3. HELLO 换种子 -> 双方按 Enter -> 共享种子开局（同图同出生点）；进局方
+   短窗补发带 START 的 announce（hsTail）保证慢半拍一方也能进局
+4. 对局：每 tick 状态包 + 事件槽 + 激光折线包（中继期 'J' 心跳续租、
+   'P' 周期测 RTT）
 5. 2s 无包 -> netLost 覆盖层；来一包即自愈；Esc 回大厅可重连

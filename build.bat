@@ -33,14 +33,14 @@ set LIB=%SDKLIB%\um\x86;%SDKLIB%\ucrt\x86;%MSVC%\lib\x86
 echo Toolchain: MSVC %MSVCVER% / SDK %SDKVER%
 
 echo [1/2] Assembling...
-ml /c /coff /I inc src\main.asm src\ui.asm src\gfx.asm src\input.asm src\game.asm src\net.asm src\sound.asm
+ml /c /coff /I inc src\main.asm src\ui.asm src\gfx.asm src\input.asm src\game.asm src\bot.asm src\rlbot.asm src\net.asm src\sound.asm src\achv.asm src\rlhost.asm
 if errorlevel 1 (
     echo [ERROR] Assemble failed.
     exit /b 1
 )
 
 echo [2/2] Linking...
-link /MAP /SUBSYSTEM:WINDOWS /ENTRY:start /OUT:tankwar.exe main.obj ui.obj gfx.obj input.obj game.obj net.obj sound.obj winmm.lib
+link /MAP /SUBSYSTEM:WINDOWS /ENTRY:start /OUT:tankwar.exe main.obj ui.obj gfx.obj input.obj game.obj bot.obj rlbot.obj net.obj sound.obj achv.obj rlhost.obj winmm.lib
 if errorlevel 1 (
     echo [ERROR] Link failed.
     exit /b 1

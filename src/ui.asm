@@ -43,6 +43,8 @@ public UiRender
 public UiTextZ
 public UiForcePlay2
 public UiForceNumSel
+public UiForceBotMatch             ; 会话38：黑色人机挑战局入口
+public UiSyncBotName               ; 会话38：槽1显示名同步（net.asm 退人机用）
 
 extern hWnd      :dword
 extern hdcBack   :dword
@@ -74,6 +76,15 @@ GfxRender PROTO
 NetInit   PROTO
 NetFlush  PROTO
 NetShutdown PROTO
+AchvCountOwned PROTO                  ; achv.asm 会话40：已收集数（图鉴页眉）
+AchvGetDate    PROTO :DWORD           ; achv.asm 会话41：解锁日期 yyyymmdd
+AchvGetProg    PROTO :DWORD           ; achv.asm 会话40：单条进度查询
+AchvGetOwn     PROTO :DWORD           ; achv.asm 会话40：单条解锁查询
+extern achvDefs       :byte           ; 定义表基址（ACHDEF 形状，按 ACH_SIZE 步行）
+extern achvToastId    :dword          ; 解锁弹层成就号（-1 无）
+extern achvToastT     :dword          ; 解锁弹层剩余 tick
+extern achvMatchKills :dword          ; 本场击杀（单场类行现值显示）
+extern achvUnseen     :dword          ; 会话41：本次运行新解锁未读（菜单角标）
 SndVolume PROTO :DWORD
 SndPlay   PROTO :DWORD
 SndBgmSetTrack PROTO :DWORD
@@ -88,13 +99,28 @@ NetCanStart   PROTO
 NetSetStart   PROTO
 NetEnterMatch PROTO
 NetSetManual  PROTO :DWORD
+; ---- 会话37 M3.5：中继服务器联机 + RTT 显示 ----
+NetSetServer    PROTO :DWORD
+NetResetTargets PROTO
+extern relayMode   :dword
+extern relayRoom   :dword
+extern relaySt     :dword
+; ---- 会话51 STUN步A（net.asm）----
+extern stunIp      :dword
+extern stunPort    :dword
+extern stunSeen    :dword
+extern netRttAvg   :dword
+extern netRttOk    :dword
 extern netLost     :dword
 extern ownPort     :dword
 extern isFixedPort :dword
 extern netDumpOn   :dword
+extern botMask     :dword          ; bot.asm（会话39：bit i=槽i黑色人机）
 public netPaused
+public onlineBanT                  ; 会话39：联机禁用技提示 toast（game 置位、本模块渲染递减）
 public UiOnChar
 public UiForceLanAuto
+public UiForceRelayAuto
 
 ; win32.inc 未收录的鼠标 API 原型与常量
 VK_LBUTTON     equ 001h
@@ -122,6 +148,8 @@ RST_H      equ 30
     netMode     dd 0                   ; 1 = 联机对局（主循环调用 NetFlush）
     menuSel     dd 0
     numSel      dd 2
+    numBot      dd 0                 ; 会话39：人数页人机补位数（0..numSel-1，占高档槽）
+    prevBotMask dd 0                 ; 会话39：上次同步的 botMask（改名恢复判据）
     roundsSel   dd 11                  ; 人数页可调的比赛局数（11..51 奇数）
     playerName  db "P1", 0, 13 dup (0), "P2", 0, 13 dup (0)
                 db "P3", 0, 13 dup (0), "P4", 0, 13 dup (0)   ; 每人 16 字节
@@ -138,6 +166,12 @@ RST_H      equ 30
     prevRight   dd 0
     prevEnter   dd 0
     prevEsc     dd 0
+    prevK1      dd 0                ; 会话41：图鉴 1..4/Home/End 跳页
+    prevK2      dd 0
+    prevK3      dd 0
+    prevK4      dd 0
+    prevKHome   dd 0
+    prevKEnd    dd 0
     prevAny     dd 0
     prevLBtn    dd 0                   ; 鼠标左键上帧状态（边沿检测）
     mousePt     POINT <>               ; 鼠标客户区坐标（GetCursorPos+ScreenToClient）
@@ -156,6 +190,7 @@ RST_H      equ 30
     recvTmp     db 64 dup (0)
     peerIpBuf   db 20 dup (0)
     peerIpLen   dd 0
+    stunBuf     db 32 dup (0)          ; 会话51 STUN步A："STUN a.b.c.d:port" 显示缓冲
     ; ---- 会话36：大厅手输 IP + 掉线冻结 ----
     ipEditMode  dd 0                   ; 1=Tab 聚焦编辑行（Enter 走连接不走开局）
     ipBuf       db 32 dup (0)
@@ -164,6 +199,7 @@ RST_H      equ 30
     directOn    dd 0                   ; 1=已切手动直连模式
     lanAuto     dd 0                   ; netloop：每 tick 自动 SetStart 并开局
     netPaused   dd 0                   ; 1=掉线冻结玩法但继续收包（main 主循环读取）
+    onlineBanT  dd 0                   ; 会话39：联机禁用技按压提示倒计时（渲染递减，2s 自隐）
     prevTab     dd 0
     lanSt       dd 0                   ; NetLobbyState 位图（渲染用）
     lanBtnCol   dd 0                   ; 开始按钮色（FrameRect 毁 edx 兜底）
@@ -285,10 +321,25 @@ RST_H      equ 30
     szItem2     db "SETTINGS", 0
     szItem3     db "LAN PLAY", 0
     szItem4     db "EXIT", 0
+    szItemBot   db "BLACK BOT DUEL", 0      ; 会话38：黑色人机挑战局
+    szItemAch   db "ACHIEVEMENTS", 0        ; 会话40：成就图鉴入口
+    szItemAchNew db "ACHIEVEMENTS *(NEW)", 0 ; 会话41：有新解锁未读时的变体
+    szAchT      db "ACHIEVEMENT CODEX", 0
+    szAchProg   db "COLLECTED", 0
+    szToastAch  db "ACHIEVEMENT UNLOCKED", 0
+    szRar0      db "COMMON", 0
+    szRar1      db "RARE", 0
+    szRar2      db "EPIC", 0
+    szRar3      db "LEGEND", 0
+    szDoneEN    db "DONE", 0
+    szLockEN    db "LOCKED", 0
+    szBotNm     db "BLACK BOT", 0
+    szPDfl      db "P", 0            ; 会话39：恢复默认名前缀（后随槽号+1）
     szNumT      db "SELECT PLAYERS", 0
     szNumL      db "<<", 0
     szNumR      db ">>", 0
     szRounds    db "ROUNDS", 0
+    szBots      db "BOTS", 0
     szHint      db "ENTER: CONFIRM   ESC: BACK", 0
     szNameHint  db "CLICK NAME TO RENAME", 0
     szNameEdit  db "TYPE A NAME, ENTER TO OK", 0
@@ -316,10 +367,11 @@ RST_H      equ 30
     szLanR      db "STARTING ...", 0
     szLanBoth   db "PRESS ENTER: START MATCH (BOTH SIDES)", 0
     szPort      db "LOCAL PORT:", 0
-    szManual    db "TAB: TYPE PEER IP[:PORT], ENTER TO CONNECT", 0
+    szManual    db "TAB: IP[:PORT] OR SRV:PORT#ROOM, ENTER", 0
     szDirect    db "DIRECT MODE:", 0
     szBad       db "INVALID ADDRESS", 0
     szLostEN    db "CONNECTION LOST - WAITING RECONNECT", 0
+    szBanEN     db "SKILL NOT AVAILABLE ONLINE", 0
     szTempEN    db "TEMP - SHARE FOR MANUAL", 0
     szStartBtn  db "START MATCH", 0
     szBackBtn   db "BACK", 0
@@ -335,9 +387,11 @@ RST_H      equ 30
     CN_SET dw 8bbeh,7f6eh, 0
     CN_LAN dw 8054h,673ah,5bf9h,6218h, 0
     CN_EXIT dw 9000h,51fah, 0
+    CN_BOT  dw 6311h,6218h,9ED1h,8272h,4EBAh,673Ah, 0     ; 挑战黑色人机
     CN_LANG dw 8bedh,8a00h,0ff1ah,4e2dh,6587h, 0
     CN_NUMT dw 9009h,62e9h,73a9h,5bb6h,6570h,91cfh, 0
     CN_ROUNDS dw 5c40h,6570h, 0                                          ; 局数
+    CN_BOTS   dw 4EBAh,673Ah, 0                                          ; 人机（会话39）
     CN_HINT dw 56deh,8f66h,0ff1ah,786eh,8ba4h,0020h,0020h,0020h,0020h,0045h,0073h,0063h,0ff1ah,8fd4h,56deh, 0
     CN_NAMEHINT dw 70B9h,51FBh,540Dh,5B57h,53EFh,6539h,540Dh, 0   ; 点击名字可改名
     CN_NAMEEDIT dw 8F93h,5165h,540Dh,5B57h,56DEh,8F66h,786Eh,8BA4h, 0 ; 输入名字回车确认
@@ -361,19 +415,160 @@ RST_H      equ 30
     CN_LANR dw 5373h,5C06h,5F00h,59CBh,002Eh,002Eh,002Eh, 0
     CN_LANBOTH dw 53CCh,65B9h,6309h,0020h,0045h,006Eh,0074h,0065h,0072h,0020h,5F00h,59CBh, 0
     CN_PORT dw 672Ch,673Ah,7AEFh,53E3h,003Ah, 0
-    CN_MANUAL dw 6309h,0054h,0061h,0062h,8F93h,5BF9h,65B9h,0049h,0050h,003Ah,7AEFh,53E3h,0020h,56DEh,8F66h,8FDEh,63A5h, 0
+    CN_MANUAL dw 6309h,0054h,0061h,0062h,8F93h,5BF9h,65B9h,0049h,0050h,0020h,6216h,0020h,670Dh,52A1h,5668h,003Ah,7AEFh,53E3h,0023h,623Fh,95F4h,0020h,56DEh,8F66h,8FDEh,63A5h, 0
     CN_DIRECT dw 76F4h,8FDEh,6A21h,5F0Fh,003Ah, 0
     CN_BAD dw 5730h,5740h,65E0h,6548h, 0
     CN_LOST dw 8FDEh,63A5h,4E22h,5931h,0FF0Ch,7B49h,5F85h,91CDh,8FDEh,002Eh,002Eh,002Eh, 0
+    CN_NETBAN dw 8054h,673Ah,6A21h,5F0Fh,4E0Dh,652Fh,6301h,8BE5h,6280h,80FDh,0 ; 联机模式不支持该技能
+    ; ---- 会话40：成就图鉴文案（码点同 tools/gen_achv_cn.py）----
+    CN_ACHGALT dw 6210h,5C31h,56FEh,9274h, 0        ; 成就图鉴（菜单项与页眉共用）
+    CN_ACHPROG dw 6536h,96C6h,8FDBh,5EA6h, 0        ; 收集进度
+    CN_ACHTOA  dw 6210h,5C31h,89E3h,9501h, 0        ; 成就解锁
+    CN_ACHRAR0 dw 666Eh,901Ah, 0                    ; 普通
+    CN_ACHRAR1 dw 7A00h,6709h, 0                    ; 稀有
+    CN_ACHRAR2 dw 53F2h,8BD7h, 0                    ; 史诗
+    CN_ACHRAR3 dw 4F20h,5947h, 0                    ; 传奇
+    CN_ACHOWN  dw 5DF2h,8FBEh,6210h, 0              ; 已达成
+    CN_ACHLOCK dw 672Ah,8FBEh,6210h, 0              ; 未达成
+    CN_ACHGALTW dw 0FF08h,65B0h,0FF09h,6210h,5C31h,56FEh,9274h, 0 ; （新）成就图鉴
+    rarEn   dd OFFSET szRar0, OFFSET szRar1, OFFSET szRar2, OFFSET szRar3
+    rarCn   dd OFFSET CN_ACHRAR0, OFFSET CN_ACHRAR1, OFFSET CN_ACHRAR2, OFFSET CN_ACHRAR3
+    rarCol  dd 00808080h, 00D08020h, 00C040C0h, 0020D0FFh  ; 灰/蓝/紫/金（0x00BBGGRR）
+    rarGoal dd 6, 7, 6, 5                              ; 会话41：各品阶条数（随 def 表增删同步！）
+    rarCnt  dd 0, 0, 0, 0                              ; 会话41：本次扫描各品阶已点亮
+    rarBr   dd 0, 0, 0, 0                              ; 会话41：品阶色笔刷（弹层描边，UiInit 建）
+    rarIdx  dd 0                                       ; 会话41：建刷循环计数（跨 invoke 安全）
+    galPage dd 0                                       ; 图鉴当前页
     CN_TEMP dw 4E34h,65F6h,7AEFh,53E3h,0FF0Ch,624Bh,7ED9h,5BF9h,65B9h, 0
+    ; ---- 会话37 M3.5：中继房间状态 / RTT 延迟 ----
+    szRelay     db "RELAY:", 0
+    szRelayWait db "WAITING PEER JOIN ...", 0
+    szRelayPair db "PAIRED ON SERVER", 0
+    szRelayFull db "ROOM FULL - PICK ANOTHER", 0
+    CN_RELAY    dw 4E2Dh,7EE7h,003Ah, 0                        ; 中继:
+    CN_RELAYW   dw 7B49h,5F85h,961Fh,53CBh,52A0h,5165h,002Eh,002Eh,002Eh, 0 ; 等待队友加入...
+    CN_RELAYP   dw 5DF2h,914Dh,5BF9h,0FF08h,670Dh,52A1h,5668h,8FDEh,63A5h,0FF09h, 0 ; 已配对（服务器连接）
+    CN_RELAYF   dw 623Fh,95F4h,5DF2h,6EE1h,0FF0Ch,6362h,53ECh,65B0h,623Fh,95F4h, 0 ; 房间已满，换一个新房间
     colErr      dd 000000CDh
     colDark     dd 00232323h
     colGray     dd 00606060h
     colHi       dd 0000C06000h
     colFound    dd 0000A000h
     hdcWin2     dd 0
+    ; ---- 会话45：成就图鉴图标表（game-icons.net，CC BY 3.0，署名见 README
+    ;      「成就图标」条；重生成 tools/pick45.py + tools/raster45.py）----
+    include achvicons.inc
 
 .code
+
+; ------------------------------------------------------------
+; 会话45：图鉴图标渲染 —— achvicons.inc 24x24 四级覆盖字节，
+; 按品阶色点亮。AchvShade=各分量 k/256 缩放（k 作 256 分母整数）。
+; AchvIcoBlit：pIdx 0..27（0..23 成就算条，24..27 品阶徽章），
+; pCol=满色（级3），级2≈0.62 满色、级1≈0.30 满色、级0 透明；
+; 逐行同色跨段合并减少 FillRect。笔刷即建即销（每调用 3 枚，可忽）。
+; ------------------------------------------------------------
+AchvShade proc uses ebx, pCol:DWORD, pK:DWORD
+    local r0:DWORD, g0:DWORD, b0:DWORD
+    mov eax, pCol
+    and eax, 0FFh
+    imul eax, pK
+    shr eax, 8
+    mov r0, eax
+    mov eax, pCol
+    shr eax, 8
+    and eax, 0FFh
+    imul eax, pK
+    shr eax, 8
+    mov g0, eax
+    mov eax, pCol
+    shr eax, 16
+    and eax, 0FFh
+    imul eax, pK
+    shr eax, 8
+    mov b0, eax
+    shl eax, 16
+    mov ebx, g0
+    shl ebx, 8
+    or eax, ebx
+    or eax, r0
+    ret
+AchvShade endp
+
+AchvIcoBlit proc uses ebx esi edi ecx edx, pX:DWORD, pY:DWORD, pIdx:DWORD, pCol:DWORD
+    local rc:RECT, br1:DWORD, br2:DWORD, br3:DWORD, iy:DWORD, ix:DWORD
+    invoke AchvShade, pCol, 77
+    invoke CreateSolidBrush, eax
+    mov br1, eax
+    invoke AchvShade, pCol, 158
+    invoke CreateSolidBrush, eax
+    mov br2, eax
+    invoke CreateSolidBrush, pCol
+    mov br3, eax
+    mov eax, pIdx
+    imul eax, eax, 576
+    lea esi, achvIconTab
+    add esi, eax
+    mov iy, 0
+AIB_Y:
+    mov ix, 0
+AIB_X:
+    mov eax, iy
+    imul eax, 24
+    add eax, ix
+    movzx ecx, byte ptr [esi+eax]
+    test ecx, ecx
+    jz AIB_STEP
+    mov edx, ix
+AIB_SP:
+    inc edx
+    cmp edx, 24
+    jae AIB_SPD
+    mov eax, iy
+    imul eax, 24
+    add eax, edx
+    movzx eax, byte ptr [esi+eax]
+    cmp eax, ecx
+    je AIB_SP
+AIB_SPD:
+    mov ebx, edx                       ; 段尾（FillRect 会毁 edx）
+    mov eax, pX
+    add eax, ix
+    mov rc.left, eax
+    mov eax, pX
+    add eax, edx
+    mov rc.right, eax
+    mov eax, pY
+    add eax, iy
+    mov rc.top, eax
+    inc eax
+    mov rc.bottom, eax
+    mov eax, ecx                       ; 级别选刷
+    .if eax == 1
+        mov eax, br1
+    .elseif eax == 2
+        mov eax, br2
+    .else
+        mov eax, br3
+    .endif
+    invoke FillRect, hdcBack, addr rc, eax
+    mov ix, ebx
+    jmp AIB_NEXT
+AIB_STEP:
+    inc ix
+AIB_NEXT:
+    mov eax, ix
+    cmp eax, 24
+    jb AIB_X
+    inc iy
+    mov eax, iy
+    cmp eax, 24
+    jb AIB_Y
+    invoke DeleteObject, br1
+    invoke DeleteObject, br2
+    invoke DeleteObject, br3
+    ret
+AchvIcoBlit endp
 
 ; ------------------------------------------------------------
 ; UiInit
@@ -387,6 +582,20 @@ UiInit proc
     mov boxBrush, eax
     invoke CreateSolidBrush, 00A0A0A0h       ; 深夜模式容器边框（浅灰）
     mov boxBrushN, eax
+    ; ---- 会话41：弹层品阶色描边笔刷（rarCol 四色各建一刷）----
+    mov rarIdx, 0
+UI_RarBr:
+    mov ecx, rarIdx
+    .if ecx >= 4
+        jmp UI_RarBrDone
+    .endif
+    mov edx, rarCol[ecx*4]
+    invoke CreateSolidBrush, edx
+    mov ecx, rarIdx
+    mov rarBr[ecx*4], eax
+    inc rarIdx
+    jmp UI_RarBr
+UI_RarBrDone:
     ; （会话 27 主页坦克三色刷+描边笔已随会话 28 下架移除）
     invoke CreateFontA, 30, 0, 0, 0, FW_NORMAL, 0, 0, 0,
            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -411,12 +620,127 @@ UiInit endp
 ; （自动化截图验收用，避免菜单按键注入受启动期环境停顿影响）
 ; ------------------------------------------------------------
 UiForcePlay2 proc
+    mov botMask, 0                 ; 会话39：常规对练不带人机
     mov numPlayers, 2
     invoke GameInit
     mov netMode, 0
     mov gameState, ST_PLAY
     ret
 UiForcePlay2 endp
+
+; ------------------------------------------------------------
+; UiSyncBotName -- 会话39：按 botMask 同步 4 槽容器标题（playerName 每槽 16B）
+;   槽在掩码内        -> "BLACK BOT"（第2台起带序号 "BLACK BOT 2/3/4"）
+;   不在掩码但上次在  -> 恢复默认 "P1..P4"（延续会话38 的槽1行为）
+;   其余槽不动        -> 保留玩家自定义名（联机退人机后改名不丢）
+; ------------------------------------------------------------
+UiSyncBotName proc uses esi edi ecx ebx edx
+    xor ebx, ebx
+USN_L:
+    mov edi, ebx
+    imul edi, edi, 16
+    add edi, offset playerName
+    mov eax, botMask
+    bt eax, ebx
+    jnc USN_Out
+    ; 人机槽：名 = "BLACK BOT" + 序号（序号=本槽以下人机数+1，随槽位升序）
+    mov esi, ebx
+    xor edx, edx
+USN_Pc:
+    dec esi
+    js USN_PcDone
+    bt botMask, esi
+    jnc USN_Pc
+    inc edx
+    jmp USN_Pc
+USN_PcDone:
+    inc edx
+    mov dword ptr [edi], 0
+    mov dword ptr [edi+4], 0
+    mov dword ptr [edi+8], 0
+    mov dword ptr [edi+12], 0
+    xor ecx, ecx
+    lea esi, szBotNm
+USN_Cp:
+    cmp byte ptr [esi+ecx], 0
+    je USN_CpDone
+    mov al, [esi+ecx]
+    mov [edi+ecx], al
+    inc ecx
+    cmp ecx, 12
+    jb USN_Cp
+USN_CpDone:
+    cmp edx, 1
+    jbe USN_Nul
+    mov byte ptr [edi+ecx], ' '
+    inc ecx
+    add dl, '0'
+    mov [edi+ecx], dl
+USN_Nul:
+    mov byte ptr [edi+ecx], 0
+    jmp USN_Next
+USN_Out:
+    ; 非人机槽：仅当上次是人机时恢复默认名，否则保留自定义名
+    mov eax, prevBotMask
+    bt eax, ebx
+    jnc USN_Next
+    mov dword ptr [edi], 0
+    mov dword ptr [edi+4], 0
+    mov dword ptr [edi+8], 0
+    mov dword ptr [edi+12], 0
+    mov byte ptr [edi], 'P'
+    mov eax, ebx
+    add eax, '1'
+    mov byte ptr [edi+1], al
+USN_Next:
+    inc ebx
+    cmp ebx, MAX_PLAYERS
+    jb USN_L
+    mov eax, botMask
+    mov prevBotMask, eax
+    ret
+UiSyncBotName endp
+
+; ------------------------------------------------------------
+; UiApplyBots -- 会话39：把人数页 numBot 落地为 botMask+容器名
+;   人占低槽、人机补高槽：mask = ((1<<K)-1) << (N-K)，K≤N-1（至少留1真人）
+;   菜单期调用安全：GameUpdate 不跑，BotThink 无从触发
+; ------------------------------------------------------------
+UiApplyBots proc
+    mov eax, numSel
+    dec eax
+    .if numBot > eax
+        mov numBot, eax
+    .endif
+    mov ecx, numBot
+    mov edx, numSel
+    sub edx, ecx                      ; 移位量 N-K
+    mov eax, 1
+    shl eax, cl
+    dec eax                           ; 低 K 位 1
+    mov ecx, edx
+    shl eax, cl                       ; 抬到高 K 槽
+    mov botMask, eax
+    invoke UiSyncBotName
+    ret
+UiApplyBots endp
+
+; ------------------------------------------------------------
+; UiForceBotMatch -- 会话38/39：直开黑色人机挑战局（菜单项 / "tankwar bot"）
+;   双人 BO3 + 1 台人机补位（等同 numsel 页 numSel=2、numBot=1）；
+;   botMask 必须在 GameInit 之前落地——ResetTanks 依据它给人机槽三命。
+; ------------------------------------------------------------
+UiForceBotMatch proc
+    mov numSel, 2
+    mov numBot, 1
+    invoke UiApplyBots
+    mov numPlayers, 2
+    mov maxRounds, 3
+    invoke GameInit
+    mov netMode, 0
+    mov gameState, ST_PLAY
+    ret
+UiForceBotMatch endp
 
 ; ------------------------------------------------------------
 ; UiForceNumSel -- 命令行 "tankwar numsel"：直入人数选择页
@@ -443,6 +767,18 @@ UiForceLanAuto proc
     invoke NetEnterLan
     ret
 UiForceLanAuto endp
+
+; ------------------------------------------------------------
+; UiForceRelayAuto -- 会话37 "tankwar netrelay <ip[:port]#room>"：
+; 直入大厅 + 自动设定中继目标 + 自动开局（中继回环验收专用，
+; tools/relay_loopback_test.py 双实例同房间连接自建服务器全链路）
+; ------------------------------------------------------------
+UiForceRelayAuto proc pBuf: dword
+    invoke UiForceLanAuto
+    invoke NetSetServer, pBuf
+    mov directOn, eax
+    ret
+UiForceRelayAuto endp
 
 ; ------------------------------------------------------------
 ; NumStr -- 无符号十进制转字符串（0 结尾），返回 eax=字符数
@@ -508,7 +844,26 @@ UiOnChar proc wCh: dword
     .if eax == 13                         ; Enter -> 解析并直连
         mov ecx, ipLen
         mov byte ptr ipBuf[ecx], 0
-        invoke NetSetManual, addr ipBuf
+        ; 会话37：串中含 '#' = 中继服务器模式 "ip[:port]#房间"，否则纯手动直连
+        xor edx, edx
+        mov eax, 0
+    UOC_Hash:
+        movzx ecx, byte ptr ipBuf[edx]
+        .if ecx == 0
+            jmp UOC_HashDone
+        .endif
+        .if ecx == '#'
+            mov eax, 1
+            jmp UOC_HashDone
+        .endif
+        inc edx
+        jmp UOC_Hash
+    UOC_HashDone:
+        .if eax != 0
+            invoke NetSetServer, addr ipBuf
+        .else
+            invoke NetSetManual, addr ipBuf
+        .endif
         .if eax == 0
             mov manualErr, 1
         .else
@@ -518,9 +873,11 @@ UiOnChar proc wCh: dword
         ret
     .endif
     .if eax < '0'
-        ret
+        .if eax != '#'                    ; 会话37：'#'(0x23) 放行（房间号分隔符）
+            ret
+        .endif
     .endif
-    .if eax > '9' && eax != '.' && eax != ':'
+    .if eax > '9' && eax != '.' && eax != ':' && eax != '#'
         ret
     .endif
     mov ecx, ipLen
@@ -583,6 +940,12 @@ PickLang endp
 ; MenuActivate -- 主菜单当前项（menuSel）的激活动作
 ; 键盘 Enter 与鼠标左键点击共用，保证两种操作行为一致
 ; ------------------------------------------------------------
+; ------------------------------------------------------------
+; MenuActivate -- 主菜单当前项（menuSel）的激活动作
+; 键盘 Enter 与鼠标左键点击共用，保证两种操作行为一致
+; 会话42：删除第2项"挑战黑色人机"（用户要求撤出主界面）——人机仍可由
+; 命令行 tankwar bot 与人数选择页补位进入，UiForceBotMatch 本身保留。
+; ------------------------------------------------------------
 MenuActivate proc
     .if menuSel == 0
         mov rebindSlot, -1          ; 进入人数页清改键状态
@@ -602,11 +965,16 @@ MenuActivate proc
         mov ipEditMode, 0
         mov manualErr, 0
         mov lanAuto, 0
+        invoke NetResetTargets            ; 会话37：重进大厅清手动/中继目标（回广播发现）
         invoke NetEnterLan              ; 会话36：socket 常驻不再重建/关断
         mov ipLen, 0
         mov byte ptr ipBuf[0], 0
         mov directOn, 0
     .elseif menuSel == 5
+        mov galPage, 0               ; 会话40：成就图鉴（每次进页回首页）
+        mov achvUnseen, 0            ; 会话41：进图鉴=已读，菜单"(新)"角标熄灭
+        mov gameState, ST_ACHG
+    .elseif menuSel == 6
         invoke PostQuitMessage, NULL
     .else
         xor langFlag, 1              ; 语言切换
@@ -764,6 +1132,25 @@ IPS_Done:
 IpToStr endp
 
 ; ------------------------------------------------------------
+; UiStunStr -- 会话51 STUN步A：拼 "STUN a.b.c.d:port" 到 stunBuf
+;   （大厅中继模式对端观测端点显示；IpToStr 返回值=点分串长度，直接定位冒号）
+; ------------------------------------------------------------
+UiStunStr proc uses ebx ecx edx esi edi
+    mov byte ptr stunBuf[0], 'S'
+    mov byte ptr stunBuf[1], 'T'
+    mov byte ptr stunBuf[2], 'U'
+    mov byte ptr stunBuf[3], 'N'
+    mov byte ptr stunBuf[4], ' '
+    invoke IpToStr, addr stunIp, offset stunBuf+5
+    lea esi, stunBuf+5
+    add esi, eax
+    mov byte ptr [esi], ':'
+    inc esi
+    invoke NumStr, stunPort, esi
+    ret
+UiStunStr endp
+
+; ------------------------------------------------------------
 ; NumSelHitTest -- 人数页鼠标命中测试
 ; 返回 eax: 0..19 = 键位槽位（slot*KEY_PER+动作），-2 = 重置按钮，
 ;           -3-slot = 容器标题（点击改名），-1 = 无
@@ -841,6 +1228,13 @@ UiTick proc uses ebx esi edi
     local enE:dword, esE:dword, scanVk:dword
     local tabE:dword
     local lbE:dword
+
+    ; 会话41 根因修复：弹层倒计时移到过程头。原先在过程尾，而 ST_PLAY 分支
+    ; 末尾的 jmp UT_Done 恒跳过它 → 对局中 toastT 冻结在 240，滑入 dy 恒=96，
+    ; 横幅永久停在屏外顶端（对局内解锁弹层从会话40起从未显示的真相）。
+    .if achvToastT != 0
+        dec achvToastT
+    .endif
 
     ; ---- 鼠标采样 ----
     ; hover 位置用 GetCursorPos（尽力而为，多屏 DPI 下仅作视觉提示）；
@@ -999,13 +1393,13 @@ PS_VlOk:
     .if gameState == ST_MENU
         .if dnE != 0
             inc menuSel
-            .if menuSel > 6
+            .if menuSel > 7          ; 会话42：8 项（删"挑战黑色人机"）
                 mov menuSel, 0
             .endif
         .endif
         .if upE != 0
             .if menuSel == 0
-                mov menuSel, 6
+                mov menuSel, 7
             .else
                 dec menuSel
             .endif
@@ -1014,7 +1408,7 @@ PS_VlOk:
             invoke MenuActivate
         .endif
         ; ---- 鼠标：悬停高亮 + 左键点击激活 ----
-        ; 菜单 7 项渲染矩形：x 440..660，y = 190+i*46 .. +34（与 UiRender UM_Items 同几何）
+        ; 菜单 8 项渲染矩形：x 440..660，y = 190+i*46 .. +34（与 UiRender UM_Items 同几何）
         ; 鼠标坐标需在窗口客户区内才参与 hover（多屏 DPI 下 GetCursorPos 可能返回界外乱值）
         mov eax, mouseX
         .if eax < 0 || eax >= WND_W
@@ -1028,7 +1422,7 @@ PS_VlOk:
                                        ; （UiTick 虽 uses ebx，入口值=调用方残留，
                                        ;  >=7 时整段 hover 静默跳过）
 UT_MMouse:
-        .if ebx >= 7                   ; 会话 23 修复：7 项（含语言切换）全部可点
+        .if ebx >= 8                   ; 会话42：8 项全部可点
             jmp UT_MMouseDone
         .endif
         mov eax, ebx
@@ -1253,18 +1647,21 @@ UTW_Next:
                 .if numSel > 4
                     mov numSel, 2
                 .endif
+                invoke UiApplyBots           ; 会话39：人数变了，钳制并刷新补位
             .endif
             .if ltE != 0
                 dec numSel
                 .if numSel < 2
                     mov numSel, 4
                 .endif
+                invoke UiApplyBots
             .endif
             .if enE != 0
                 mov eax, numSel
                 mov numPlayers, eax
                 mov eax, roundsSel
                 mov maxRounds, eax
+                invoke UiApplyBots           ; 会话39：人机补位随 numBot 落地/清零
                 invoke GameInit
                 mov netMode, 0
                 mov gameState, ST_PLAY
@@ -1300,12 +1697,14 @@ NHT_Done2:
                     .if numSel < 2
                         mov numSel, 4
                     .endif
+                    invoke UiApplyBots       ; 会话39：人数变了，钳制并刷新补位
                 ; PLAYERS >> 535..600, y190..242
                 .elseif eax >= 535 && eax < 600 && mouseY >= 190 && mouseY < 242
                     inc numSel
                     .if numSel > 4
                         mov numSel, 2
                     .endif
+                    invoke UiApplyBots
                 ; ROUNDS << 400..460, y252..304
                 .elseif eax >= 400 && eax < 460 && mouseY >= 252 && mouseY < 304
                     sub roundsSel, 2
@@ -1324,9 +1723,24 @@ NHT_Done2:
                     mov numPlayers, eax
                     mov eax, roundsSel
                     mov maxRounds, eax
+                    invoke UiApplyBots       ; 会话39：人机补位随 numBot 落地/清零
                     invoke GameInit
                     mov netMode, 0
                     mov gameState, ST_PLAY
+                ; BOTS << 700..760, y252..304（会话39：人机补位减量）
+                .elseif eax >= 700 && eax < 760 && mouseY >= 252 && mouseY < 304
+                    .if numBot > 0
+                        dec numBot
+                    .endif
+                    invoke UiApplyBots
+                ; BOTS >> 850..910, y252..304（会话39：增量，上限 numSel-1 留至少1真人）
+                .elseif eax >= 850 && eax < 910 && mouseY >= 252 && mouseY < 304
+                    mov ecx, numSel
+                    dec ecx
+                    .if numBot < ecx
+                        inc numBot
+                    .endif
+                    invoke UiApplyBots
                 .endif
 NHT_Done:
             .endif
@@ -1542,6 +1956,68 @@ SS_Vl2:
                 .endif
             .endif
         .endif
+    ; ---------- 会话40：成就图鉴页（←→/箭头钮翻页，Esc/返回钮退页） ----------
+    .elseif gameState == ST_ACHG
+        .if ltE != 0
+            .if galPage > 0
+                dec galPage
+            .endif
+        .endif
+        .if rtE != 0
+            mov eax, galPage
+            .if eax < ACH_PAGES-1
+                inc galPage
+            .endif
+        .endif
+        .if esE != 0
+            mov gameState, ST_MENU
+        .endif
+        invoke KeyEdge, VK_1, addr prevK1      ; 会话41：数字键直接跳页（24 条恰 4 整页）
+        .if eax != 0
+            mov galPage, 0
+        .endif
+        invoke KeyEdge, VK_2, addr prevK2
+        .if eax != 0
+            mov galPage, 1
+        .endif
+        invoke KeyEdge, VK_3, addr prevK3
+        .if eax != 0
+            mov galPage, 2
+        .endif
+        invoke KeyEdge, VK_4, addr prevK4
+        .if eax != 0
+            mov galPage, 3
+        .endif
+        invoke KeyEdge, VK_HOME, addr prevKHome
+        .if eax != 0
+            mov galPage, 0
+        .endif
+        invoke KeyEdge, VK_END, addr prevKEnd
+        .if eax != 0
+            mov galPage, ACH_PAGES-1
+        .endif
+        .if lbE != 0
+            ; 几何与技能页一致：返回 440..560,516..552 / 箭头 130..210,778..858,260..340
+            mov eax, mouseY
+            .if eax >= 516 && eax < 552
+                mov eax, mouseX
+                .if eax >= 440 && eax < 560
+                    mov gameState, ST_MENU
+                .endif
+            .elseif eax >= 260 && eax < 340
+                mov eax, mouseX
+                .if eax >= 86 && eax < 130
+                    .if galPage > 0
+                        dec galPage
+                    .endif
+                .elseif eax >= 858 && eax < 902
+                    mov eax, galPage
+                    .if eax < ACH_PAGES-1
+                        inc galPage
+                    .endif
+                .endif
+            .endif
+        .endif
     .endif
 UT_Done:
     ret
@@ -1563,6 +2039,15 @@ UiRender proc uses ebx esi edi
     local demoP1x:dword
     local demoP1y:dword
     local demoDir:dword
+    local achIdx:dword, achDefP:dword, achOwnF:dword, achProgV:dword, achGoalV:dword
+    local achRarV:dword, achCol:dword, achNmCol:dword, achY2:dword, achYt:dword
+    local achOwnN:dword
+    local achEnP:dword, achCnP:dword, achDsEnP:dword, achDsCnP:dword
+    local achRarEnP:dword, achRarCnP:dword
+    local achDtV:dword, achDtY:dword, achDtM:dword, achDtD:dword
+    local achBr:dword, achDy:dword, achShow:dword, achBx:dword, achBi:dword
+    local achTx:dword, achIcoY:dword, achIcoCol:dword, achChip:dword, achBrush:dword
+    local achDx:dword                 ; 会话46：图鉴行首英文偏移（COMMON 比中文宽，挡 chip）
 
     mov rc.left, 0
     mov rc.top, 0
@@ -1602,8 +2087,19 @@ UiRender proc uses ebx esi edi
                 invoke FrameRect, hdcBack, addr boxRc, boxCur
                 invoke UiTextL, hdcBack, 264, 268, offset szLostEN, offset CN_LOST, colErr
             .endif
+            ; 会话39：B 档禁用技（换位/虚影）按压提示条，掉线横幅正下方，2s 自隐
+            mov ecx, onlineBanT
+            .if ecx != 0
+                dec onlineBanT
+                mov boxRc.left, 240
+                mov boxRc.top, 344
+                mov boxRc.right, 752
+                mov boxRc.bottom, 400
+                invoke FrameRect, hdcBack, addr boxRc, boxCur
+                invoke UiTextL, hdcBack, 264, 354, offset szBanEN, offset CN_NETBAN, colErr
+            .endif
         .endif
-        jmp UR_Done
+        jmp UR_Toast   ; 会话40：对局画面也要过弹层
     .endif
 
     ; ---------- 主菜单 ----------
@@ -1635,13 +2131,21 @@ UM_Items:
         .elseif eax == 4
             invoke UiTextL, hdcBack, 440, rowY, offset szItem3, offset CN_LAN, edx
         .elseif eax == 5
+            mov ecx, offset szItemAch
+            mov eax, offset CN_ACHGALT
+            .if achvUnseen != 0      ; 会话41：本次运行有新解锁未读 -> "(新)"变体
+                mov ecx, offset szItemAchNew
+                mov eax, offset CN_ACHGALTW
+            .endif
+            invoke UiTextL, hdcBack, 436, rowY, ecx, eax, edx
+        .elseif eax == 6
             invoke UiTextL, hdcBack, 436, rowY, offset szItem4, offset CN_EXIT, edx
         .else
             invoke UiTextL, hdcBack, 436, rowY, offset szLangEN, offset CN_LANG, edx
         .endif
         pop ebx
         inc ebx
-        .if ebx < 7
+        .if ebx < 8                  ; 会话42：删人机项后 8 项
             jmp UM_Items
         .endif
 
@@ -1658,7 +2162,13 @@ UM_Items:
         mov byte ptr [edi+1], 0
         invoke UiTextZ, hdcBack, 485, 192, offset uiBuf, 000000D0h
         ; ROUNDS 行（y 252..304）
-        invoke UiTextL, hdcBack, 322, 262, offset szRounds, offset CN_ROUNDS, colDark
+        ; 会话46：英文 "ROUNDS"（30px 字体 6 字符 ≈83px）从 322 画会压上 410 的 «，
+        ; 改按语言取起点（中文 局数 不动）；<< 与点击热区(400..460)保持原位。
+        mov eax, 322
+        .if langFlag == 0
+            mov eax, 296
+        .endif
+        invoke UiTextL, hdcBack, eax, 262, offset szRounds, offset CN_ROUNDS, colDark
         invoke UiTextZ, hdcBack, 410, 262, offset szNumL, colDark
         invoke UiTextZ, hdcBack, 545, 262, offset szNumR, colDark
         lea edi, uiBuf
@@ -1672,6 +2182,16 @@ UM_Items:
         mov [edi+1], dl
         mov byte ptr [edi+2], 0
         invoke UiTextZ, hdcBack, 480, 254, offset uiBuf, 000000D0h
+        ; BOTS 行（会话39：黑色人机补位数；与 ROUNDS 同带右半，<< 700..760 / >> 850..910）
+        invoke UiTextL, hdcBack, 620, 262, offset szBots, offset CN_BOTS, colDark
+        invoke UiTextZ, hdcBack, 710, 262, offset szNumL, colDark
+        invoke UiTextZ, hdcBack, 855, 262, offset szNumR, colDark
+        lea edi, uiBuf
+        mov eax, numBot
+        add eax, '0'
+        mov [edi], al
+        mov byte ptr [edi+1], 0
+        invoke UiTextZ, hdcBack, 790, 254, offset uiBuf, 000000D0h
 
         ; ---- 键位容器（小字体）：按当前选择的人数显示 2..4 个 ----
         invoke SelectObject, hdcBack, fontSmall
@@ -1894,10 +2414,49 @@ NS_BoxDone:
             invoke UiTextL, hdcBack, 596, 202, offset szTempEN, offset CN_TEMP, colErr
             invoke SelectObject, hdcBack, menuFont
         .endif
-        ; 对端发现状态
+        ; 对端发现状态（会话37 M3.5：中继模式此行改显房间号+配对状态）
         mov eax, lanSt
         and eax, 1
-        .if eax != 0
+        .if relayMode != 0
+            invoke UiTextL, hdcBack, 350, 240, offset szRelay, offset CN_RELAY, colGray
+            mov eax, relayRoom
+            invoke NumStr, eax, offset uiBuf
+            invoke UiTextZ, hdcBack, 440, 240, offset uiBuf, colDark
+            ; 状态词（小字 y264）：已配对绿 / 等待灰 / 房间已满红（relaySt 2=FULL 1=PAIR）
+            ; 注意：SelectObject 毁 EAX/ECX/EDX（volatile），必须先换字体再暂存参数
+            invoke SelectObject, hdcBack, fontSmall
+            mov eax, peerKnown
+            .if eax != 0
+                mov eax, offset szRelayPair
+                mov edx, offset CN_RELAYP
+                mov ecx, colFound
+            .else
+                mov eax, relaySt
+                .if eax == 2
+                    mov eax, offset szRelayFull
+                    mov edx, offset CN_RELAYF
+                    mov ecx, colErr
+                .elseif eax == 1
+                    mov eax, offset szRelayPair
+                    mov edx, offset CN_RELAYP
+                    mov ecx, colFound
+                .else
+                    mov eax, offset szRelayWait
+                    mov edx, offset CN_RELAYW
+                    mov ecx, colGray
+                .endif
+            .endif
+            invoke UiTextL, hdcBack, 350, 264, eax, edx, ecx
+            invoke SelectObject, hdcBack, menuFont
+            ; 会话51 STUN步A：收到服务器 'S' 反射后显示对端公网观测点（小字 y282）。
+            ; 手输该行地址可试直连（步B 自动升级前的可见化能力）。
+            .if stunSeen != 0
+                call UiStunStr
+                invoke SelectObject, hdcBack, fontSmall
+                invoke UiTextZ, hdcBack, 350, 282, offset stunBuf, colGray
+                invoke SelectObject, hdcBack, menuFont
+            .endif
+        .elseif eax != 0
             invoke UiTextL, hdcBack, 350, 240, offset szLanF, offset CN_LANF, colFound
             invoke UiTextZ, hdcBack, 530, 240, offset peerIpBuf, colFound
         .elseif directOn != 0
@@ -1905,6 +2464,22 @@ NS_BoxDone:
             invoke UiTextZ, hdcBack, 500, 240, offset ipBuf, colGray
         .else
             invoke UiTextL, hdcBack, 350, 240, offset szLanN, offset CN_LANN, colGray
+        .endif
+        ; RTT 延迟读数（会话37：NET_PING 有回包时右对齐小字）
+        .if netRttOk != 0
+            invoke SelectObject, hdcBack, fontSmall
+            mov byte ptr uiBuf[0], 'R'
+            mov byte ptr uiBuf[1], 'T'
+            mov byte ptr uiBuf[2], 'T'
+            mov byte ptr uiBuf[3], ' '
+            invoke NumStr, netRttAvg, offset uiBuf+4
+            mov ecx, eax
+            mov byte ptr uiBuf[ecx+4], ' '
+            mov byte ptr uiBuf[ecx+5], 'm'
+            mov byte ptr uiBuf[ecx+6], 's'
+            mov byte ptr uiBuf[ecx+7], 0
+            invoke UiTextZ, hdcBack, 800, 242, offset uiBuf, colGray
+            invoke SelectObject, hdcBack, menuFont
         .endif
         ; 开始流程四态（HELLO 齐后：按 Enter / 等待对方 / 即将开始）
         mov eax, lanSt
@@ -2048,6 +2623,303 @@ NS_BoxDone:
         invoke FrameRect, hdcBack, addr boxRc, boxCur
         invoke UiTextL, hdcBack, 474, 524, offset szBackBtn, offset CN_BACKBTN, colDark
         ; 底部提示
+        invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
+
+    ; ---------- 会话40：成就图鉴（6 行/页 × 4 页，随意翻阅） ----------
+    .elseif gameState == ST_ACHG
+        invoke AchvCountOwned
+        mov achOwnN, eax
+        mov edx, colDark
+        .if eax == ACH_COUNT             ; 会话41：全收集 -> 金色标题
+            mov edx, 0020D0FFh
+        .endif
+        invoke UiTextL, hdcBack, 430, 60, offset szAchT, offset CN_ACHGALT, edx
+        invoke SelectObject, hdcBack, fontSmall
+        ; 页眉：COLLECTED n/24（左） + 品阶徽章行（y=121） + 页码 p/P（右）
+        ; 会话46：进度行 y104→88——18px 字高与徽章行（121）压字同带，中英都叠
+        invoke UiTextL, hdcBack, 150, 88, offset szAchProg, offset CN_ACHPROG, colGray
+        lea edi, uiBuf
+        invoke NumStr, achOwnN, edi
+        add edi, eax
+        mov byte ptr [edi], '/'
+        inc edi
+        invoke NumStr, ACH_COUNT, edi
+        invoke UiTextZ, hdcBack, 250, 88, offset uiBuf, colDark
+        ; ---- 会话41：品阶徽章 普通n/6 稀有n/7 史诗n/6 传奇n/5 ----
+        mov rarCnt[0], 0
+        mov rarCnt[4], 0
+        mov rarCnt[8], 0
+        mov rarCnt[12], 0
+        mov achBi, 0
+UA_Scan:
+        mov eax, achBi
+        .if eax >= ACH_COUNT
+            jmp UA_ScanDone
+        .endif
+        imul eax, eax, ACH_SIZE
+        add eax, OFFSET achvDefs
+        mov ecx, (ACHDEF ptr [eax]).rarity
+        mov achRarV, ecx
+        invoke AchvGetOwn, achBi
+        .if eax != 0
+            mov ecx, achRarV
+            inc rarCnt[ecx*4]
+        .endif
+        inc achBi
+        jmp UA_Scan
+UA_ScanDone:
+        mov esi, 0
+UA_Badges:
+        .if esi >= 4
+            jmp UA_BEnd
+        .endif
+        mov eax, esi
+        imul eax, eax, 180
+        add eax, 150
+        mov achBx, eax
+        mov edx, rarEn[esi*4]
+        mov ecx, rarCn[esi*4]
+        mov ebx, rarCol[esi*4]
+        ; ---- 会话45：品阶徽标 24px（achvIconTab 24+品阶），文字右移 30 ----
+        mov eax, esi
+        add eax, 24
+        invoke AchvIcoBlit, achBx, 112, eax, ebx
+        mov eax, achBx
+        add eax, 30
+        mov achTx, eax
+        invoke UiTextL, hdcBack, achTx, 121, edx, ecx, ebx
+        mov eax, rarCnt[esi*4]
+        mov ecx, rarGoal[esi*4]
+        lea edi, uiBuf
+        invoke NumStr, eax, edi
+        add edi, eax
+        mov byte ptr [edi], '/'
+        inc edi
+        invoke NumStr, ecx, edi
+        mov eax, achBx
+        add eax, 100
+        .if langFlag == 0            ; 会话46：COMMON/LEGEND 词宽 ~67 顶到计数，英文再右移 20
+            add eax, 20
+        .endif
+        invoke UiTextZ, hdcBack, eax, 121, offset uiBuf, colDark
+        inc esi
+        jmp UA_Badges
+UA_BEnd:
+        mov eax, galPage
+        inc eax
+        lea edi, uiBuf
+        invoke NumStr, eax, edi
+        add edi, eax
+        mov byte ptr [edi], '/'
+        inc edi
+        invoke NumStr, ACH_PAGES, edi
+        invoke UiTextZ, hdcBack, 838, 88, offset uiBuf, colDark   ; 会话45：徽章行加宽后页码右移；会话46：随进度行上移 y88
+        ; 外框 + 左右箭头（边界置灰，与技能页同几何）
+        mov boxRc.left, 130
+        mov boxRc.top, 140
+        mov boxRc.right, 858
+        mov boxRc.bottom, 490
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke SelectObject, hdcBack, fontSmall
+        mov edx, colDark
+        .if galPage == 0
+            mov edx, colGray
+        .endif
+        invoke UiTextZ, hdcBack, 108, 285, offset szNumL, edx
+        mov edx, colDark
+        mov eax, galPage
+        .if eax >= ACH_PAGES-1
+            mov edx, colGray
+        .endif
+        invoke UiTextZ, hdcBack, 880, 285, offset szNumR, edx
+        ; ---- 逐行：稀有度签(彩) / 名称(点亮=彩 未点亮=灰) / 状态 / 描述 / 进度 ----
+        ; 会话46：英文品阶词（COMMON/LEGEND 6 字符 ×9px ≈ 54）会顶穿 x180 的
+        ; chip 与图标，故英文下 chip/图标/名称/描述整体右移 36；中文不动。
+        mov achDx, 0
+        .if langFlag == 0
+            mov achDx, 44             ; 实测 COMMON 末尾 217px，chip 起点留到 224
+        .endif
+        mov ebx, 0
+UA_Rows:
+        mov eax, galPage
+        imul eax, eax, ACH_ROW_PG
+        add eax, ebx
+        .if eax >= ACH_COUNT
+            jmp UA_End
+        .endif
+        mov achIdx, eax
+        mov eax, ebx
+        imul eax, eax, 56
+        add eax, 152
+        mov rowY, eax
+        add eax, 7
+        mov achYt, eax
+        mov eax, rowY
+        add eax, 26
+        mov achY2, eax
+        mov eax, achIdx
+        imul eax, eax, ACH_SIZE
+        add eax, OFFSET achvDefs
+        mov achDefP, eax
+        invoke AchvGetOwn, achIdx
+        mov achOwnF, eax
+        invoke AchvGetProg, achIdx
+        mov achProgV, eax
+        mov eax, achDefP
+        mov ecx, (ACHDEF ptr [eax]).kind
+        .if ecx == AK_MKILL            ; 单场类：显示"历史峰值 vs 本场现值"较大者
+            mov eax, achvMatchKills
+            .if achProgV < eax
+                mov achProgV, eax
+            .endif
+        .endif
+        mov eax, achDefP
+        mov ecx, (ACHDEF ptr [eax]).goal
+        mov achGoalV, ecx
+        mov eax, achDefP
+        mov ecx, (ACHDEF ptr [eax]).rarity
+        mov achRarV, ecx
+        mov edx, rarCol[ecx*4]
+        mov achCol, edx
+        mov eax, achRarV
+        mov ecx, rarEn[eax*4]
+        mov achRarEnP, ecx
+        mov eax, achRarV
+        mov ecx, rarCn[eax*4]
+        mov achRarCnP, ecx
+        mov eax, achDefP
+        mov ecx, (ACHDEF ptr [eax]).pNameEn
+        mov achEnP, ecx
+        mov eax, achDefP
+        mov ecx, (ACHDEF ptr [eax]).pNameCn
+        mov achCnP, ecx
+        mov eax, achDefP
+        mov ecx, (ACHDEF ptr [eax]).pDescEn
+        mov achDsEnP, ecx
+        mov eax, achDefP
+        mov ecx, (ACHDEF ptr [eax]).pDescCn
+        mov achDsCnP, ecx
+        invoke SelectObject, hdcBack, fontSmall
+        invoke UiTextL, hdcBack, 150, achYt, achRarEnP, achRarCnP, achCol
+        ; ---- 会话45：行首 24px 图标 + 底色 chip（x180..212，品阶签与名称之间）----
+        ; 已解锁：chip=品阶色 27% 深底、图标=品阶色；未解锁：chip=主题中性底、图标=colGray
+        mov eax, themeNight
+        .if eax != 0
+            mov eax, 002E2E2Eh
+        .else
+            mov eax, 0000BEBEBEh
+        .endif
+        mov achChip, eax
+        .if achOwnF != 0
+            invoke AchvShade, achCol, 70
+            mov achChip, eax
+            mov eax, achCol
+        .else
+            mov eax, colGray
+        .endif
+        mov achIcoCol, eax
+        mov eax, 180
+        add eax, achDx
+        mov boxRc.left, eax
+        mov eax, 212
+        add eax, achDx
+        mov boxRc.right, eax
+        mov eax, rowY
+        add eax, 2
+        mov boxRc.top, eax
+        mov eax, rowY
+        add eax, 34
+        mov boxRc.bottom, eax
+        invoke CreateSolidBrush, achChip
+        mov achBrush, eax
+        invoke FillRect, hdcBack, addr boxRc, achBrush
+        invoke DeleteObject, achBrush
+        mov eax, rowY
+        add eax, 6
+        mov achIcoY, eax
+        mov ecx, achIdx
+        mov eax, 184
+        add eax, achDx
+        invoke AchvIcoBlit, eax, achIcoY, ecx, achIcoCol
+        .if achOwnF != 0
+            mov eax, achCol
+            mov achNmCol, eax
+        .else
+            mov eax, colGray
+            mov achNmCol, eax
+        .endif
+        invoke SelectObject, hdcBack, menuFont
+        mov eax, 220
+        add eax, achDx
+        invoke UiTextL, hdcBack, eax, rowY, achEnP, achCnP, achNmCol
+        invoke SelectObject, hdcBack, fontSmall
+        .if achOwnF != 0
+            invoke UiTextL, hdcBack, 770, achYt, offset szDoneEN, offset CN_ACHOWN, colHi
+            ; 会话41：达成日期 2026-10-22（旧档迁移=0 不显示）
+            invoke AchvGetDate, achIdx
+            .if eax != 0
+                mov achDtV, eax
+                xor edx, edx
+                mov ecx, 100
+                div ecx                      ; eax=yyyymm edx=dd
+                mov achDtD, edx
+                xor edx, edx
+                mov ecx, 100
+                div ecx                      ; eax=yyyy edx=mm
+                mov achDtM, edx
+                mov achDtY, eax
+                lea edi, uiBuf
+                invoke NumStr, achDtY, edi   ; NumStr 存 edi：游标续写安全
+                add edi, eax
+                mov byte ptr [edi], '-'
+                inc edi
+                mov eax, achDtM
+                .if eax < 10
+                    mov byte ptr [edi], '0'
+                    inc edi
+                .endif
+                invoke NumStr, achDtM, edi
+                add edi, eax
+                mov byte ptr [edi], '-'
+                inc edi
+                mov eax, achDtD
+                .if eax < 10
+                    mov byte ptr [edi], '0'
+                    inc edi
+                .endif
+                invoke NumStr, achDtD, edi
+                invoke UiTextZ, hdcBack, 770, achY2, offset uiBuf, colGray
+            .endif
+        .else
+            invoke UiTextL, hdcBack, 770, achYt, offset szLockEN, offset CN_ACHLOCK, colGray
+        .endif
+        mov eax, 220
+        add eax, achDx
+        invoke UiTextL, hdcBack, eax, achY2, achDsEnP, achDsCnP, colGray
+        .if achOwnF == 0
+            .if achGoalV > 1           ; 计数类才显示 n/m；瞬时类(目标1)不剧透
+                lea edi, uiBuf
+                invoke NumStr, achProgV, edi
+                add edi, eax
+                mov byte ptr [edi], '/'
+                inc edi
+                invoke NumStr, achGoalV, edi
+                invoke UiTextZ, hdcBack, 700, achY2, offset uiBuf, colGray
+            .endif
+        .endif
+        inc ebx
+        .if ebx < ACH_ROW_PG
+            jmp UA_Rows
+        .endif
+UA_End:
+        ; 返回按钮 + 底部提示（与技能页同几何）
+        invoke SelectObject, hdcBack, menuFont
+        mov boxRc.left, 440
+        mov boxRc.top, 516
+        mov boxRc.right, 560
+        mov boxRc.bottom, 552
+        invoke FrameRect, hdcBack, addr boxRc, boxCur
+        invoke UiTextL, hdcBack, 474, 524, offset szBackBtn, offset CN_BACKBTN, colDark
         invoke UiTextL, hdcBack, 360, 560, offset szSetHint, offset CN_SETHINT, colGray
 
     ; ---------- 玩法演示页：6 段动画 ----------
@@ -2435,6 +3307,92 @@ T2P2Keep:
         invoke FrameRect, hdcBack, addr boxRc, boxCur
         invoke UiTextL, hdcBack, 474, 524, offset szBackBtn, offset CN_BACKBTN, colDark
         invoke UiTextL, hdcBack, 360, 560, offset szSkHint, offset CN_SKHINT, colGray
+    .endif
+
+UR_Toast:
+    ; ---- 会话40：成就解锁弹层（任意画面置顶横幅 4s；顶部 36..100 不与掉线横幅 258..334 冲突） ----
+    ; ---- 会话41：滑入/品阶描边/末段闪烁 + 对局内倒计时修复（见 UiTick 过程头） ----
+    mov eax, achvToastT
+    .if eax != 0
+        mov ecx, achvToastId
+        .if ecx < ACH_COUNT            ; 无符号判定：-1（无弹层）天然落选
+            mov edx, ecx
+            imul edx, edx, ACH_SIZE
+            add edx, OFFSET achvDefs
+            mov eax, (ACHDEF ptr [edx]).rarity
+            mov achRarV, eax
+            mov eax, (ACHDEF ptr [edx]).pNameEn
+            mov achEnP, eax
+            mov eax, (ACHDEF ptr [edx]).pNameCn
+            mov achCnP, eax
+            mov eax, achRarV
+            mov ecx, rarCol[eax*4]
+            mov achCol, ecx
+            mov ecx, rarEn[eax*4]
+            mov achRarEnP, ecx
+            mov eax, achRarV
+            mov ecx, rarCn[eax*4]
+            mov achRarCnP, ecx
+            mov eax, achCol
+            mov achNmCol, eax
+            mov ecx, achRarV
+            mov edx, rarBr[ecx*4]
+            mov achBr, edx                   ; 会话41：品阶色描边
+            ; 会话42：退场改滑出（末 8 tick 原路顶回屏外），替代会话41 的
+            ; 末段闪烁——用户实玩反馈"一闪一闪"显廉价，动画首尾对称更体面
+            mov eax, 240
+            sub eax, achvToastT
+            mov achDy, 0
+            .if eax < 8
+                mov ecx, 8
+                sub ecx, eax
+                imul ecx, ecx, 12
+                mov achDy, ecx
+            .else
+                mov ecx, achvToastT
+                .if ecx < 8
+                    mov eax, 8
+                    sub eax, ecx
+                    imul eax, eax, 12
+                    mov achDy, eax
+                .endif
+            .endif
+            mov achShow, 1
+            .if achShow != 0
+                mov ecx, achDy
+                ; 会话45：横幅左延至 252、右延至 740（中心 496 不变），腾出 x260..284 图标位
+                mov boxRc.left, 252
+                mov boxRc.right, 740
+                mov eax, 36
+                sub eax, ecx
+                mov boxRc.top, eax
+                mov eax, 100
+                sub eax, ecx
+                mov boxRc.bottom, eax
+                invoke FillRect, hdcBack, addr boxRc, brushPickBg
+                invoke FrameRect, hdcBack, addr boxRc, achBr
+                ; ---- 会话45：横幅左侧 24px 成就图标（品阶色），y=52-achDy ----
+                mov ecx, achDy
+                mov eax, 52
+                sub eax, ecx
+                mov achIcoY, eax
+                mov eax, achvToastId
+                invoke AchvIcoBlit, 260, achIcoY, eax, achCol
+                mov ecx, achDy
+                mov eax, 44
+                sub eax, ecx
+                mov achYt, eax
+                mov ecx, achDy
+                mov eax, 64
+                sub eax, ecx
+                mov achY2, eax
+                invoke SelectObject, hdcBack, fontSmall
+                invoke UiTextL, hdcBack, 316, achYt, offset szToastAch, offset CN_ACHTOA, colHi
+                invoke UiTextL, hdcBack, 600, achYt, achRarEnP, achRarCnP, achCol
+                invoke SelectObject, hdcBack, menuFont
+                invoke UiTextL, hdcBack, 316, achY2, achEnP, achCnP, achNmCol
+            .endif
+        .endif
     .endif
 
 UR_Done:

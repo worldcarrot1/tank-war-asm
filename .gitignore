@@ -15,3 +15,43 @@ tankwar.map
 
 # 联机回环测试转储（tools/net_loopback_test.py 产物，会话36）
 netdump_*.txt
+
+# 会话43：CC0 音效包下载/解压目录（未跟踪数据，勿提交）
+dl/
+
+# 会话47：RL 训练产物
+rl_policy.npz
+rl_train.log
+rl_train.out
+tankwar_rl.dll
+tankwar_rl.lib
+tankwar_rl.exp
+__pycache__/
+*.rlrec
+rl_policy_best.npz
+rl_policy*.bak
+rl_policy*.bak.npz
+rl_*.out
+rl_server_status.html
+rl_server_stats.json
+rl_policy_turtle58.npz
+rl_policy_skbest.npz
+rl_policy_cand*.npz
+
+rlbot_trace.bin
+
+# ---- 会话51 PR 清账：评测/探针产物与运行档（盘上留档可读，不入库）----
+*.out
+*.csv
+*.log
+!selftest.log
+*.bak*
+rlbot_trace*.bin
+rl_policy*.npz
+achv.dat
+*.map
+build_new.bat
+diag_*.txt
+*_allsave.txt
+# 一次性代码手术刀（patch 使命已完成；其余会话探针脚本全部入库背书 ROADMAP 复现链）
+tools/patch*.py

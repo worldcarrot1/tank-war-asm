@@ -1,5 +1,12 @@
 ; ============================================================
-; sound.asm —— 程序化 8-bit 电子音（上世纪芯片音风格）
+; sound.asm —— 音效 = CC0 采样内嵌 + BGM 程序化八音盒
+; 会话43：18 个音效全部换成真实 8-bit/电子采样——Juhani Junkala
+; 《The Essential Retro Video Game Sound Effects Collection [512
+; sounds]》（opengameart.org，CC0 公共领域，可商用免署名）。
+; 由 tools/gen_sfx43.py 转成 22050Hz/8-bit（静音位128）WAV 镜像
+; 内嵌于 inc/sfxdata.inc，SndInit 不再运行时生成音效。
+; 会话42 的程序化芯片音生成例程（GenPulse/GenSlide* 等）保留，
+; BGM 仍走八音盒程序化生成（bgmBuf/bgmBufG，waveOut 独立流）。
 ; 启动时生成：BGM 整循环样本填 bgmBuf，同时留档
 ; %TEMP%\tankwar_bgm.wav（仅排障用）；音效生成到内存 buffer
 ; （PlaySound SND_MEMORY 异步）。
@@ -52,6 +59,17 @@ SND_COUNT        equ 4
 SND_SWAP         equ 5
 SND_MINE         equ 6                 ; 布雷确认（会话 23 新增）
 SND_LASER        equ 7                 ; 激光发射（会话 33 新增）
+SND_SHIELD       equ 8                 ; 冰盾发动（会话 39 新增）
+SND_SHATTER      equ 9                 ; 冰盾碎裂/到期（会话 39：用户点名"冰碎声"）
+SND_GHOSTSND     equ 10                ; 穿墙发动（会话 39 新增）
+SND_NITROSND     equ 11                ; 燃油加速发动（会话 39 新增）
+SND_WATERSND     equ 12                ; 驭水发动·水花（会话 39 新增）
+SND_SWAPFIRE     equ 13                ; 换位弹出手/换位成功嗖声（会话 39 新增）
+SND_AIMSND       equ 14                ; 激光一段起瞄双哔（会话 39 新增）
+SND_ACH        equ 15                ; 成就解锁号角·普通档（会话 40；会话 41 按品阶分 15..18）
+SND_ACH1       equ 16                ; 稀有档（原 C 大调四音）
+SND_ACH2       equ 17                ; 史诗档（五音入第二八度）
+SND_ACH3       equ 18                ; 传奇档（七音上行+高八度长尾）
 
 NOTE_SHOT        equ 2646              ; 0.12s
 ; 击败音（会话 26 重制）：PvZ 小丑盒子"开箱"质感 = 盒盖弹开短滑音
@@ -71,14 +89,12 @@ NOTE_LASR        equ 3969              ; 0.18s 激光啸（会话 33）
     bgmPath     db 260 dup (0)
     tagBgm      db "\tankwar_bgm.wav", 0
     envTag      db "TEMP", 0
-    ; 音效内存镜像（44 字节 WAV 头 + PCM）
-    sndShotBuf  db 2760 dup (?)     ; 头+0.12s
-    sndBoomBuf  db 8800 dup (?)     ; 头+0.34s（八音盒开箱音，会话 26）
-    sndPickBuf  db 3460 dup (?)     ; 头+0.15s
-    sndCntBuf   db 2360 dup (?)     ; 头+0.10s
-    sndSwapBuf  db 3460 dup (?)     ; 头+0.15s
-    sndMineBuf  db 2300 dup (?)     ; 头+2*0.05s（布雷闷双响，会话 23）
-    sndLaserBuf db 4100 dup (?)     ; 头+0.18s（会话 33 激光发射）
+    ; 音效内存镜像（44 字节 WAV 头 + PCM）——会话43：18 个音效全部改为
+    ; 内嵌 CC0 采样静态表（inc/sfxdata.inc，Juhani Junkala 512 音效包，
+    ; 44100/16bit 源 2:1 降采样到 22050/8bit 静音位128 摆幅±112，含淡入淡出
+    ; 防爆音咔哒）。生成脚本 tools/gen_sfx43.py，重生成后无需动本文件。
+    ; BGM（bgmBuf/bgmBufG）仍为程序化八音盒，运行时生成不变。
+    include sfxdata.inc
     hdrBuf      db 44 dup (0)       ; BGM 文件头
     rngSt       dd 12345            ; 噪声 LCG
     tmpAcc      dd 0                ; 滑频相位累积
@@ -481,6 +497,70 @@ GS_Done:
 GenSoft endp
 
 ; ------------------------------------------------------------
+; GenPulse -- 占空比脉冲波绝对写（会话42 8-bit 化主力音色）：
+; duty ∈ 1..3（周期 4 分法，1=25% 高电平）。25%/12.5% 占空是 NES 2A03
+; /Game Boy 主音色的灵魂——比 50% 方波更"尖亮金属感"，一听即回 80 年代。
+; 入参：pBuf, freq, nSamp, tail, duty
+; ------------------------------------------------------------
+GenPulse proc uses ebx ecx edx esi pBuf: dword, freq: dword, nSamp: dword, tail: dword, duty: dword
+    mov esi, pBuf
+    xor ecx, ecx
+GP_Loop:
+    mov eax, ecx
+    imul eax, eax, 4
+    mov ebx, freq
+    imul eax, ebx                 ; 会话42 陷阱：ml 拒三操作数 imul reg,reg,reg（A2070），
+    mov ebx, SR                   ; 改两操作数；积 <3.1e8 高位 edx 恒 0，直接 div
+    div ebx                       ; edx = 4 分法相位余数 0..3
+    cmp edx, duty                 ; 余数 < duty -> 高电平
+    cmp edx, duty                   ; 相位余数 < duty -> 高电平
+    jb GP_Hi
+    mov byte ptr [esi], AMP_LO
+    jmp GP_N
+GP_Hi:
+    mov byte ptr [esi], AMP_HI
+GP_N:
+    inc esi
+    inc ecx
+    .if ecx < nSamp
+        jmp GP_Loop
+    .endif
+    .if tail != 0
+        invoke DecayTail, pBuf, nSamp, tail
+    .endif
+    ret
+GenPulse endp
+
+
+; ------------------------------------------------------------
+; GenTick -- 白噪声混入（会话42 8-bit 电子镲头）：每样本
+; new=(原值+噪声32..159)/2，在音色头部叠 50% 宽带"嚓"感打击层
+; ------------------------------------------------------------
+GenTick proc uses ebx ecx edx esi pBuf: dword, nSamp: dword
+    mov esi, pBuf
+    xor ecx, ecx
+GT_Loop:
+    mov eax, rngSt
+    imul eax, eax, 1103515245
+    add eax, 12345
+    mov rngSt, eax
+    xor edx, edx
+    mov ebx, 128
+    div ebx
+    add eax, 32
+    mov ebx, eax
+    movzx edx, byte ptr [esi]
+    add edx, ebx
+    shr edx, 1
+    mov [esi], dl
+    inc esi
+    inc ecx
+    .if ecx < nSamp
+        jmp GT_Loop
+    .endif
+    ret
+GenTick endp
+; ------------------------------------------------------------
 ; SndInit -- 启动时生成 BGM 文件与全部音效
 ; ------------------------------------------------------------
 SndInit proc uses ebx esi edi
@@ -569,52 +649,10 @@ BG2_Bass:
         invoke WriteFile, hFile, offset bgmBuf, BGM_TOTAL, addr wrBytes, 0
         invoke CloseHandle, hFile
     .endif
-    ; ---- 会话 23 电子音重制 / 会话 30 去刺耳 ----
-    ; 开炮：正弦滑频 900->180Hz（旧方波 1500->140 谐波尖锐被指"刺耳"，
-    ; 换 GenSlideSoft 纯音+中低音区），0.12s，尾衰减防爆音
-    invoke GenSlideSoft, offset sndShotBuf+44, 900, 180, NOTE_SHOT
-    invoke DecayTail, offset sndShotBuf+44, NOTE_SHOT, 200
-    invoke WrHead, offset sndShotBuf, NOTE_SHOT
-    ; 爆炸（坦克击败音，会话 26 重制）：PvZ 小丑僵尸"小丑盒子打开"
-    ; 音效 = 八音盒上行折返颤音 14 音（方波+快速衰减的拨弦叮当感），
-    ; 前置盒盖弹开短滑音 900->300Hz，尾部落盖噪声。旧版通长纯噪声
-    ; 爆裂（会话 24"复原"）被指太吵杂，改音乐盒质感。
-    invoke GenSlide, offset sndBoomBuf+44, 900, 300, BK_POP
-    mov edi, OFFSET sndBoomBuf+44+BK_POP
-    xor esi, esi
-BK_Ping:
-    mov eax, bkFreq[esi*4]
-    invoke GenSquare, edi, eax, BK_PING, 380
-    add edi, BK_PING
-    inc esi
-    .if esi < BK_NC
-        jmp BK_Ping
-    .endif
-    invoke GenNoise, edi, BK_POOF
-    invoke WrHead, offset sndBoomBuf, NOTE_BOOM
-    ; 拾取：明亮上行大三琶音 A5->E6->A6（芯片过关感）
-    invoke GenSquare, offset sndPickBuf+44, 880, NOTE_THIRD, 60
-    invoke GenSquare, offset sndPickBuf+44+NOTE_THIRD, 1318, NOTE_THIRD, 60
-    invoke GenSquare, offset sndPickBuf+44+NOTE_THIRD*2, 1760, NOTE_THIRD, 300
-    invoke WrHead, offset sndPickBuf, NOTE_THIRD*3
-    ; ---- 倒计时哔 ----
-    invoke GenSquare, offset sndCntBuf+44, 880, NOTE_CNT, 320
-    invoke WrHead, offset sndCntBuf, NOTE_CNT
-    ; 虚影/换位：下行琶音 A6->E6->A5（与拾取上行形成"得到/失去"对照）
-    invoke GenSquare, offset sndSwapBuf+44, 1760, NOTE_THIRD, 60
-    invoke GenSquare, offset sndSwapBuf+44+NOTE_THIRD, 1318, NOTE_THIRD, 60
-    invoke GenSquare, offset sndSwapBuf+44+NOTE_THIRD*2, 880, NOTE_THIRD, 300
-    invoke WrHead, offset sndSwapBuf, NOTE_THIRD*3
-    ; 布雷：两声低鸣 220->165Hz（闷双响，提示"脚下有雷"）
-    invoke GenSquare, offset sndMineBuf+44, 220, NOTE_THIRD, 60
-    invoke GenSquare, offset sndMineBuf+44+NOTE_THIRD, 165, NOTE_THIRD, 400
-    invoke WrHead, offset sndMineBuf, NOTE_THIRD*2
-    ; 激光发射（会话 33，玩家点名"激光发射时加音效"）：上行啸声
-    ; 300->1500Hz 正弦滑频 0.18s——开炮音是下行（900->180），方向相反
-    ; 一听即辨；GenSlideSoft 纯音不刺耳，尾衰减 600 样本防爆音
-    invoke GenSlideSoft, offset sndLaserBuf+44, 300, 1500, NOTE_LASR
-    invoke DecayTail, offset sndLaserBuf+44, NOTE_LASR, 600
-    invoke WrHead, offset sndLaserBuf, NOTE_LASR
+    ; ---- 会话43：18 个音效不再运行时生成——inc/sfxdata.inc 已内嵌 CC0 采样
+    ; 静态表（44B WAV 头+PCM，22050Hz/8bit/静音位128/摆幅±112，源为 Juhani
+    ; Junkala《512 Retro SFX》CC0 包，tools/gen_sfx43.py 转换生成）。
+    ; Gen*/bkFreq/NOTE_* 保留：BGM 八音盒与后续备用音色仍可用。
     ret
 SndInit endp
 
@@ -720,6 +758,28 @@ SndPlay proc uses ebx id: dword
         invoke PlaySoundA, offset sndMineBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
     .elseif eax == SND_LASER
         invoke PlaySoundA, offset sndLaserBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_SHIELD
+        invoke PlaySoundA, offset sndShieldBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_SHATTER
+        invoke PlaySoundA, offset sndShatterBuf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_GHOSTSND
+        invoke PlaySoundA, offset sndGhostBf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_NITROSND
+        invoke PlaySoundA, offset sndNitroBf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_WATERSND
+        invoke PlaySoundA, offset sndWaterBf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_SWAPFIRE
+        invoke PlaySoundA, offset sndSwapfBf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_AIMSND
+        invoke PlaySoundA, offset sndAimBf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_ACH
+        invoke PlaySoundA, offset sndAch0Bf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_ACH1
+        invoke PlaySoundA, offset sndAchBf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_ACH2
+        invoke PlaySoundA, offset sndAch2Bf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
+    .elseif eax == SND_ACH3
+        invoke PlaySoundA, offset sndAch3Bf, 0, SND_MEMORY or SND_ASYNC or SND_NODEFAULT
     .endif
     ret
 SndPlay endp

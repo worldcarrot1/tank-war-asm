@@ -38,6 +38,7 @@ extern hWnd        :dword          ; main.asm 里的主窗口句柄
 extern numPlayers  :dword          ; ui.asm（当前玩家数）
 extern mapData     :byte           ; game.asm 里的地图数组
 extern tanks       :TANK           ; game.asm 里的坦克状态
+extern botMask     :dword          ; bot.asm（会话39：bit i=槽i由黑色人机控制）
 extern bullets     :BULLET         ; game.asm 里的子弹池
 extern pickupType  :dword          ; 技能拾取物
 extern pickupX     :dword
@@ -66,6 +67,9 @@ extern sfxOn       :dword          ; 音效开关
 extern shakeT      :dword          ; 爆炸震屏剩余 tick（game.asm）
 extern cosTBL      :dword          ; 360 度三角表 x1024（game.asm .data，gen_trig.py 生成）
 extern sinTBL      :dword
+extern netMode     :dword          ; ui.asm（会话37：联机对局 PING 显示门）
+extern netRttOk    :dword          ; net.asm（1=RTT 至少测出过一次）
+extern netRttAvg   :dword          ; net.asm（EWMA 平滑 RTT ms）
 
 WallRects PROTO :DWORD,:DWORD,:DWORD   ; game.asm：墙格挡板矩形枚举
 UiTextZ   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD   ; ui.asm：ASCII 文本
@@ -93,6 +97,7 @@ UiTextL   PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD ; ui.asm：双语文�
     brushP2     dd ?                ; P2 车体：蓝
     brushP3     dd ?                ; P3 车体：红
     brushP4     dd ?                ; P4 车体：橙
+    brushBot    dd ?                ; 会话38：挑战人机车体：炭黑（botMode 时槽1专用）
     brushBullet dd ?                ; 子弹：近黑
     brushHud    dd ?                ; 计分条：深灰
     skillBrush  dd 10 dup (0)       ; [1..9] 技能配色刷（BGR）
@@ -173,6 +178,8 @@ GfxInit proc
     mov brushP3, eax
     invoke CreateSolidBrush, 00005AB4h       ; P4 深橙 RGB(180,90,0)
     mov brushP4, eax
+    invoke CreateSolidBrush, 000C0C0Ch       ; 会话38：人机炭黑 RGB(12,12,12)
+    mov brushBot, eax
     invoke CreateSolidBrush, 00191919h
     mov brushBullet, eax
     invoke CreateSolidBrush, 00282828h
@@ -234,7 +241,7 @@ DrawHud proc uses ebx esi edi
     xor ebx, ebx
 DH_Blk:
     .if ebx >= numPlayers
-        ret
+        jmp DH_Ping
     .endif
     ; ---- 玩家颜色块（20x20 带描边，y 628..648）----
     mov eax, x0
@@ -244,7 +251,12 @@ DH_Blk:
     mov rc.top, 628
     mov rc.bottom, 648
     mov eax, ebx
-    .if eax == 0
+    xor ecx, ecx
+    bt botMask, eax                ; 会话39：任意人机槽涂炭黑
+    setc cl
+    .if ecx != 0
+        invoke FillRect, hdcBack, addr rc, brushBot
+    .elseif eax == 0
         invoke FillRect, hdcBack, addr rc, brushP1
     .elseif eax == 1
         invoke FillRect, hdcBack, addr rc, brushP2
@@ -300,6 +312,45 @@ DH_NmDone:
     add x0, 212 + 24
     inc ebx
     jmp DH_Blk
+    ; ---- 会话37：联机对局 Ping（hud 条带右端，地图层盖不到；EWMA ms，
+    ;      定宽 3 列右对齐前导零转空格："PING  46"）。字体/白字沿用
+    ;      GfxRender 预设（736-737 行），循环出口时正停在 fontSmall。----
+DH_Ping:
+    .if netMode != 0 && netRttOk != 0
+        invoke SelectObject, hdcBack, fontSmall
+        mov edi, offset scoreBuf
+        mov dword ptr [edi], 'PING'
+        mov byte ptr [edi+4], ' '
+        mov eax, netRttAvg
+        .if eax > 999
+            mov eax, 999
+        .endif
+        xor edx, edx
+        mov ebx, 100
+        div ebx                      ; eax=百位 edx=余数
+        mov esi, eax
+        mov eax, edx
+        xor edx, edx
+        mov ebx, 10
+        div ebx                      ; eax=十位 edx=个位
+        .if esi == 0
+            mov byte ptr [edi+5], ' '
+        .else
+            mov ecx, esi
+            add ecx, '0'
+            mov byte ptr [edi+5], cl
+        .endif
+        .if esi == 0 && eax == 0
+            mov byte ptr [edi+6], ' '
+        .else
+            add eax, '0'
+            mov byte ptr [edi+6], al
+        .endif
+        add dl, '0'
+        mov byte ptr [edi+7], dl
+        invoke TextOutA, hdcBack, MAP_W - 92, 630, offset scoreBuf, 8
+    .endif
+    ret
 DrawHud endp
 
 ; ------------------------------------------------------------
@@ -960,7 +1011,12 @@ TankLoop:
         .endif
         push ebx
         mov eax, ebx
-        .if eax == 0
+        xor ecx, ecx
+        bt botMask, eax            ; 会话39：人机槽车体涂炭黑
+        setc cl
+        .if ecx != 0
+            invoke SelectObject, hdcBack, brushBot
+        .elseif eax == 0
             invoke SelectObject, hdcBack, brushP1
         .elseif eax == 1
             invoke SelectObject, hdcBack, brushP2
@@ -1277,6 +1333,7 @@ GfxShutdown proc
     invoke DeleteObject, brushP2
     invoke DeleteObject, brushP3
     invoke DeleteObject, brushP4
+    invoke DeleteObject, brushBot
     invoke DeleteObject, brushBullet
     invoke DeleteObject, brushHud
     ; 技能刷与激光笔

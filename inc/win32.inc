@@ -42,6 +42,12 @@ VK_S        equ 053h
 VK_W        equ 057h
 VK_ESCAPE   equ 01Bh
 VK_TAB      equ 009h                ; 会话36：大厅手输 IP 编辑焦点切换
+VK_HOME     equ 024h                ; 会话41：图鉴首页跳转
+VK_END      equ 023h                ; 会话41：图鉴末页跳转
+VK_1        equ 031h                ; 会话41：图鉴 1..4 直接跳页
+VK_2        equ 032h
+VK_3        equ 033h
+VK_4        equ 034h
 VK_B        equ 042h
 VK_F        equ 046h
 VK_G        equ 047h
@@ -124,6 +130,17 @@ sockaddr_in STRUCT
     sin_zero    db 8 dup(?)
 sockaddr_in ENDS
 
+SYSTEMTIME STRUCT                      ; 会话41：成就解锁日期（GetLocalTime）
+    wYear         dw ?
+    wMonth        dw ?
+    wDayOfWeek    dw ?
+    wDay          dw ?
+    wHour         dw ?
+    wMinute       dw ?
+    wSecond       dw ?
+    wMilliseconds dw ?
+SYSTEMTIME ENDS
+
 WSADATA STRUCT
     wVersion        dw ?
     wHighVersion    dw ?
@@ -144,12 +161,17 @@ GetCurrentProcessId PROTO stdcall        ; 会话36：dump 文件名/行内区�
 Sleep            PROTO stdcall :DWORD
 ExitProcess      PROTO stdcall :DWORD
 GetCommandLineA  PROTO stdcall
+GetLocalTime     PROTO stdcall :DWORD        ; 会话41
 CreateFileA      PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD,:DWORD
 WriteFile        PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+ReadFile         PROTO stdcall :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+GetStdHandle     PROTO stdcall :DWORD        ; 会话47：rlhost 管道宿主
 CloseHandle      PROTO stdcall :DWORD
 
 GENERIC_WRITE        equ 40000000h
+GENERIC_READ         equ 80000000h
 CREATE_ALWAYS        equ 2
+OPEN_EXISTING        equ 3
 FILE_ATTRIBUTE_NORMAL equ 00000080h
 
 ; user32

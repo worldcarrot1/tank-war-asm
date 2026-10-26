@@ -30,6 +30,56 @@ ST_LAN      equ 3                   ; 联机大厅
 ST_PLAY     equ 4                   ; 对局中
 ST_SKILL    equ 5                   ; 技能说明页
 ST_DEMO     equ 6                   ; 玩法演示页
+ST_ACHG     equ 7                   ; 会话40：成就图鉴页（翻页翻阅）
+
+; ---- 会话40：成就系统（achv.asm；表序即图鉴序，按稀有度分组）----
+ACH_COUNT   equ 24                  ; 成就总数（会话41 增"追风者"=24；改表后同步）
+ACH_ROW_PG  equ 6                   ; 图鉴每页行数
+RAR_COM     equ 0                   ; 稀有度：普通
+RAR_RARE    equ 1                   ; 稀有度：稀有
+RAR_EPIC    equ 2                   ; 稀有度：史诗
+RAR_LEG     equ 3                   ; 稀有度：传奇
+; 事件类型（AchvEvent 第一参）
+AK_SHOT     equ 0                   ; 开火一发
+AK_KILL     equ 1                   ; 击杀（value=武器 WP_*）
+AK_PICKUP   equ 2                   ; 拾取道具
+AK_SKILL    equ 3                   ; 技能发动（value=SK_  id）
+AK_BLOCK    equ 4                   ; 冰盾挡弹一次
+AK_HURT     equ 5                   ; 实际扣血（value=扣后 hp，0=致死）
+AK_SWAP     equ 6                   ; 换位成交
+AK_LASER    equ 7                   ; 激光发射（二段起爆）
+AK_WIN      equ 8                   ; 夺冠（value=亚军分；mode 由 netMode/botMask 现推）
+AK_MATCHST  equ 9                   ; 新局开始（清场，不经 actor 闸）
+; 内部伪 kind（仅表内匹配用）
+AK_MKILL    equ 10                  ; 单场击杀峰值（prog=best，解锁在 bump 内判 goal）
+AK_REVENGE  equ 11                  ; 以牙还牙：击杀上次带走自己的对手（瞬时）
+                                    ;  （会话40 替换"千钧一发/1血扛伤"——一命制下
+                                    ;   任何命中即死，value==1 分支永不可达）
+AK_FLAWLESS equ 12                  ; 零受伤害夺冠（瞬时）
+AK_SHUTOUT  equ 13                  ; 对手零分（瞬时）
+; AK_KILL param / value 语义
+WP_ANY      equ -1                  ; 武器通配
+WP_BULLET   equ 0
+WP_MINE     equ 1
+WP_LASER    equ 2
+; AK_WIN param 语义
+WM_ANY      equ 0
+WM_NET      equ 1
+WM_BOT      equ 2
+
+; 成就定义表项（achv.asm 的 achvDefs；ui.asm 图鉴渲染共用此形状）
+ACHDEF STRUCT
+    kind    dd ?                     ; AK_*（AK_MKILL/LOWHP/FLAWLESS/SHUTOUT 为内部伪 kind）
+    param   dd ?                     ; 匹配参数：-1 通配 / SK_ id / WP_* / WM_*；其余 0
+    goal    dd ?                     ; 达成线
+    rarity  dd ?                     ; RAR_*
+    pNameEn dd ?                     ; 英文题名
+    pNameCn dd ?                     ; 中文题名（UTF-16 dw 串）
+    pDescEn dd ?
+    pDescCn dd ?
+ACHDEF ENDS
+ACH_SIZE    equ SIZEOF ACHDEF         ; 8 dd = 32B
+ACH_PAGES   equ (ACH_COUNT + ACH_ROW_PG - 1) / ACH_ROW_PG   ; 图鉴页数（24/6 -> 4 整页）
 
 ; ---- 游戏节奏 ----
 TICK_MS     equ 16                  ; 约 60 tick/秒
@@ -84,6 +134,18 @@ FIRE_CD     equ 20                  ; 开火冷却 tick（§3）
 PLAYER_SELF equ 0
 PLAYER_PEER equ 1
 PLAYER_P2   equ 1                   ; 本地第二坦克（对练用）
+
+; ---- 会话38：黑色超强人机（挑战模式）----
+; 菜单/命令行进入的挑战局：槽位1由 AI 接管，黑车身、快跑快转快射、3 条命。
+; 会话38 引入、会话39 泛化：挑战局/对战混编时槽位 i 由 AI 接管（botMask 位 i），
+; 黑车身、快跑快转快射。所有钩子一律 botMask 命中该槽才走，
+; botMask=0 时全局行为与旧版逐字节一致（回归锁）。
+BOT_SLOT    equ 1                   ; 人机占用槽位（=PLAYER_PEER）
+BOT_LIVES   equ 1                   ; 会话42：血量与玩家相等（原 3 命，用户要求拉平）
+BOT_SPEED   equ 2                   ; 偶 tick 速度（与玩家同，公平起步）
+BOT_SPEED_HI equ 4                  ; 奇 tick 速度（玩家 3）→ 人机均速 3.0 > 玩家 2.5
+BOT_TURN    equ 4                   ; 转向度/tick（玩家 2）→ 对准目标快一倍
+BOT_FIRE_CD equ 12                  ; 开火冷却 tick（玩家 20）
 
 ; ---- 技能系统 ----
 ; 拾取物每 10s 随机生成一个（非水/非墙格），坦克中心格拾取，
@@ -198,6 +260,53 @@ NET_HS STRUCT
     rounds  dd ?                     ; 期望局数（取小）
     cookie  dd ?                     ; 对端 cookie（仅 reply 校验用，可 0）
 NET_HS ENDS
+
+; ---- 会话37 M3.5：中继服务器（非局域网联机）----
+; 拓扑：双方都只与公网中继服务器单播；服务器按房间把对端报文
+; 逐字节原样转发（'T'/'H'/'W'/'L'/'P' 全量透传，协议零改动）。
+NET_SRV_PORT equ 28900               ; 中继服务器默认监听端口
+NET_JOIN STRUCT                      ; 'J' 加入/应答包 16B（服务器识别，不转发）
+    magic0  db 'J'
+    jtype   db ?                     ; 0=join（客户端发） 1=ack（服务器回）
+    ver     db ?                     ; = NET_VER
+    jst     db ?                     ; ack: 0=等待队友 1=已配对 2=房间已满
+    room    dd ?                     ; 房间号 1..999999
+    cookie  dd ?                     ; join: 发送端 lobbySeed；ack: 0
+    pad     dd ?
+NET_JOIN ENDS
+NET_JOIN_SIZE equ SIZEOF NET_JOIN
+JOIN_ST_WAIT  equ 0
+JOIN_ST_PAIR  equ 1
+JOIN_ST_FULL  equ 2
+
+; ---- RTT 探测包（'P'，会话37：延迟显示，双方直回，服务器仅转发）----
+NET_PING STRUCT                      ; 16B
+    magic0  db 'P'
+    pingRpl db ?                     ; 0=ping 请求 1=pong 应答（原样回 ts）
+    pad0    db ?
+    pad1    db ?
+    ts      dd ?                     ; 发送时刻 GetTickCount（pong 回显请求 ts）
+    cookie  dd ?                     ; 发送端 lobbySeed（pong 装应答方种子）
+    pad     dd ?
+NET_PING ENDS
+NET_PING_SIZE equ SIZEOF NET_PING
+
+; ---- 会话51 STUN 步A：公网端点反射包（'S'，服务器->双方，服务器不转发）----
+; 服务器在配对房间每次 'J' ack 后，把"另一名成员的观测源地址"反射给双方：
+; 双方由此互见公网出口 addr:port（大厅显示；步B 直连升级的原料）。纯增量，
+; 旧客户端分发器不认 'S' 自然忽略，协议版本字段保持 1。
+; STRUCT 1 = pack(1)：room@10 非 4 对齐，禁用默认对齐否则汇编器插 pad 变 20B。
+NET_STUN STRUCT 1
+    magic0  db 'S'
+    stVer   db ?                     ; = NET_VER
+    rsv0    db ?                     ; 预留 0（将来子类型）
+    rsv1    db ?
+    peerIp  dd ?                     ; 对端观测 IP 裸 4 字节（网络序，可直接进 sockaddr/IpToStr）
+    peerPort dw ?                    ; 对端观测端口 裸 2 字节（网络序 = sin_port 原字节）
+    room    dd ?                     ; 所在房间（LE，与 'J' ack 同口径）
+    cookie  dd ?                     ; 回显收件人最近一次 JOIN cookie（=其 lobbySeed，防伪证）
+NET_STUN ENDS
+NET_STUN_SIZE equ SIZEOF NET_STUN    ; =18
 
 ; ---- 协议常量 ----
 EVT_NONE        equ 0

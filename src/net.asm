@@ -20,6 +20,13 @@
 ;                     掉线检测（netLost 期间照发照收，一包即自愈）
 ;   - NetApplyRx:     无 socket 依赖的收包应用器（public：selftest 直喂）
 ;   - ParseIp/NetSetManual: 手输 IP:端口 直连（B8，配 docs/ONLINE_PLAY.md）
+;   - 会话37 M3.5 中继联机（NetSetServer/ParseServerSpec）：大厅手输行
+;     "服务器ip[:端口]#房间号" -> 双方各与公网中继服务器单播，服务器按房间
+;     逐字节转发既有 'T'/'H'/'W'/'L'/'P' 包（协议零改动，天然穿一切 NAT，
+;     含对称 NAT；见 docs/PROTOCOL.md v1.1 + server/relay_server.c）。
+;     relayMode 下 peerAddr 恒=服务器（收包不覆写），'J' 包周期续租。
+;   - 会话37 RTT 显示（'P' ping/pong）：peerKnown 后 0.5s 一发，大厅行+
+;     对局 HUD 显示平滑 RTT；netdump T 行末列同值。
 ; 包字段偏移（小端，字节）：
 ;   NET_PKT 26B: 0 magic('W','T') 2 seq(w) 4 tx 8 ty 12 tdir 13 thp
 ;     14 flags(bit0开火 bit1死亡) 15 effOnLow 16 skillId 17 evtKind
@@ -30,6 +37,10 @@
 ;     载荷不位移；NetApplyRx/NetFlush 通吃两形态（跨网正常链路收 57 54 原样）
 ;   NET_HS    16B: 0 'H' 1 htype 4 seed 8 rounds 12 cookie
 ;   NET_LSR   48B: 0 'L' 1 npts 2 len(w) 4 seq(w) 6 skill 8 px[20](w 交替)
+;   NET_JOIN  16B: 0 'J' 1 jtype 2 ver 3 st 4 room(dd) 8 cookie(dd) 会话37 中继
+;   NET_PING  16B: 0 'P' 1 rep 4 ts(dd) 8 cookie(dd) 会话37 RTT 探测
+;   NET_STUN  18B: 0 'S' 1 ver 4 peerIp(裸网络序) 8 peerPort(裸网络序) 10 room
+;     14 cookie(收件人种子) 会话51 STUN步A：服务器反射对端观测端点，仅存储+显示
 ; ============================================================
 
 .386
@@ -50,8 +61,16 @@ public NetSetStart
 public NetEnterMatch
 public NetSetManual
 public ParseIp
+public NetSetServer                ; 会话37 M3.5：中继服务器模式（ip[:port]#room）
+public ParseServerSpec             ; "a.b.c.d[:p]#room" 解析（selftest 直测）
+public NetResetTargets             ; 从主菜单重进大厅时清手动/中继目标
 public NetApplyRx
 public NetApplyPacket                 ; selftest 便捷入口（仅 NET_PKT）
+public NetMirrorExtrap                ; 会话39：镜像断包外推（selftest 直测）
+public netTick                        ; 会话39：外推 selftest 需要推钟
+public lastRxTick
+public mirVX
+public mirVY
 public hSock
 public peerAddr
 public peerKnown
@@ -61,6 +80,17 @@ public isFixedPort
 public netSharedSeed
 public netRole
 public lobbySeed
+public relayMode                   ; 1=中继模式（所有包经服务器转发）
+public manualMode                  ; 1=定向单播（手动直连/中继共用）
+public relayRoom
+public relaySt                     ; 服务器 ack 状态 JOIN_ST_*
+public netRtt                      ; 最近一次 RTT ms（会话37：大厅/HUD 显示）
+public netRttOk
+public netRttAvg                   ; EWMA 平滑 RTT
+public stunIp                      ; 会话51 STUN步A：对端观测端点（裸网络序4B，可直进 sockaddr）
+public stunPort                    ; 对端观测端口（主机序数值，显示/比对用）
+public stunSeen                    ; 1=收过有效 'S'（三道闸后采信）
+public NetFeedJP                   ; selftest 零 socket 直喂 'J'/'P'/'S'（pBuf, len）
 
 ; ---- game.asm ----
 extern tanks         :TANK
@@ -84,6 +114,7 @@ extern laserX        :dword
 extern laserY        :dword
 extern laserLen      :dword
 extern laserT        :dword
+extern laserOwn      :dword          ; 会话40：激光归属（导入对端折线时钉 PLAYER_PEER）
 extern laserD        :dword
 extern laserHitMask  :dword
 extern prevTank      :dword
@@ -95,15 +126,23 @@ extern rngMatch      :dword
 ; ---- ui.asm ----
 extern netMode       :dword
 extern numPlayers    :dword
+extern botMask      :dword        ; bot.asm（会话39：联机开局时清人机残留）
+extern onlineBanT   :dword        ; ui.asm（会话39：新局清禁用技提示残留）
 
 SpawnBullet   PROTO stdcall :DWORD
 GameInit      PROTO
+UiSyncBotName PROTO                ; ui.asm（会话38：槽1名 BLACK BOT<->P2）
 SetNetSeed    PROTO :DWORD
 SpawnIce2x2At PROTO stdcall :DWORD,:DWORD
 ; ---- 本模块内部 proc 前置声明（文件内前向调用）----
 NetSendProbe  PROTO :DWORD,:DWORD
 NetSendHS     PROTO :DWORD
+NetSendJoin   PROTO                ; 会话37：'J' 加入包（中继模式）
+NetSendPing   PROTO                ; 会话37：'P' RTT 探测包
+NetTickClocks PROTO                ; 会话37：JOIN 续租/RTT 探测周期钟
+NetHandleJP   PROTO :DWORD         ; 会话37：'J' ack / 'P' ping 共用处理（len）
 NetCheckTimeout PROTO
+NetMirrorExtrap PROTO                ; 会话39：镜像断包外推
 PackState     PROTO
 PackLaser     PROTO
 StrCopySa     PROTO :DWORD,:DWORD
@@ -118,11 +157,16 @@ NetDumpTick   PROTO
 
 NET_VER      equ 1
 NET_ANN_MANUAL equ 15               ; 手动模式 announce 周期（更快拿到反馈）
+NET_PING_TICKS equ 30               ; 会话37：RTT 探测周期 0.5s（大厅+对局）
+NET_JOIN_TICKS equ 60               ; 会话37：对局中 'J' 续注册周期 1s
+NET_EXTRAP_MAX equ 3                ; 会话39：镜像外推最多 3 tick（4+=冻结好于假动）
+NET_EXTRAP_CAP equ 4                ; 会话39：外推速度钳位 px/tick（氮气极速≈4.3，取4保守）
 
 .data
     hSock       dd ?
     localAddr   sockaddr_in <>
     peerAddr    sockaddr_in <>       ; 对端地址（真实源端口，含临时端口）
+                                     ; 会话37 中继模式：恒=服务器地址（收包不覆写）
     peerKnown   dd 0
     wsaData     WSADATA <?>
     recvBuf     db 64 dup (0)
@@ -130,6 +174,8 @@ NET_ANN_MANUAL equ 15               ; 手动模式 announce 周期（更快拿�
     sendLsr     NET_LSR <>
     probeT      NET_PROBE <>
     hsT         NET_HS <>
+    joinT       NET_JOIN <>          ; 会话37：中继加入/心跳暂存
+    pingT       NET_PING <>          ; 会话37：RTT 探测暂存
     fromAddr    sockaddr_in <>
     fromLen     dd SIZEOF sockaddr_in
     tmpSa       sockaddr_in <>
@@ -156,6 +202,34 @@ NET_ANN_MANUAL equ 15               ; 手动模式 announce 周期（更快拿�
     manualMode    dd 0
     manualIp      dd 0               ; 网络序
     manualPort    dd 0               ; 主机序
+    ; ---- 会话37 M3.5：中继服务器模式 + RTT ----
+    relayMode     dd 0               ; 1=所有包走服务器转发（peerAddr 恒=服务器）
+    relayRoom     dd 0               ; 房间号 1..999999
+    stunIp        dd 0               ; 会话51 STUN步A：对端公网观测 IP 裸4字节（网络序）
+    stunPort      dd 0               ; 对端观测端口（主机序数值；换算=ntohs 等价）
+    stunSeen      dd 0               ; 1=已收有效 'S'（大厅显示行开关）
+    relaySt       dd 0               ; 服务器 ack 状态 JOIN_ST_*（0=未收到）
+    relaySeen     dd 0               ; 收到过 ack（仅诊断；UI 读 relaySt）
+    srvIp         dd 0               ; ParseServerSpec 输出暂存（网络序）
+    srvPort       dd 0               ; 主机序
+    srvTmpIp      db 32 dup (0)      ; '#' 前 IP 段拷贝（ParseIp 输入）
+    srvAccS       dd 0               ; 房间号累加器（勿用 ebp，会话36 教训）
+    srvCntS       dd 0               ; 房间号位数
+    srvColon      dd 0               ; IP 段是否含 ':'（决定默认端口）
+    netRtt        dd 0               ; 最近一次 RTT ms
+    netRttOk      dd 0               ; 1=至少测出过一次（0 显示 "--"）
+    netRttAvg     dd 0               ; EWMA (3/4 旧 + 1/4 新)
+    lastPingTs    dd 0               ; 在飞请求时间戳（pong 认账凭据）
+    pingClock     dd 0               ; 探测周期计数
+    joinClock     dd 0               ; 对局 'J' 心跳周期计数
+    ; 会话37：握手尾巴——本机进局后 lobby FSM 停转，若对端尚未收到本机
+    ; START（客机先见主机 START 抢先开局，其带 START 的 announce 未及送达），
+    ; 主机永卡 ST_LAN。进局瞬间置 hsTail，NetFlush 内每 15tick 补发一发
+    ; 带 myStart 的探测包（经中继=发服务器转发），300tick(5s) 后自然收敛。
+    ; 收到对端首个 W（AR_Live）或重进大厅（NetEnterLan）即清零。
+    hsTail        dd 0               ; 1=尾巴活跃
+    hsTailT       dd 0               ; 剩余 tick（进局置 300，递减到 0 关闭）
+    hsTailC       dd 0               ; 补发节拍计数（满 15 发一发并归零）
     ; ParseIp scratch（proc 内跨段共享，避开双寄存器索引非法）
     ; 会话36 T46 回归揪出：本 proc 原把 EBP 当段累加器（xor ebp,ebp 毁 MASM
     ; 帧指针 -> 之后访问 pIp/pPort=[ebp+8] 变 [8] 空指针 AV，手输 IP 连接必崩）。
@@ -171,6 +245,8 @@ NET_ANN_MANUAL equ 15               ; 手动模式 announce 周期（更快拿�
     lastRxTick  dd 0
     rxSeen      dd 0
     netLost     dd 0
+    mirVX       dd 0                 ; 会话39：镜像速度估计（断包外推源）
+    mirVY       dd 0
     lastEvtSeq  dd 0
     lastLsrSeq  dd 0
     lastSentLsr dd 0                  ; 会话36：本机末次发出的激光 seq（防自回声）
@@ -263,10 +339,22 @@ NetEnterLan proc
     mov myStart, 0
     mov netLost, 0
     mov rxSeen, 0
+    mov mirVX, 0                 ; 会话39：回大厅清外推速度
+    mov mirVY, 0
     mov lobbyTimer, 0
     mov hsPeerSeed, 0
     mov hsPeerRounds, 0
     mov lastEvtSeq, 0
+    ; 会话37：回大厅重连保留 relayMode/manualMode/peerAddr（目标不丢，
+    ; Esc 回厅即可原地重握手）；只清展示态与 RTT 读数
+    mov relaySt, 0
+    mov relaySeen, 0
+    mov netRttOk, 0
+    mov netRttAvg, 0
+    mov pingClock, 0
+    mov hsTail, 0
+    mov hsTailT, 0
+    mov hsTailC, 0
     invoke GetTickCount
     mov lobbySeed, eax
     .if eax == 0
@@ -322,6 +410,161 @@ NetSendHS proc htype: dword
 NetSendHS endp
 
 ; ------------------------------------------------------------
+; NetSendJoin —— 会话37：'J' join 包（注册/续租房间槽位，发往 peerAddr=服务器）
+; ------------------------------------------------------------
+NetSendJoin proc
+    mov joinT.magic0, 'J'
+    mov joinT.jtype, 0
+    mov joinT.ver, NET_VER
+    mov joinT.jst, 0
+    mov eax, relayRoom
+    mov joinT.room, eax
+    mov eax, lobbySeed
+    mov joinT.cookie, eax
+    invoke sendto, hSock, addr joinT, SIZEOF NET_JOIN, 0, addr peerAddr, SIZEOF sockaddr_in
+    ret
+NetSendJoin endp
+
+; ------------------------------------------------------------
+; NetSendPing —— 会话37：'P' RTT 探测（ts=lastPingTs 由调用方先写入）
+; ------------------------------------------------------------
+NetSendPing proc
+    mov pingT.magic0, 'P'
+    mov pingT.pingRpl, 0
+    mov eax, lastPingTs
+    mov pingT.ts, eax
+    mov eax, lobbySeed
+    mov pingT.cookie, eax
+    invoke sendto, hSock, addr pingT, SIZEOF NET_PING, 0, addr peerAddr, SIZEOF sockaddr_in
+    ret
+NetSendPing endp
+
+; ------------------------------------------------------------
+; NetTickClocks —— 会话37：大厅/对局共用的周期钟
+;   joinClock：中继模式每 1s 续发 'J'（服务器槽位 10s 过期，3 倍冗余）
+;   pingClock：peerKnown 后每 0.5s 一发 'P'（RTT 显示）
+; ------------------------------------------------------------
+NetTickClocks proc
+    inc joinClock
+    .if joinClock >= NET_JOIN_TICKS
+        mov joinClock, 0
+        .if relayMode != 0
+            invoke NetSendJoin
+        .endif
+    .endif
+    .if peerKnown != 0
+        inc pingClock
+        .if pingClock >= NET_PING_TICKS
+            mov pingClock, 0
+            invoke GetTickCount
+            mov lastPingTs, eax
+            invoke NetSendPing
+        .endif
+    .endif
+    ret
+NetTickClocks endp
+
+; ------------------------------------------------------------
+; NetHandleJP —— 'J' 服务器应答 + 'S' STUN 反射 + 'P' RTT 探测/应答（recvBuf 暂存）
+;   'J'：仅 relayMode；仅 jtype=1(ack)、room 匹配自身才采信 relaySt
+;        （自己 JOIN 的 LSP 回声 jtype=0，天然被这层滤掉）
+;   'S'（会话51 STUN步A）：仅 relayMode；room==relayRoom ∧ cookie==本机
+;        lobbySeed（服务器回显的是"收件人自己"JOIN 携带的种子，第三方无从伪造；
+;        对端虽见得到本种子——握手已交换——但步A仅存储显示，伪造收益为零）。
+;        采信后仅写 stunIp/stunPort/stunSeen：peerAddr 仍钉服务器，行为零变化
+;        （直连升级=步B，须双向验证后才允许改道）。
+;   'P'：请求（rep=0）原地回 pong（ts 回显、cookie 换本机种子）；
+;        应答（rep=1）三道认账：cookie≠lobbySeed（滤自己 pong 回声）、
+;        ts==lastPingTs（只认在飞的那一发，回声的"请求"变出的 pong 也滤掉）
+;        → RTT=GetTickCount-ts，u32 回绕安全；EWMA 3/4旧+1/4新。
+; ------------------------------------------------------------
+NetHandleJP proc len: dword
+    movzx eax, byte ptr recvBuf[0]
+    .if eax == 'J'
+        .if relayMode != 0 && len >= SIZEOF NET_JOIN
+            cmp byte ptr recvBuf[1], 1
+            jne HJP_Done
+            mov edx, dword ptr recvBuf[4]
+            cmp edx, relayRoom
+            jne HJP_Done
+            movzx edx, byte ptr recvBuf[3]
+            mov relaySt, edx
+            mov relaySeen, 1
+        .endif
+    .elseif eax == 'S'
+        .if relayMode != 0 && len >= SIZEOF NET_STUN
+            mov edx, dword ptr recvBuf[10]
+            cmp edx, relayRoom
+            jne HJP_Done
+            mov edx, dword ptr recvBuf[14]
+            cmp edx, lobbySeed
+            jne HJP_Done
+            mov eax, dword ptr recvBuf[4]
+            mov stunIp, eax                  ; 裸网络序 4B 原样存（IpToStr 逐字节读）
+            movzx eax, word ptr recvBuf[8]   ; 裸 BE 2B -> 主机序数值（.386 无 bswap：xchg al,ah）
+            xchg al, ah
+            mov stunPort, eax
+            mov stunSeen, 1
+        .endif
+    .else
+        .if len >= SIZEOF NET_PING
+            movzx edx, byte ptr recvBuf[1]
+            .if edx == 0
+                mov byte ptr recvBuf[1], 1
+                mov eax, lobbySeed
+                mov dword ptr recvBuf[8], eax
+                invoke sendto, hSock, addr recvBuf, SIZEOF NET_PING, 0, addr fromAddr, SIZEOF sockaddr_in
+            .else
+                mov eax, dword ptr recvBuf[8]
+                cmp eax, lobbySeed
+                je HJP_Done
+                mov edx, dword ptr recvBuf[4]
+                cmp edx, lastPingTs
+                jne HJP_Done
+                invoke GetTickCount
+                ; GetTickCount 毁 EDX（volatile，本会话 ui 崩溃同教训）：
+                ; 差值须从包头重装，不能跨 API 暂存 edx（实测曾算出开机时长）
+                sub eax, dword ptr recvBuf[4]
+                ; 样本未跨 tick 边界（GetTickCount 粒度 ~15.6ms）时按 1ms 计：
+                ; 真实值落在 [0,16)，取下界上探 1，避免 EWMA 恒 0 无从判别链路
+                .if eax == 0
+                    mov eax, 1
+                .endif
+                mov netRtt, eax
+                mov netRttOk, 1
+                mov ecx, netRttAvg
+                test ecx, ecx
+                jz HJP_1st
+                imul ecx, ecx, 3
+                add ecx, eax
+                shr ecx, 2
+                mov netRttAvg, ecx
+                jmp HJP_Done
+            HJP_1st:
+                mov netRttAvg, eax
+            .endif
+        .endif
+    .endif
+HJP_Done:
+    ret
+NetHandleJP endp
+
+; ------------------------------------------------------------
+; NetFeedJP —— selftest 入口（会话51 T54）：把 pBuf 起 len 字节灌进 recvBuf
+; 再走 NetHandleJP。'S'/'J' 分支不触 socket（仅 'P' 请求分支会回 pong，
+; 自测不喂 'P'），实现零 socket 验证。
+; ------------------------------------------------------------
+NetFeedJP proc uses esi edi pBuf: dword, len: dword
+    mov esi, pBuf
+    mov edi, offset recvBuf
+    mov ecx, len
+    cld
+    rep movsb
+    invoke NetHandleJP, len
+    ret
+NetFeedJP endp
+
+; ------------------------------------------------------------
 ; NetLobbyTick —— 大厅每 tick（ui ST_LAN 调用）
 ; ------------------------------------------------------------
 NetLobbyTick proc uses ebx esi
@@ -358,10 +601,14 @@ LB_Recv:
             cmp eax, lobbySeed                ; 自回声过滤
             je LB_Next
             ; 会话36：本机 LSP 让广播包的源端口不可回（随机化），对端真实
-            ; 监听口取 announce 载荷里的 port 字段（网络序）
-            movzx eax, word ptr recvBuf[esi+10]
-            invoke StrCopySa, addr fromAddr, addr peerAddr
-            mov word ptr peerAddr.sin_port, ax
+            ; 监听口取 announce 载荷里的 port 字段（网络序）。
+            ; 会话37：中继模式下 peerAddr 恒=服务器，对端内网端口无意义，
+            ; 覆写反而切断回程——relayMode 时整段跳过。
+            .if relayMode == 0
+                movzx eax, word ptr recvBuf[esi+10]
+                invoke StrCopySa, addr fromAddr, addr peerAddr
+                mov word ptr peerAddr.sin_port, ax
+            .endif
             mov peerKnown, 1                  ; 真实源=可回地址（含临时端口）
             ; 会话36：本机 LSP 会改写/丢弃 'H' 包（实测首字节变 0x44），握手
             ; 状态改由探测包载荷承载：cookie=对端种子、start=对端已按开始
@@ -390,8 +637,12 @@ LB_Recv:
         jne LB_H1
         mov gotStart, 1
     LB_H1:
-        invoke StrCopySa, addr fromAddr, addr peerAddr
+        .if relayMode == 0                ; 会话37：中继模式 peerAddr 恒=服务器不覆写
+            invoke StrCopySa, addr fromAddr, addr peerAddr
+        .endif
         mov peerKnown, 1
+    .elseif eax == 'J' || eax == 'P' || eax == 'S'   ; 会话37 中继 ack/RTT；会话51 +'S'
+        invoke NetHandleJP, ebx
     .endif
 LB_Next:
     dec lobbyDrain
@@ -414,6 +665,8 @@ LB_Timers:
             invoke NetSendProbe, 0, addr loopAddr
         .endif
     .endif
+    ; ---- 会话37：JOIN 续租 + RTT 探测周期钟（大厅/对局共用）----
+    call NetTickClocks
     ; ---- 周期 HELLO（已按开始则同带 START）----
     .if peerKnown != 0
         mov eax, lobbyTimer
@@ -445,6 +698,14 @@ LB_Timers:
             invoke DpTok, eax
             mov eax, netTick
             invoke DpTok, eax
+            ; 会话51 STUN步A 追加列：stunSeen stunPort stunIp（交叉对账：本端
+            ; stunPort 应恒等于对端 H 行自报监听口；stunIp=16777343 即环回）
+            mov eax, stunSeen
+            invoke DpTok, eax
+            mov eax, stunPort
+            invoke DpTok, eax
+            mov eax, stunIp
+            invoke DpTok, eax
             call DpEol
         .endif
     .endif
@@ -465,6 +726,62 @@ NetCheckTimeout proc
     .endif
     ret
 NetCheckTimeout endp
+
+; ------------------------------------------------------------
+; NetMirrorExtrap —— 会话39：断包空洞期内按衰减速度外推镜像位置。
+; 门（全部满足才动）：netLost==0（netLost 时 netPaused 冻结玩法，画面本就定格）、
+; peerKnown、rxSeen、delta=netTick-lastRxTick 在 1..NET_EXTRAP_MAX、镜像存活。
+; 步长 = v >> (delta-1)：三档 v → v/2 → v/4 递减，长断包越推越收敛到停，不假冲刺；
+; 之后不再补推，等 NET_TIMEOUT 弹层/自愈兜底。下一包到达由 NetApplyRx 权威覆写纠偏。
+; 正常串流每 tick 都有包：收包在同一次 NetFlush 内先于本函数，delta=0 恒不触发
+; （回环自检/双机零回归）。
+; ------------------------------------------------------------
+NetMirrorExtrap proc
+    .if netLost == 0 && peerKnown != 0 && rxSeen != 0
+        mov eax, netTick
+        sub eax, lastRxTick
+        .if eax > 0 && eax <= NET_EXTRAP_MAX
+            .if tanks[PLAYER_PEER*SIZEOF TANK].alive != 0
+                mov ecx, eax
+                dec ecx                    ; shift = delta-1
+                mov edx, mirVX
+                mov eax, mirVY
+NME_Decay:
+                test ecx, ecx
+                jz NME_Apply
+                sar edx, 1
+                sar eax, 1
+                dec ecx
+                jmp NME_Decay
+NME_Apply:
+                add edx, tanks[PLAYER_PEER*SIZEOF TANK].x
+                add eax, tanks[PLAYER_PEER*SIZEOF TANK].y
+                ; 越界钳位同用手写有符号比较（.if reg<0 无符号恒假）
+                test edx, edx
+                jns NME_XHi
+                xor edx, edx
+                jmp NME_YChk
+NME_XHi:
+                cmp edx, MAP_W - TANK_SIZE
+                jle NME_YChk
+                mov edx, MAP_W - TANK_SIZE
+NME_YChk:
+                test eax, eax
+                jns NME_YHi
+                xor eax, eax
+                jmp NME_Store
+NME_YHi:
+                cmp eax, MAP_H - TANK_SIZE
+                jle NME_Store
+                mov eax, MAP_H - TANK_SIZE
+NME_Store:
+                mov tanks[PLAYER_PEER*SIZEOF TANK].x, edx
+                mov tanks[PLAYER_PEER*SIZEOF TANK].y, eax
+            .endif
+        .endif
+    .endif
+    ret
+NetMirrorExtrap endp
 
 ; ------------------------------------------------------------
 ; NetLobbyState —— bit0=peerKnown bit1=gotHello bit2=myStart bit3=gotStart
@@ -628,6 +945,10 @@ NetSetManual proc pBuf: dword
         ret
     .endif
     mov manualMode, 1
+    ; 会话37：手输纯 IP=退回直连语义，中继模式关闭（两者互斥，后设者赢）
+    mov relayMode, 0
+    mov relaySt, 0
+    mov relayRoom, 0
     mov peerAddr.sin_family, AF_INET
     mov eax, manualIp
     mov peerAddr.sin_addr, eax
@@ -644,9 +965,156 @@ NetSetManual proc pBuf: dword
 NetSetManual endp
 
 ; ------------------------------------------------------------
+; ParseServerSpec —— 会话37："a.b.c.d[:p]#room" -> (ip网络序, 端口主机序, 房间)
+; 房间 1..6 位数字且值 1..999999；IP 段缺 ':' 端口默认 NET_SRV_PORT(28900)；
+; 任一段非法整体拒绝（不写输出参数）。纯整数扫描，静态 scratch（勿用 ebp）。
+; ------------------------------------------------------------
+ParseServerSpec proc uses ebx esi pBuf: dword, pIp: dword, pPort: dword, pRoom: dword
+    mov esi, pBuf
+    xor ebx, ebx
+    xor ecx, ecx                     ; IP 段拷贝写指针
+PS_Scan:
+    movzx eax, byte ptr [esi+ebx]
+    .if eax == '#'
+        mov byte ptr srvTmpIp[ecx], 0
+        inc ebx
+        jmp PS_Room
+    .endif
+    .if eax == 0
+        xor eax, eax
+        ret                          ; 缺 '#'
+    .endif
+    .if ecx >= 30
+        xor eax, eax
+        ret                          ; IP 段超长
+    .endif
+    mov srvTmpIp[ecx], al
+    inc ecx
+    inc ebx
+    jmp PS_Scan
+PS_Room:
+    mov srvColon, 0                  ; IP 段是否自带端口
+    xor ecx, ecx
+PS_Cln:
+    movzx eax, byte ptr srvTmpIp[ecx]
+    .if eax == 0
+        jmp PS_Dig
+    .endif
+    .if eax == ':'
+        mov srvColon, 1
+    .endif
+    inc ecx
+    jmp PS_Cln
+PS_Dig:
+    mov srvAccS, 0
+    mov srvCntS, 0
+PS_Dloop:
+    movzx eax, byte ptr [esi+ebx]
+    .if eax < '0' || eax > '9'
+        .if eax == 0
+            jmp PS_Dfin
+        .endif
+        xor eax, eax
+        ret                          ; 房间号只允许数字（严格口径，无尾随容忍）
+    .endif
+    .if srvCntS >= 6
+        xor eax, eax
+        ret
+    .endif
+    sub eax, '0'
+    mov ecx, srvAccS
+    imul ecx, ecx, 10
+    add ecx, eax
+    mov srvAccS, ecx
+    inc srvCntS
+    inc ebx
+    jmp PS_Dloop
+PS_Dfin:
+    .if srvCntS == 0
+        xor eax, eax
+        ret                          ; '#' 后为空
+    .endif
+    mov eax, srvAccS
+    .if eax == 0
+        xor eax, eax
+        ret                          ; 房间号 0 非法
+    .endif
+    invoke ParseIp, addr srvTmpIp, pIp, pPort
+    .if eax == 0
+        xor eax, eax
+        ret
+    .endif
+    .if srvColon == 0
+        mov eax, pPort
+        mov dword ptr [eax], NET_SRV_PORT
+    .endif
+    mov eax, pRoom
+    mov ecx, srvAccS
+    mov dword ptr [eax], ecx
+    mov eax, 1
+    ret
+ParseServerSpec endp
+
+; ------------------------------------------------------------
+; NetSetServer —— 会话37：连接中继服务器 "ip[:port]#room"（大厅手动行带 '#'）
+; 成功：manualMode+relayMode=1，peerAddr=服务器；announce 转定向单播（经
+; 转发即为对端可达）；立即发 'J' 注册（不等周期）。失败不改任何状态。
+; 返回 eax=1/0（界面红字）
+; ------------------------------------------------------------
+NetSetServer proc pBuf: dword
+    invoke ParseServerSpec, pBuf, addr srvIp, addr srvPort, addr relayRoom
+    .if eax == 0
+        ret
+    .endif
+    mov manualMode, 1
+    mov relayMode, 1
+    mov relaySt, 0
+    mov relaySeen, 0
+    mov stunIp, 0                     ; 会话51：换目标即清观测点（防陈旧显示/陈旧步B原料）
+    mov stunPort, 0
+    mov stunSeen, 0
+    mov peerAddr.sin_family, AF_INET
+    mov eax, srvIp
+    mov peerAddr.sin_addr, eax
+    mov eax, srvPort
+    invoke htons, eax
+    mov peerAddr.sin_port, ax
+    mov peerKnown, 0
+    mov gotHello, 0
+    mov gotStart, 0
+    mov myStart, 0
+    mov lobbyTimer, NET_ANN_TICKS     ; 立即补一发 announce（打开对端回程）
+    invoke NetSendJoin
+    mov eax, 1
+    ret
+NetSetServer endp
+
+; ------------------------------------------------------------
+; NetResetTargets —— 会话37：主菜单重进大厅清"目标"（手动/中继模式与房间号），
+; 区别于 NetEnterLan（对局 Esc 回厅保留目标原地重连）
+; ------------------------------------------------------------
+NetResetTargets proc
+    mov relayMode, 0
+    mov manualMode, 0
+    mov relayRoom, 0
+    mov relaySt, 0
+    mov relaySeen, 0
+    mov stunIp, 0                     ; 会话51：目标清零连带清观测点
+    mov stunPort, 0
+    mov stunSeen, 0
+    ret
+NetResetTargets endp
+
+; ------------------------------------------------------------
 ; NetEnterMatch —— ui 在 NetCanStart 后调用：共享种子 -> 开局
 ; ------------------------------------------------------------
 NetEnterMatch proc
+    ; 会话38/39：联机局绝不带人机残留（挑战/补位->大厅->联机的防御路径）
+    cmp botMask, 0
+    je NEM_Role
+    mov botMask, 0
+    invoke UiSyncBotName
+NEM_Role:
     mov eax, lobbySeed
     xor eax, hsPeerSeed
     .if eax == 0
@@ -684,6 +1152,13 @@ NetEnterMatch proc
     mov netLost, 0
     mov eax, netTick
     mov lastRxTick, eax
+    mov mirVX, 0                 ; 会话39：外推估计随新局清零（防陈旧速度带镜像漂移）
+    mov mirVY, 0
+    mov onlineBanT, 0            ; 会话39：新局清禁用技提示残留
+    ; 会话37：启动握手尾巴（见 .data 注释），把慢半拍的对端拉进对局
+    mov hsTail, 1
+    mov hsTailT, 300
+    mov hsTailC, 0
     .if netDumpOn != 0
         call NetDumpEnsure
         ; G 行：共享种子 / 局数 / 首张图号（两端应全等 -> 握手证据）
@@ -828,6 +1303,33 @@ AR_TagOk:
         jae AR_Drop
         movzx ecx, word ptr [esi+2]      ; sub 毁掉了低 16 位，重取绝对序号
         mov peerSeq, cx
+        ; ---- 外推速度估计（会话39）：两包位置差钳位 ±NET_EXTRAP_CAP，须在覆写位置前取 ----
+        ; 正常串流下每 tick 收包 delta=0，外推门不点亮，此估计只在断包时生效；回环/自检零回归。
+        ; 注意：MASM .if 对 寄存器<负常量 按无符号比较（3 < -4 为真!），钳位必须手写有符号 jmp。
+        mov eax, dword ptr [esi+4]
+        sub eax, tanks[PLAYER_PEER*SIZEOF TANK].x
+        cmp eax, NET_EXTRAP_CAP
+        jle NVX_Lo
+        mov eax, NET_EXTRAP_CAP
+        jmp NVX_St
+NVX_Lo:
+        cmp eax, -NET_EXTRAP_CAP
+        jge NVX_St
+        mov eax, -NET_EXTRAP_CAP
+NVX_St:
+        mov mirVX, eax
+        mov eax, dword ptr [esi+8]
+        sub eax, tanks[PLAYER_PEER*SIZEOF TANK].y
+        cmp eax, NET_EXTRAP_CAP
+        jle NVY_Lo
+        mov eax, NET_EXTRAP_CAP
+        jmp NVY_St
+NVY_Lo:
+        cmp eax, -NET_EXTRAP_CAP
+        jge NVY_St
+        mov eax, -NET_EXTRAP_CAP
+NVY_St:
+        mov mirVY, eax
         ; ---- 镜像覆盖：位置/朝向/血量/存活/效果/持技 ----
         mov eax, dword ptr [esi+4]
         mov tanks[PLAYER_PEER*SIZEOF TANK].x, eax
@@ -902,8 +1404,11 @@ AR_Live:
         mov lastRxTick, eax
         mov rxSeen, 1
         mov netLost, 0               ; 掉线自愈（B4）
-        .if peerKnown == 0
-            invoke StrCopySa, pFrom, addr peerAddr
+        mov hsTail, 0                ; 会话37：对端已在局（W 到达）→ 尾巴收工
+            .if peerKnown == 0
+            .if relayMode == 0        ; 会话37：中继模式不覆写（pFrom=服务器地址）
+                invoke StrCopySa, pFrom, addr peerAddr
+            .endif
             mov peerKnown, 1
         .endif
         mov eax, 1
@@ -925,6 +1430,7 @@ AR_Live:
         mov lastLsrSeq, ecx
         movzx ecx, word ptr [esi+2]
         mov laserLen, ecx
+        mov laserOwn, PLAYER_PEER    ; 会话40：对端折线归属登记（成就伤害结算读；actor 闸自然拒记）
         xor ecx, ecx
 AR_LsrCopy:
         cmp ecx, laserN
@@ -963,6 +1469,7 @@ NetApplyPacket endp
 ; ------------------------------------------------------------
 NetFlush proc uses ebx ecx edi
     inc netTick
+    call NetTickClocks               ; 会话37：JOIN 续租 + RTT 探测
     .if peerKnown != 0
         call PackState
         invoke sendto, hSock, addr sendPkt, NET_PKT_SIZE, 0, addr peerAddr, SIZEOF sockaddr_in
@@ -978,6 +1485,23 @@ NetFlush proc uses ebx ecx edi
         mov fireHappened, 0
         mov evtPendTtl, 0
         mov laserPendTtl, 0
+    .endif
+    ; ---- 会话37 握手尾巴：本机已进局但对端可能还卡在大厅（START 包
+    ;      竞态丢失）。每 15tick 补发一发带 myStart 的 announce（直连=直达
+    ;      对端 / 中继=服务器转发），收端 lobby 'T' 分支置 gotStart 即开局；
+    ;      对局期收端 NF_Recv 对 'T' 探测本就忽略，多发无害。收到对端首个
+    ;      W（AR_Live 路径）或 5s 超时后关闭。----
+    .if hsTail != 0
+        dec hsTailT
+        .if hsTailT <= 0
+            mov hsTail, 0
+        .else
+            inc hsTailC
+            .if hsTailC >= 15
+                mov hsTailC, 0
+                invoke NetSendProbe, 0, addr peerAddr
+            .endif
+        .endif
     .endif
     ; ---- 排空收包 ----
     mov lobbyDrain, 16
@@ -1004,6 +1528,8 @@ NF_Recv:
         .if ebx >= NET_LSR_SIZE
             invoke NetApplyRx, addr recvBuf, addr fromAddr
         .endif
+    .elseif eax == 'J' || eax == 'P' || eax == 'S'   ; 会话37 ack/RTT；会话51 +'S'
+        invoke NetHandleJP, ebx
     .endif
 NF_Next:
     dec lobbyDrain
@@ -1012,6 +1538,7 @@ NF_Next:
     .endif
 NF_Timeout:
     call NetCheckTimeout
+    call NetMirrorExtrap             ; 会话39：断包空洞期镜像外推（正常 delta=0 空转）
     .if netDumpOn != 0
         call NetDumpTick
     .endif
@@ -1037,11 +1564,13 @@ NetShutdown endp
 ; ------------------------------------------------------------
 ; 诊断转储（netloop 自动化验收，见 tools/net_loopback_test.py）
 ;   H 固定性 cookie 端口 pid —— 开文件即写
-;   B hello start myStart peerKnown netTick —— 大厅期每 16 tick
+;   B hello start myStart peerKnown netTick stunSeen stunPort stunIp —— 大厅期每
+;     16 tick（会话51 尾三列；快开局实例可能整局 0 行，证据以 T 行为准）
 ;   G 种子 局数 首图       —— NetEnterMatch 写（握手同种子证据）
-;   T tick rx lost pk x0 y0 mx my a0 a1 hp1 sk1 ef1 aim1 b0 b1 m0 m1 pick rngm
-;                          —— 每 tick 一行（对账：镜像跟随/技能镜像/
-;                             弹雷计数/掉线位/公共流种子）
+;   T tick rx lost pk x0 y0 mx my a0 a1 hp1 sk1 ef1 aim1 b0 b1 m0 m1 pick rngm rtt
+;     stunSeen stunPort stunIp       —— 每 tick 一行（对账：镜像跟随/技能镜像/
+;                             弹雷计数/掉线位/公共流种子/会话37 平滑RTT/
+;                             会话51 STUN观测点=对端公网端点交叉对账）
 ; ------------------------------------------------------------
 DumpNum proc uses ebx ecx edx esi value: dword, pBuf: dword
     mov esi, pBuf
@@ -1252,6 +1781,14 @@ DT_P:
     mov eax, pickupType
     invoke DpTok, eax
     mov eax, rngMatch
+    invoke DpTok, eax
+    mov eax, netRttAvg               ; 会话37：末列平滑 RTT ms（旧解析器忽略尾列兼容）
+    invoke DpTok, eax
+    mov eax, stunSeen                ; 会话51 STUN步A：再追三列（对局内也可见证据，
+    invoke DpTok, eax                ;   大厅 B 行对快开局实例可能一次不发）
+    mov eax, stunPort
+    invoke DpTok, eax
+    mov eax, stunIp
     invoke DpTok, eax
     call DpEol
     ret

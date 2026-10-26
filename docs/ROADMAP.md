@@ -1003,3 +1003,1045 @@
       **跨网终验=与朋友互装 ZeroTier 输虚拟 IP 对战**（交付后约测项）
 
 
+
+### 2026-10-21 会话 37：非局域网中继服务器 M3.5（UDP relay 全链）+ 中继客户端模式 + RTT 显示（用户："非局域网联机是不是要搭服务器，实现一下"+"更好的联机规划并实现"）
+
+- [x] **中继服务器** `server/relay_server.c`（单文件 C，Win `build_server.bat` /
+      Linux `gcc -O2` 双端可编）：UDP 28900，槽位表按 (源IP,源端口) 认人
+      （64 槽，10s 无包回收，JOIN 续租 ~1s/次）；房间号取"最早两名入房者"
+      为配对对子，第三人 st=FULL 且隔离；**协议零改动**——'T'/'H'/'W'/'L'/'P'
+      逐字节透传给对端，仅 'J' 由服务器消化并回 ack `{magic0 'J',jtype=1,ver,st,room,cookie=0}`
+- [x] 客户端 `relayMode` 全链：`ParseServerSpec "ip[:port]#room"`（端口缺省
+      28900、room 1..999999 严校验、复用 ParseIp）/ `NetSetServer`（成功=
+      manualMode+relayMode 双置位、peerAddr 钉死服务器、立即首发 JOIN）/
+      `NetResetTargets`（主菜单重进厅清目标）；`NetHandleJP` 收 ack（jtype=1+
+      room 匹配+cookie 服务器恒 0 三道过滤）与 'P'（请求→就地自动回 pong，
+      pong→ts==lastPingTs 且 cookie≠本机种子 才认账 → netRtt/EWMA
+      netRttAvg=(3旧+新)/4）；大厅 UI：`RELAY <room>` 状态行 + WAIT/PAIR/
+      FULL 三态 + 右上 `RTT n ms`；`netrelay "ip#room"` 命令行免手输直达
+      （main.asm ArgScan5，双开自动化入口，供 tools/relay_loopback_test.py）
+- [x] **实测揪修三 bug**：① 大厅中继渲染 0xC0000005——SelectObject 毁
+      EAX/ECX/EDX（volatile），UiTextL 参数暂存其后再调 API 即野指针，
+      改"先换字体后暂存"根治（本会话 Win32 volatile 系列首例，bisect
+      用临时 DBG_DISABLE_RENDER 开关定位，已撤脚手架）；② **握手尾部竞态**
+      `hsTail`：客机先收到主机 START 抢先开局→lobby FSM 停转→其带 START 的
+      announce 未及送达→主机永卡 ST_LAN（回环 dump 实证 G 单边）。进局后
+      300tick 内每 15tick 补发一发 announce（载荷天然带 myStart，收端厅
+      'T' 分支置 gotStart 即开局；对局期收端本就忽略 'T'，多发无害），
+      收到对端首个 W（AR_Live）或回厅清零——直连双端同步开局时第 1 tick
+      即清，**97+25 断言基线逐字节不变**；③ RTT 计算跨 `invoke
+      GetTickCount` 暂存 edx 被 API 毁 → 差值实为开机时长（48,395,909ms
+      穿帮），改 API 后从包头重装；未跨 tick 边界样本计 1ms（GetTickCount
+      粒度 15.6ms，防 EWMA 恒 0 无从判链路）
+- [x] 对局内 HUD Ping：gfx `DrawHud` 尾块 `DH_Ping`（hud 条带右端
+      `MAP_W-92,630`，地图层盖不到；`"PING  46"` 定宽 3 列前导零转空格，
+      仅 netMode&&netRttOk 显示，单机零影响）
+- [x] T47 组（122 断言）：ParseServerSpec 9 边界（缺省端口/room 上限回绕/
+      `#`空/`#0`/6 位/#尾空格/非法 IP/端口 70000 拒）+ 中继标志链（成功置
+      3 标志+房间回填、失败零副作用、ResetTargets 全回滚）；基线换
+      **3832d541f352dabc7e9a8df9fc5d6a70 ×6 稳定**，前缀 diff 证旧 110 断言
+      不变；**tools/relay_loopback_test.py 全链 PASS**（服务器 st=1 配对→
+      双 G 全等→镜像跟随交叉等式→SPACE 弹→RTT 28~47ms 实数→kill 后
+      netLost），net_loopback 直连回归 PASS、play2 冒烟 PASS、build 零警告
+- [x] 文档：PROTOCOL.md v1.1（'J'/'P' 包表/中继转发规则/T 行 rtt 列/
+      尾巴时序）；ONLINE_PLAY.md 增"自建中继"节（Windows 编译+VPS gcc
+      一行+防火墙放 UDP 28900+大厅 `IP:端口#房间`）；README 联机行更新
+- [ ] 待用户手测：跨网双机经中继对战（任意 VPS/家用端口映射即可，
+      对称 NAT 不再受限）；ZeroTier 直连路仍是低延迟首选，中继为兜底
+
+### 2026-10-22 会话 38：黑色超强人机挑战模式（用户："增加一个超强人机坦克，黑色，供追求高难度的玩家挑战"）
+
+- [x] **新模块 `src/bot.asm`**（约640行，纯确定性无 rng，联机零侵入）：
+      `BotThink` 挂在 `GameUpdate` 内 InputSample 之后、fireHappened 清零
+      之前——每 tick 先抹平槽1六通道（连带屏蔽本地 P2 键盘），再写 AI 意图。
+      能力面（inc/game.inc 常量）：BOT_SPEED 2 / 奇 tick BOT_SPEED_HI 4
+      （均速3.0 vs 玩家2.5）、BOT_TURN 4°/tick（vs 2）、BOT_FIRE_CD 12
+      （vs 20）、BOT_LIVES 3
+- [x] **AI 决策链**：最近活靶 dist² + 八分距分带（>320 追击 / 130..320 面向
+      目标沿视线轴 ±抖动（保火不断流）/ <130 后撤）；速度环 8 采样×4tick
+      预测提前量（octDist*10/27 截200，瞬移>150px 重置）；`BotLos` 1×1
+      WallRectsHit 探针每 ~6px 采样判视线；`BotThreat` 整数走廊判据
+      |cross|≤14·(|vpx|+|vpy|) 躲弹（弹航向+90/+270 侧滑 22tick）；卡死
+      （想前进但位移=0 ×5）→30tick 交替侧绕行；60px 内顺路捡补给；
+      技能：LASER/REFLASER 即按+二段择时（bAimCd>14 且 |dir-aim|≤3）、
+      SHIELD 躲弹/近身、NITRO 远追、GHOST 无障碍时、WATER 卡死时，
+      MINE/SWAP/PHANTOM 永不用
+- [x] **引擎钩子全 botMode 门控（会话36 手法）**：MoveTank 速度（奇tick槽1
+      提4）、转向 BOT_TURN、开火 CD 12、ResetTanks 命数3；gfx brushBot
+      000C0C0C（DrawHud/TankLoop 槽1分支）；ui 菜单第2项 "BLACK BOT DUEL"
+      （8项）→`UiForceBotMatch`（botMode 先置位再 GameInit 保3命、
+      numPlayers=2、netMode=0）+ `UiSyncBotName`（"BLACK BOT"/"P2" 名牌
+      切换）；main `"tankwar bot"` 直开（ArgScan6）；net `NetEnterMatch`
+      进联机自动清 botMode
+- [x] **T48 五组15断言**：C ResetTanks 命数覆盖(人机3/玩家1/退人机1)、
+      A BotAimDxDy 四正+45°对角（发现定点表 sin89=sin90=1024 平局使
+      argmax 恒低1°，断言放 want/want-1，游戏死区3°不受影响）、
+      B BotLos 钢挡/移除通/短段恒通、D 两tick 位移人机6 vs 玩家5、
+      E 端到端 150tick 内击杀 oct336 静止靶且弹在途
+- [x] **回归锁**：旧 438 行日志（至 T47B）逐字节 cmp 一致，botMode=0
+      全路径行为不变实证；新基线 `15f22144deea249da92f4a4bca8310b1`
+      （48组137断言 ST_FAILS=0）×6 稳定；build 零警告
+- [x] **冒烟**：`tankwar bot` 实截屏（tools/bot_shot.py→shots38_bot.png）：
+      黑车右下出生、炮口已转向左上方玩家、HUD "BLACK BOT" 黑块名牌
+
+### 2026-10-22 会话 39：对战可加人机 + 黑色人机自撞弹死根治（用户："黑色超强人机看起来不是很聪明…希望把它放在对战里面…躲避子弹和追击玩家、使用技能的能力不强"）+ 技能音效全套 + 联机模式优化（用户："自己看看有没有其他的bug…优化每个技能使用的音效（比如冰盾碎的时候有冰碎声）…优化一下联机模式"）
+- [x] **对战混编人机**：numselpage 新增 "BOTS" 拨档（0..numPlayers-1，
+      CN_BOTS/4EBAh 双语），逐槽置 botMask 位=该槽由黑色人机接管；
+      UiSyncBotName 按 botMask 同步名牌（"BLACK BOT"），prevBotMask 判据
+      在退出人机局时恢复改名；常规对练入口显式清 botMask=0；联机
+      NetEnterMatch 清零（联机禁 bot）
+- [x] **自撞弹死根治（本会话核心）**：T49B 复现"零敌弹、零地雷、零技能"
+      下人机暴死——斜角开火后自身弹速 vx≈2.4 < 车速≈2.88，同向直追必撞
+      自家弹（TANK_SIZE=25 AABB 1px 重叠即判，TANK_HP=1 必死）。修复：
+      ①BotThreat 增 dot 符号判别写 bEvadeOwn（1=己弹正在远离/追弹态
+      2=反弹回杀态）；②规避期自家弹走廊内 bDrive 强制 0（停步让线、
+      转体照常，弹过即恢复）；③开火门 bEvadeOwn!=0 禁补射（防追射击
+      中再补一发叠走廊）。实测：t66 起 evOwn=1，bot 原地定格 80+ tick
+      让弹飞过，t171 恢复追击直至靶机
+- [x] **技能择时增强（配合上文）**：中距 16tick 前后抖动保瞄准、近距
+      <130 后撤、NITRO/SHIELD/LASER 门控沿用会话38，另加规避期一律
+      不开火不施技（bEvadeOwn 门在 fire gate 前）
+- [x] **T49 自检两组**：T49A 双 bot 隔离（各追各靶、互不串道，lPass=4）、
+      T49B 钢盒仅北开口 + 东南靶机：BFS 必须绕北开口出盒并逼近目标
+      （lPass=2：出盒上探 y<300 且东进 x<450 不冲过头）
+- [x] **调试插曲（教训）**：探针清理脚本把 T49B 布置段的喂值行
+      `mov eax,324/740/420` 误删，两车同落 (4,4) 伪"漂移进角"假象横生；
+      另一坑=用 esi 做注入循环计数器，AdvanceTicks 内部毁 esi → 循环
+      失控 11750 tick 乱码轨迹。改内存计数 s49C + 精确窗锚（Mark,360→
+      T49B_f1）后真相立现；布置行已复原，探针/TEMP extern/public 全数
+      拔除，orphan `mov eax,bDbg*` 死读清除
+- [x] **验证（阶段一·人机）**：build 零警告；49 组 119 断言 ST_FAILS=0；md5
+      4fd5ab4a2c2f74c83ce82efd6848896b ×6 稳定；tools/bot_shot.py 实机
+      冒烟 PASS（人机局渲染 1349 暗像素）
+- [x] **技能音效全套（阶段二）**：sound.asm 新增 7 个缓冲区与生成器，
+      SND_SHIELD=8（冰盾展开 G 大调三音上行琶音 1568/2093/3136）、
+      SND_SHATTER=9（冰碎=宽噪 500 样头 + 5 连高频方波碎粒 3300/2600/3500/2200/2900 + 噪 380 尾，碎裂"咔嚓哗啦"质感）、
+      SND_GHOSTSND=10（虚影 900→300Hz 下行柔音滑 0.13s+尾）、
+      SND_NITROSND=11（氮气 220→720Hz 上行锯齿轰 0.15s+尾）、
+      SND_WATERSND=12（驭水 700→200Hz 水波下行 + 90Hz GenAdd 低频涌动画）、
+      SND_SWAPFIRE=13（换位弹出膛 600→1400Hz 嗖声）、SND_AIMSND=14（激光起瞄 1200/1600Hz 两短哔）。
+      接线 game.asm：盾展开/碎（DamageTank 消耗 + EffTick 到期两处）/虚影/氮气/驭水/换位发射/激光起瞄、DoSwap 成交复用 SND_SWAP=5。
+      纯渲染侧零模拟影响：阶段二接入后 md5 与阶段一逐字节一致（后因 T50/外推换基线，属预期）
+- [x] **Bug 自查（阶段二）**：①inc/game.inc BOT_SLOT 注释仍写"挑战局专用/会话38"旧语义→更新为"挑战+对战混编，钩子一律 botMask 门控"；
+      ②BotSt↔staging globals 49 槽 1:1 对齐核验（rep movsd 镜像正确）；
+      ③server/relay_server.c 审查：短包/超长/收割/洪水均有防线，无改动；
+      ④改键/交换/输入隔离等前会话修复回归确认在位。未发现需额外修的活体 bug
+- [x] **联机优化①镜像断包外推（阶段三）**：60Hz 串流下丢 1~3 包时镜像从"定格"改"衰减外推"——
+      NetApplyRx 覆写前取两包位置差钳位 ±NET_EXTRAP_CAP(4px/tick) 存 mirVX/mirVY；
+      NetMirrorExtrap 在 NetFlush 尾部（NetCheckTimeout 之后）按 delta=netTick-lastRxTick 走
+      v→v/2→v/4 三档（delta 1/2/3），delta≥4 冻结（等 B4 掉线弹层兜底）；门=netLost==0 ∧
+      peerKnown ∧ rxSeen ∧ 镜像存活；落点钳地图界；NetEnterLan/NetEnterMatch 清零。
+      正常串流收包先于外推、delta=0 恒空转 → 回环/双机零回归（loopback 复测 PASS 实证）。
+      **MASM 深坑**：`.if eax < -NET_EXTRAP_CAP` 对寄存器按无符号比较（3 < 0xFFFFFFFC 为真），
+      首版把 vx=3 误钳成 −4 镜像倒着飘（T50 首跑 5/10 暴露）；钳位/边界全部改写
+      手写 `cmp+jl/jg` 有符号分支，`.if reg<0` 同坑同改
+- [x] **联机优化②禁用技提示**：B 档（换位/虚影）联机按压原为静默 ret，像按键坏了；
+      现吞掉道具并点亮 onlineBanT=120，ST_PLAY 掉线横幅正下方渲染
+      "SKILL NOT AVAILABLE ONLINE / 联机模式不支持该技能"红框条，渲染逐帧递减 2s 自隐，
+      NetEnterMatch 清零残留
+- [x] **T50 镜像外推自检**：零 socket 直喂 st46Pkt seq200~204，10 断言锁死：两包差取速(vx=3)、
+      delta1 全速 303、delta2 半速 304、delta3 v>>2 定格、delta4 超上限不动、+40 跳变钳位=4、
+      钳位后一步 348、死镜像不动、netLost 不动、**delta=0 空转**（回环零回归根证）
+- [x] **验证（阶段三终态）**：build 零警告；50 组 120 断言 ST_FAILS=0；md5 新基线
+      49f01b1bf1e6f52f1a2e538cda4ab992 ×6 稳定；net_loopback_test.py PASS（握手/follow/开火/netLost）；
+      relay_loopback_test.py PASS（PAIRED/G 全等/follow/fire sync/RTT≤43ms/netLost）；
+      bot_shot.py 冒烟渲染正常；音效纯呈现层不入模拟（基线差异仅来自 T50 新增行与外推 hook）
+
+### 2026-10-22 会话 40：成就系统四品阶 + 收集图鉴随意翻阅（用户："做一个成就系统，成就系统分为普通，稀有，史诗，传奇，成就系统要有收集图鉴，可以随意翻阅"）
+
+- [x] **新模块 src/achv.asm（引擎）**：23 条成就按品阶排布 普通6/稀有6/史诗6/传奇5；
+      `AchvEvent(kind,actor,value,vict)` 全 pushad 热路径安全，AEBump 定义表匹配
+      （param=-1 通配只对表项生效——首版把通配判反致 首杀/赏金/屠夫永不解锁，T51 前修正）；
+      解锁 → 即刻落盘 + SND_ACH=15 上行四音琶音 + achvToastId/T=240 弹层信号；
+      文件 achv.dat（'ACHP'+ver+23×(prog,own)=196B），Unpack 先验头再落状态、own 归一 0/1；
+      一命制下"千钧一发"(受击剩1血)不可达 → 改"以牙还牙"PAYBACK：killedBy[] 记账在 gate 之前
+      （peer/bot 带走我也记），我反杀记账者即达成；AK_MATCHST 每局清 achvMatchKills/Hurt/killedBy；
+      门控 AchvIsLocal：联机仅 slot0 计分、离线拒 botMask 位；自检 achvNoSave=1 防污染基线
+- [x] **game.inc**：ST_ACHG=7、ACH_COUNT=23、ACH_ROW_PG=6、ACH_PAGES=4、RAR_* 0..3、
+      AK_* 14 类（AK_LOWHP→AK_REVENGE）、WP_ANY/BULLET/MINE/LASER、WM_ANY/NET/BOT、ACHDEF 结构；
+      单场类(AK_MKILL)图鉴行现值取 max(历史峰值, achvMatchKills) 实时显示
+- [x] **game.asm 15 处挂钩 + 击杀归属链**：开火(SHOT)/拾取(PICKUP)/冰盾挡弹(BLOCK)/技能五类
+      (SKILL 参数=SK_*)/布雷/激光(FireAimedLaser+laserOwn)/换位(SWAP)/死亡(KILL,HURT)/
+       GU 结算 pushad 扫描第一名且严格高于第二才判冠(AK_WIN 双 bump：模式行+累计行，平局不判)；
+      新数据 laserOwn(发射者权威：本 SD/SR 循环+net 'L' 应用端=PEER)/dmgSrc/dmgKind 三 producer
+      (子弹/地雷/激光)在 DamageTank(Raw) 前落源，自杀不计击杀(eax!=slot)、-1 无源不计；
+      main.asm 接 AchvInit(启动)/AchvSave(退出前)
+- [x] **ui.asm 图鉴页+弹层**：主菜单 8→9 项(成就图鉴置退出上方)，导航/hover/渲染全随；
+      ST_ACHG 6行×4页：←→/侧边箭头钮/Esc/返回钮，页眉"收集进度 n/23"+"p/P"，
+      行=品阶彩签(灰/蓝/紫/金 rarCol)+名称(点亮=品阶色 未点亮=colGray)+状态+描述+计数进度 n/m
+      （瞬时类不显示防剧透）；解锁弹层 296..692×36..100 任意画面顶部横幅 4s，与掉线横幅 258..334 不冲突；
+      **冒烟揪出两真 bug**：①ST_PLAY `jmp UR_Done` 越过弹层绘制 → 改 `jmp UR_Toast`；
+      ②翻页箭头 155/815,285 与第 3 行文字重叠 → 外移至 108/880（热区 86..130/858..902）；
+      另实锤键盘 DOWN 边沿合成输入双计（6 按落 8），UI 冒烟脚本改纯消息坐标点击
+- [x] **MASM 围裙（新坑记录）**：结构数组行重复打标签=A2005 重定义（首行后必须裸 `ACHDEF <>`）；
+      `.if (ACHDEF ptr[reg]).field == reg` → A2154 控制流炸，须先 mov 进寄存器再比；
+      `[edi+12+edx]` 双基址非法 → 单基指针步行；`add mem,mem` 非法；`.if mem==mem` 隐式
+      挑 eax 当暂存毁表指针 → 参数全预存 esi/edi；返回值 eax 严禁进 proc uses；
+      `xor ecx,ecx`+`loop`=42 亿圈；多字符面量 'ACHP' 按 A,C,H,P 序落字节
+- [x] **验证**：build 零警告；51 组 121 断言 ST_FAILS=0，新基线 bae36c29cc796e935d8f4af6e5336fbb
+      ×6 稳定（UI 修复后复跑不变）；T51 25 断言全绿（owned=20：换位大师/屠夫/弹幕大海留白合理）；
+      新工具 tools/achv_ui_smoke.py 全链 PASS：菜单点击进图鉴→翻页→末页越界不动→返回→
+      黑色人机局开火→"首开锋芒"弹层截图见字→achv.dat 跨重启回读"已达成"，全程无 AV；
+      tools/gen_achv_cn.py 文案码点源更新
+
+### 2026-10-22 会话 41：成就系统二期优化八项 + 弹层"对局内永不显示"潜伏 bug 根治（用户："你再优化一下成就系统"）
+
+- [x] **第 24 条成就「追风者」**（稀有，累计氮气 50 次）：def 表插位 idx12（激光初试与五连绝世之间，
+      稀有档末位），旧 12..22 顺移 13..22，23 条=idx23；6 行×4 页恰成 4 整页；顺带验证平行双线机制——
+      疾风起步(idx3, 1 次即亮)与追风者(50 次)同读 AK_SKILL/SK_NITRO，AEBump 跳过已亮行、未亮行续涨（T51 a26）。
+- [x] **解锁日期落盘（存档 v2）**：SYSTEMTIME→yyyymmdd 打包 12B/行（prog,own,date），'ACHP' v2 300B；
+      v1 旧档自动迁移——插入位 idx12 归零、其后顺移（Unpack 游标 `.if ecx==12` 补零跳过），迁移项日期=0 不显示；
+      图鉴"已达成"下加灰色日期行（两次 `div 100` 拆 y/m/d + NumStr 补零）；AchvClear 连日期+未读一起清零（T51 a2d/a22b/a27/a28）。
+- [x] **品阶号角四档**：AchvUnlock 按 rarity `SndPlay(15+rar)`——普通双短叮/稀有四音上行/史诗五音/传奇七音号角
+      （sound.asm SND_ACH..SND_ACH3，GenArp 系，缓冲 2300/4560/5600/7900 帧）。
+- [x] **未读角标**：`achvUnseen` 运行内新解锁计数，主菜单「成就图鉴」→「（新）成就图鉴」，进图鉴清零；
+      不落盘（会话语义）。
+- [x] **图鉴页眉品阶徽章**：普通n/6 稀有n/7 史诗n/6 传奇n/5 四枚彩签实时扫描（rarGoal 表随 def 增删同步！），
+      全收集时标题「成就图鉴」变金色（0020D0FFh）。
+- [x] **弹层动效**：前 8 tick 自屏顶外 96px 滑入（dy=(8-age)*12）+ 描边改品阶色笔刷 rarBr（UiInit 四刷，
+      替换原 boxCur——那是颜色不是 HBRUSH，GDI 静默失败描边从未画出）+ 末 24 tick 每 4 tick 翻转闪烁。
+- [x] **图鉴 1/2/3/4/Home/End 直接跳页**（KeyEdge 六枚边沿变量，恰配 4 整页）。
+- [x] **★ 潜伏 bug 根治：对局内弹层从不显示（会话40 起）**。冒烟截图死活不见横幅，三枚 FillRect 哨兵
+      （ToastT≠0/id合法/achShow≠0 全亮）证明代码执行、坐标却飞屏外——根因=UiTick 各对局分支末尾
+      `jmp UT_Done` 恒跳过过程尾部的 `dec achvToastT` → toastT 冻结 240 → 滑入 dy 恒=96 → 横幅永久停在
+      y=-60..4 屏外。会话40 冒烟"见字"实为退回主菜单后的定格弹层（那时已过 jmp 区段 dec 恢复走动）。
+      修复=dec 移到 UiTick 过程头（早于任何分支跳转）。教训：**倒计时/看门狗类递减绝不可放在
+      多分支提前 return/jmp 的状态机尾部**；调试法=先用已知可用笔刷在门口/门里各埋一哨兵二分。
+- [x] **本会话 AV 复盘（生产级）**：GetLocalTime（ntdll 共享数据快路径）**碾 ECX/EDX**——`uses` 只护
+      过程边界，invoke 后直接用调用前装载的 ecx → `mov achvDate[ecx*4]` 野索引段错误（T2 处崩，exit=139）。
+      修=idx 先存数据槽 achvScrIdx 跨 invoke 重载。另坑：`st` 是 x87 保留名不能当 local（A2008）；
+      字母开头十六进制须 `0FF08h` 前导零；MASM `.if` 无符号比较。
+- [x] **观测卫生**：多轮冒烟遗留僵尸 tankwar.exe 共写 achv.dat、伪造"4.87s 才解锁"假时序 + 旧句柄
+      GetClientRect 失败 grab(0,0)——每次起测先 `taskkill //F //IM tankwar.exe`，脚本末尾 p.kill() 兜底。
+- [x] **验证**：build 零警告；51 组 121 断言 ST_FAILS=0，T51 25→30 全绿，基线换
+      87740c24725bdb1f83048ffde5179ad8 ×6 稳定（toast 修复不涉断言输出，与原基线一致）；
+      UI 冒烟 achv_ui_smoke41.py（v1 旧档实启动迁移→图鉴徽章/追风者行/键 3 跳页→bot 局开火
+      对局内弹层截图见字→暂停退出→菜单（新）角标→图鉴首开锋芒"已达成 2026-10-22"→读完角标灭→
+      achv.dat v2 300B/ver=2/row0date 落盘核验）连跑 3 轮全过；14 帧连拍实证弹层节律：解锁后
+      ~3.2s 内深底常显、随后自隐还原地图底（240 tick/60Hz≈4s 含末段闪烁采样窗口）。gen_achv_cn.py 补追风者/（新）文案。
+
+### 2026-10-22 会话 42：弹层去闪烁 + 人机三大死锁根治（CSV 转储实机诊断法）+ 8-bit 音色全面化 + 人机血量拉平与菜单删项（用户："弹成就会一闪一闪…人机能不能通过强化学习或其他方法变聪明，不会自动寻找人，不会躲子弹也不会用技能…音乐去网站找巴比特或电子音乐…把对战超强人机从主界面删掉（人机血量和玩家相等）"）
+- [x] **弹层去闪烁**：末 24tick 每 4tick 翻转闪烁改为末 8tick 顶出滑出 dy=(8-toastT)*12，
+      与滑入对称；achShow 恒 1，全程常显（ui.asm UR_Toast）。
+- [x] **人机血量拉平**：BOT_LIVES 3→1（inc/game.inc），ResetTanks 覆盖钩子保留做 T48C 回归位。
+- [x] **主菜单删「挑战黑色人机」**：菜单 9 项→8 项（nav 回绕/hover 命中链/UM_Items 全部重排）；
+      入口仅存 `tankwar bot` CLI（UiForceBotMatch）与人数选择页 AI 补位（szItemBot/CN_BOT 字符串闲置无害）。
+- [x] **音效 8-bit（巴比特）化**：新增 GenPulse 25% 占空脉冲波生成器（NES 2A03/GBC 主音质感，
+      相位=4·i·freq mod SR<duty），38 处音效主音从 GenSquare 全量切换（八音盒 BK_Ping 保留方波）；
+      新增 GenTick LCG 噪声镲（new=(原值+噪声32..159)/2）混入开炮音头 260 样本；布雷垫 82Hz 次低
+      轰鸣 GenAdd。不做网站采样的原因：WebFetch 无法可靠取二进制音频且版权风险，现有 44B-WAV+PCM
+      程序化架构天然就是芯片音合成器。不做强化学习的同理：手写 x86 需保 md5 确定性与联机同步，
+      规则式可证明、可回归锁；本轮把规则式三个"看起来像不会玩"的死锁全拆了。
+- [x] **★ MASM 陷阱**：三操作数 `imul eax,eax,ebx`（reg,reg,reg）x86 无此编码 → A2070，
+      改 `mov ebx,freq / imul eax,ebx`。
+- [x] **人机行为强化六项（bot.asm，规则式）**：①卡死意图 bPrevForward 移到前进安全门**之前**记录
+      （旧版门摘油门后取意图 → 贴墙冻结时 bStuck 永不累积 → 绕行/穿墙/驭水三级兜底全废，
+      这是用户报"不会自动寻找人"的第一真凶）；②中距带 130..320 旧 ±16 等长抖动改 32tick
+      非对称周期（24 进/8 退），观感从"原地画抖"变"持续顶近"；③开火对准容差 2°→4°
+      （4°/tick 步进恰一 tick 容差，旧值几乎踩不中=整局惜弹像不会开枪）；④空手时 260px 内
+      主动去抢技能道具（"不会用技能"根因=技能必须拾取激活，旧改道条件 dPick≤dct-60 几乎不触发）；
+      ⑤氮气起爆距离 240→180；⑥规避窗口 evadeT 20→28（90° 侧转需 23tick）。
+- [x] **实机人机仍钉死 → CSV 转储诊断法（本轮方法论）**：临时在 BotThink 尾部按 `botdbg.tmp`
+      哨兵文件开 botdbg.log，每 tick 一行 46 列（tick/slot/x/y/dir/los/dct/drive/stuck/detT/evT/
+      pathOk/wp/tgt/inputs/心跳 beat/p0 存活…），python 直读。三轮抓出两个新真凶：
+  - 真凶二：**无 LOS 且 dct<320 时中距抖动带旁路了 BFS 航点**——被一墙之隔的"邻居"在格心做
+        24进8退极限环（抖动车辙≠零位移，卡死绕行永不触发），实机 25s 钉死 (250..265,182..185)。
+        修：BT_Pb 里 `bLos==0 → 一律 BT_Nav 航点优先`。
+  - 真凶三：**有 LOS 但正前探墙被安全门摘油门**——直线追逐顶着墙，绕行 30tick 左右横跳换向，
+        25s 钉死 x=416 沿墙上下抽搐。修：新增每槽粘滞位 bBlk（BotSt 第 50 dword，探墙挡=1/
+        探通=0，换目标/死亡清零），bBlk=1 时同样交还 BFS 航点绕到缺口。
+  - 真凶四（开火）：**"目标身后禁墙"回弹否决误杀必命中弹**——弹先撞人即销毁，根本飞不到身后墙；
+        且 3° 转向死区+4°/tick 步进使稳态瞄准误差恒钉 2°，必中阈值须取 err≤2 而非 ≤1（d≤200px，
+        2° 横移仅 7px<半车宽；目标挂冰盾不放行，反射真会回走廊）。
+- [x] **诊断卫生教训**：转储字段被 DbgNum 毁 edx 后连续寻址读错列，一度"inputTable 全 0"假象
+      绕了三圈——每字段读取须现算基址，不跨 call 保留寻址寄存器；心跳列（槽内自增 gTick 镜像）
+      是区分"逻辑死锁"与"渲染死锁"的关键列。
+- [x] **T52_BOT_SMART 三断言**（Mark 363）：A 人机/玩家同命（botMask 命中槽 lives==1）；
+      B 空手向 260px 内 SK_MINE 道具主动拾取（fireCd=300 锁火防自杀干扰，200tick）；
+      C 钢帘隔墙 120tick 内绕行 |Δy|≥16（自证真凶一修复）。拾取物 pickupType 即技能 id；
+      ICE 系会即用即耗、死亡 ResetTanks 清 skill+道具——断言尾窗须避开回合重置（300tick）。
+- [x] **实机终验**：30s 空闲玩家局：人机开局 ~3s 拾道具外仍直追，t=183 首发、t=224 击杀、
+      判定格 300tick 复位后再追再杀（t=605/656、t=1161/1191），40s 截图记分板 0:1 已判分——
+      寻找/逼近/绕墙/开火/击杀/复位闭环全通。
+- [x] **验证**：build 零警告；52 组 122 断言 ST_FAILS=0；诊断代码全部移除后基线不变
+      ea03443a939323cdffcbfa162c6969c3 ×6 稳定；弹层滑入-驻留-滑出 14 帧连拍无闪烁；
+      菜单 8 项截图 + Down×9 回绕 + 图鉴行可达；bot CLI 直开带 BLACK BOT HUD。
+- [x] **文档**：README 人机行改 CLI/补位入口+同命+8 项菜单+弹层滑出语义；GAME_DESIGN §成就弹层
+      动效与 §人机 AI 规范（会话42 语义）注记；ONLINE_PLAY 无需改。
+
+### 2026-10-23 会话 43：音效全面换成真实 CC0 采样（用户："你可以抓取没有版权的 8-bit 或电子音音效"）
+- [x] **抓取来源**：Juhani Junkala《The Essential Retro Video Game Sound Effects Collection
+      [512 sounds]》（opengameart.org/content/512-sound-effects-8-bit-style），页面确认 **CC0 /
+      公共领域**（"you don't have to ask permission"，可商用免署名）。zip 20.5MB / 563 wav
+      落 `dl/sfx/retro512/`（隔离在专用下载目录，脚本一律项目根运行、`python -I` 读它）。
+      WebFetch 取该域被拒（域名安全校验失败），改 `python urllib + Mozilla UA` 抓取成功。
+- [x] **全包均为 44100Hz/16bit/mono**：2:1 隔样本抽取无损降到游戏引擎的 22050Hz；
+      `tools/sfxprobe43.py` 先探 60 余个候选的 sr/时长/峰值/RMS/过零率，再据此选型。
+- [x] **映射定稿（18 项全覆盖）**：开炮=cannon4、击败爆炸=exp_short_hard1、拾取=coin_double1、
+      倒计时=high1、换位=laser2、布雷=impact1、激光发射=laser1、冰盾=bling、冰碎=damage2、
+      穿墙=vaporizing、加速=mechanicalnoise4、驭水=impact9、换位弹=laser7、起瞄=button3、
+      成就普通/稀有/史诗=fanfare2/3/1、传奇=poweron。逐段截取（0.08~1.2s）+ 峰值归一到摆幅
+      ±112、静音位 128（8-bit 无符号标准），首尾淡入淡出防爆音咔哒。
+- [x] **管线**：`tools/gen_sfx43.py` → `inc/sfxdata.inc`（44B WAV 头 + PCM 编成静态 .data db 表，
+      UTF-8 中文注释；与 sound.asm 旧 WrHead/PlaySound SND_MEMORY 约定逐字节一致，游戏侧零改动）。
+      sound.asm：18 个 `snd*Buf db dup(?)` 声明换成 `include sfxdata.inc`；SndInit 里 122 行运行时
+      音效生成块删除（仅留 4 行注释），Gen*/bkFreq/NOTE_* 例程保留备用；文件头注释更新。
+- [x] **质量护栏**：`tools/verify43.py` 解析 18 个内嵌 buffer 断言 sw/sr/ch、riffSize=36+dataSize=
+      36+实际长度、首尾样本收敛 128——全 OK；exe 715KB（+音效约 143KB）。
+- [x] **验证**：build 零警告；音效不进 md5 回归锁，基线不变 ea03443a939323cdffcbfa162c6969c3
+      ×6 稳定、ST_FAILS=0、122 断言；`tools/smoke43.py` bot 局 14s 实机冒烟（开炮/爆炸/拾取/
+      号角全部触发 PlaySound）进程存活无 AV，截图 shots43/ 正常。
+- [x] **文档**：README 音效条改为"内嵌 CC0 真实采样"（撤销会话42"无外部音频文件"表述）；
+      GAME_DESIGN §音频小节标题与音效语义条同步；本条 ROADMAP。ONLINE_PLAY/PROTOCOL 无需改。
+
+### 2026-10-23 会话 44：人机升级为效用评分决策（用户："去 github 找可模仿的例子，人机不会根据场上变化做最优决策"）
+- [x] **调研定案**：GitHub 上 BattleCity 强化学习库（PPO/DQN：danisotelo/RL_battle_city、
+      akshysatish/DQN-BattleCityNes 等）证明"奖励特征"可移植而"网络"不可（无浮点、md5
+      确定性锁、手汇编）；可模仿架构 = **Wesnoth 微 AI 的候选动作评分**（威胁图 + 加法
+      多项打分 + argmax + 迟滞防抖，aosabook《Wesnoth》章同述）。按此移植整数版。
+- [x] **目标选择 BotTgtScore**：真人 +24000 / 有视线 +6000 / 距离 -40 每 oct px / 目标挂盾
+      -1500 / **该槽的弹正是我最近威胁 +5000（反击"打我的人"**，BotThreat 顺带记 bThreatSrc）；
+      在位目标 +4000 迟滞——只有"真正好 4000 分"的对手才抢走目标，废除旧"最近真人桶+
+      最近任意桶"两级硬优先级（换目标不再来回横跳，也解决真人全灭时旧桶退化 nearest-any）。
+- [x] **驾驶朝向 BotUtu**：17 候选朝向(22° 步进) argmax——T1=1280·cos(候选,主航向源)
+      （LOS 预瞄点 / 否则 BFS 航点 / 无路目标中心）+ T2=Σ接近中敌弹 1560·cos(候选,车->弹
+      12tick 后位)·(260-d)/260（越近权重越大，躲弹同时不彻底弃瞄准线）+ T5=250·cos(候选,
+      上次最优朝向)（迟滞锚防逐 tick 震荡）。**关键回归保险**：无威胁或胜者恰为纯 T1
+      最优时，invoke BotAimDxDy 细化回精确方位——22° 量化永不饿死"误差≤4 才开火"，
+      会话42 行为在无障碍场景逐 tick 等价（md5 实测不变即证）。
+- [x] **技能择时**：激光不再"拿到即按"——有 LOS 等 >120px 放长光束、无 LOS ≤300px
+      穿墙狙；冰盾贴脸顶盾档加"须有视线"条件。
+- [x] **状态包**：BotSt 追加 bsiUtuNav/bsiThreatSrc（rep movsd 整块镜像自动扩容），
+      BotReset 把 threatSrc 置 -1；uTX/uTY/uTD/uTW 短名单工作区（上限 8 弹、oct≤260、
+      仅"接近中"、己弹让线语义仍归 BotThreat）。
+- [x] **验证**：build 零警告；改码首轮 52 组 122 断言 ST_FAILS=0 且 md5 **逐字节不变**
+      ea03443a…（T48E 击杀/T49B 绕行/T52 抢道具全绿=回归保险生效）；新增 **T53_BOT_DODGE_UTIL**
+      （干净竞技场注入直射弹：40 tick 内横向位移≥8 且存活，2/2 PASS）→ 53 组 123 断言
+      ST_FAILS=0，新基线 **a447dd1ef888bc9b17ef1fa43ce345db ×6 稳定**，exe 718336B；
+      `tools/smoke44.py` 实机 20s（SendInput 喂 WASD+空格连射制造弹幕）进程存活、人机
+      黑块持续位移不钉死，截图 shots44/ 正常。
+- [x] **文档**：bot.asm 文件头算法 1/5/7/9 条重写为效用评分语义；README 人机条、
+      GAME_DESIGN §人机 AI 同步；本条 ROADMAP。
+
+### 2026-10-23 会话 45：成就系统 UI 图标化（用户："去 github 上找相关的资源，优化成就系统的 ui（界面+图片）"）
+- [x] **选资源**：GitHub 定档 **game-icons/icons**（game-icons.net 官方仓库，4239 个 SVG，
+      CC BY 3.0，作者 lorc/delapouite/skoll/badges，署名即达标）；候选另调研 Kenney 图标包、
+      itch.io game-assets、CraftPix 成就像素包、SpriteCook 免费包与 Ukonsergamet 资源清单
+      gist（详见最终报告链接）。api.github.com 限流 403 → codeload zipball 直下
+      （dl/achv45/ 隔离存放，全部处理脚本置于 tools/ 并以 `python -I` 运行，绕开不可信目录）。
+- [x] **28 件选品**：24 成就按主题一一对位（gunshot/skull/snowflake-1/fire-dash/
+      droplet-splash/open-treasure-chest/crosshair/shield-impact/land-mine/ghost/
+      crossed-swords/laser-blast/**whirlwind(A24 追风者=表行 13)**/pentacle/laurel-crown/
+      sport-medal/body-swapping/mine-explosion/globe/vintage-robot/compass/meat-cleaver/
+      circle/minigun）+ 品阶徽标 star/cut-diamond/templar-shield/imperial-crown。
+- [x] **自研栅格化管线（零第三方依赖、不跑任何下载物）**：tools/raster45.py 最小 SVG 解析
+      （M/L/H/V/C/S/A/Z+小写、弧端点→中心参数化、S 反射控制点、丢全画布背景块）
+      → 384×384 nonzero 绕数扫描线 → 16×16 盒降采样 → 24×24 四级覆盖（0/1/2/3，阈值
+      0.10/0.40/0.72）→ inc/achvicons.inc（28×576B，`achvIconTab label byte`）+ 预览拼图目检。
+      **MASM 三坑**：①单条 db 576 操作数 A2042；②反斜杠续行拼大 db 照样 A2042/连带 A2008
+      假象——照 sfxdata 惯例改每行独立 `db 24 数` 即过；③数据段裸 `name:` 标签行报
+      A2108，改 `name label byte`。
+- [x] **ui.asm 三处集成**：`.code` 头新增 AchvShade（分量 k/256 整数缩色）+ AchvIcoBlit
+      （逐行同色跨段合并 FillRect、级1/2/3=0.30/0.62/满 三枚品阶色笔刷即建即销）；
+      图鉴行 x180..212 加 32px chip（解锁=品阶色 27% 深底+品阶色图标 / 锁定=主题中性底
+      0x2E2E2E夜·0xBEBEBE昼+colGray 图标）；页眉徽章 24px 徽标+文字右移 30、计数右移至
+      +100、页码避让 812→838；解锁横幅 296..692 对称加宽 252..740（中心 496 不变）左嵌图标
+      （260, 52-achDy）。
+- [x] **实机冒烟**：tools/achv_ui_smoke45.py 全链（`tankwar bot` 开火→解锁弹层裁剪图→
+  Esc→退出→图鉴 p1/p2/p4→页眉徽标带→深夜主题图鉴）shots45/ 六图目检通过。
+  **两轮"假崩溃"排查纪要**：①退出码 0 非 AV——会话42 删人机菜单行后 ACH 行移到
+  (550,436)，旧坐标 483 命中"退出游戏"；②首版图 A13 起全体错位一格——图标表按成就编号
+  排而图鉴按 achvDefs 品阶行序排（追风者插 idx12），pick45.py 前缀重排为行序后修复。
+- [x] **验证**：build 零警告；纯 UI 改动自检 **53 组 123 断言 ST_FAILS=0、md5 基线
+      a447dd1ef888bc9b17ef1fa43ce345db ×6 逐字节不变**（会话44 基线直接继承）。
+- [x] **文档**：README 成就系统条重写+新增「成就图标署名」条（CC BY 3.0+作者+选品清单，
+      满足许可要求）+目录结构补 achvicons.inc/sfxdata.inc；GAME_DESIGN 新增 §会话45 设计注记
+      （来源许可/管线/MASM 三坑/渲染几何/回归）；achvicons.inc 头部与生成脚本内注明来源；
+      本条 ROADMAP。
+
+### 2026-10-23 会话 46：人机死角三连卡根治 + 英文模式文字错位修复（用户："人机直接会走到一个死角卡着不动了，英文模式有一些单词会错位"）
+- [x] **仪表先行**：bot.asm 新增 `tankwar bot bottrace` 逐 tick CSV 仪表（34 列：坐标/导航意图/
+      绕行/逃逸/威胁/输入电平/巡逻/alive），排障从猜坐标变成看决策全链路。踩坑两处：
+      ①BotTrNum 十进制转换只清一次 edx，第二商起 #DE 整数溢出——仪表自己把进程炸了，
+      表现为"csv 没生成+退出码 3221225621"，每轮 `xor edx,edx` 修复；
+      ②ArgScan6 比 "bot\0" 4 字节，"bot bottrace" 中间空格令匹配失败 → 改比 3 字符+
+      看后继字节（0 或空格），bot/bottrace 可组合。
+- [x] **卡死根因（trace 实证，三类叠加）**：
+      ①**无目标定身**：全图无人可追时旧代码 `je BT_Out` 把输入清零原地冻死 → 新增巡逻模式
+      BT_Patrol：伪随机挑可走空格为目标（337 互质步进+回绕），到达/600tick 换点，
+      巡逻中禁开火禁技能；
+      ②**物理 360° 楔死**：贴死在凹角时绕行弧只试左右 90° 两方向，两边都撞墙就无限循环 →
+      卡死计数连续 4 次改触发"倒车逃逸"：bEscT=24 沿车尾方向 ±24° 倒车脱离，bEscArm 复位；
+      ③**自家弹无限让位**：evOwn==1 走廊让位每 4tick 重扫就刷新，弹在远处走廊永远飞不完 →
+      bEvHold 计数 12tick 封顶（反弹接近 evOwn==2 不受限）；BotThreat 三个出口分别清零/保持，
+      曾误把清零放 BT_ThNone 让"侧向畅通"路径每 4tick 洗一次计数，改独立 BT_ThZero。
+      另：尸体等待重生的冻结行是玩法（alive=0 输出清零），非 bug，仪表加 alive 列便于区分。
+- [x] **英文错位（截图复现 4 处）**：
+      ①成就图鉴页眉 "COLLECTED n/24" y104 与徽章行 y121 压字（中英都叠，中英文案更长更明显）
+      → 进度行+页码整体上移 y88；
+      ②行首品阶词 COMMON/LEGEND（18px 字体 6 字符 ≈67px）顶穿 x180 图标 chip → 英文下
+      chip/图标/名称/描述右移 44（achDx），中文几何零改动；
+      ③页眉徽章词与计数粘连（COMMON|2/6）→ 英文计数再右移 20；
+      ④人数页 ROUNDS（30px 字体 ≈83px）压 "«" → 英文标签起点 322→296，箭头与点击热区不动。
+- [x] **验证**：build 零警告；自检 53 组 123 断言 ST_FAILS=0、md5 基线
+      a447dd1ef888bc9b17ef1fa43ce345db 全程不变（bot/UI 均不在自检路径，前缀 diff 证旧断言
+      逐字节同）；100s bottrace 长跑：巡逻 900 行、逃逸激活 46 行、让弹封顶后恢复移动，
+      无一拍死超过 30tick 的活体定格；清理后复跑 18s 冒烟 870 活体行/移动率 85%/最长停留 25tick；
+      英文+中文图鉴 1/2 页、人数页、大厅、技能、设置屏截图回归（tools/lang_en_fix46c.py）。
+- [x] **收尾**：DEBUG-TEMP 崩溃过滤器（BotTrFilter+main 注册+win32.inc proto）全部移除，
+      bottrace 仪表为门控常备设施（不开参数零开销）；tools 新增 avdbg46/wer46/botwatch46 等排障脚本。
+
+### 2026-10-23 会话 46B：人机"呆板观感"量化治理（用户："人机还是不太满意"→追问选"行为看起来呆/蠢"）
+- [x] **体检代替猜**：tools/bot_dumb46.py 从 bottrace 提六项呆特征基线（60s/3766 活体行）：
+      摇头 984（26 次/100tick）、裸倒 946、挂墙 925、空瞄 1286、罚站 114、换目标 0。
+- [x] **换向锁**（bot.asm 转向输出）：同向 6tick 内 <45° 的反向小摆请求作废滑行（大换向
+      即时放行不拖急转）；镜像新增 bsiTurnD/bsiTurnH（暂存双生 bTurnD/bTurnH，序插在
+      bThreatSrc 前保 BotReset 尾 -1 写不失效）。摇头 984→111（5.9 次/100tick，-77%）。
+- [x] **中距带"太空步"改收油**：24 进/8 倒车 → 28 进/4 收油。两坑实测在案：
+      ①收油窗必须 <5tick——静止同样喂卡死检测器（8tick 停顿连发绕行弧劫走接近）；
+      ②倒车比例 946→223（-76%），空瞄 1286→224 同随对准质量下降。
+- [x] **两次失败尝试留档**：死区 3°→5°（窄门口提前锁舵蹭门柱，T49B 挂）；绕行弧撞墙
+      摘油门/翻弧（杀死"贴墙滑行"合法走位 + bDetourT 永不过期锁死策略层，T49B/T52 挂）。
+      挂墙 925 复核为度量伪影：探墙豁免期 bBlk 粘滞旧值所致，非真磨墙，未改。
+- [x] **T49B 断言意图修正**（game.asm）："脱困"从钉死北侧开口 y<300 放宽为"已离盒
+      （x>388 或 y<300）"：旧版把 BFS 路线选择钉死成唯一解，换向锁后 bot 改走东侧长路
+      （tick230 实测 (585,333)，x>450 判据先到）被误判呆化；"向东压上 x>450"保留。
+- [x] **验证**：build 零警告；自检 53 组 123 断言 ST_FAILS=0，md5 回到并稳定于原基线
+      a447dd1ef888bc9b17ef1fa43ce345db（断言输出逐字节不变）；改后 60s 复测最长定格
+      25tick（与改前同级，属临战正常停顿）。
+
+### 2026-10-23 会话 47：RL 训练管道打通（用户："原地转圈人机就不知所措…我希望训练一个完全智能的bot"）
+- [x] **确定性钩子**：game.asm 加 `rngSeedOvr`（GameInit 双流播种，默认 0
+      游戏/自检路径逐字节不变）；`public rngState` 供快照回读。基线复核
+      md5 a447dd1e…×1 FAILS=0 want=123 零警告，证明钩子零回归。
+- [x] **Phase1 环境桥**：先建 tankwar_rl.dll（rl.asm 导出 RL_Reset/SetAct/
+      Tick/Ptrs/Meta + rl_stub.asm 桩 + build_rl.bat /NOENTRY 链接）→ 发现
+      本机 Python 只有 64 位，x86 DLL 载不进；改道 **exe 管道模式**
+      src/rlhost.asm（tankwar.exe rlhost：stdin 64B 定长请求帧
+      RESET/STEP/PING/META，stdout 3573B 原样内存快照：14u32 头 +
+      tanks[4] + bullets[56] + mapData；META 帧运行时算 TANK/BULLET 成员
+      偏移，结构漂移 Python 自动跟随）。main.asm ArgScanRl 分流，句柄/计数
+      全走静态变量（GameUpdate 不承诺保留 ecx 的坑规避）。sfxOn=0 无头静音，
+      RESET 时 gTick=0 对齐交替速度相位。
+- [x] **tools/rl_env.py**：ctypes-free 管道驱动；冒烟三连：META 握手
+      (tank_sz=116 bul_sz=44 grid=31×19)、同 seed×2 全轨迹终态一致+异 seed
+      不同（确定性 PASS）、吞吐单步 2.4万 ticks/s / rep20 批步 21万 ticks/s。
+      尾字节 bug 修：ROWS=19→地图 589B 不整除 4，rep movsd 少拷右下角一格，
+      改向上取整+缓冲余量。（中途还揪出 META 头部 [edi+K] 按字节寻址写花
+      前 21 个 dword 的下标 bug——Python 侧尺寸断言当场炸出，未静默。）
+- [x] **Phase2 训练器 tools/rl_train.py**：纯 numpy PPO（无 torch）：OBS=90
+      （ego11+敌方10+近6弹×6+脚下5×5+道具4+比分4），**敌方朝向给 16tick
+      EMA 质心航向**——转圈姿态噪声在特征空间退化为"站在原地"，对症根治
+      用户所报"原地转圈绕晕人机"；动作 36=走×转×火×技能 解码回 inputTable
+      真人同通道；奖励 击杀+5/阵亡-5/回合分+3/逼近塑形/时间-0.002。
+      网络 90→128→128 tanh+双头，手推解析梯度（grads() 初稿符号错被
+      tools/gradcheck47.py 数值对照当场抓住，rel<1% 过验后修）；GAE 按
+      per-env 切片+done 切断 bootstrap+horizon 尾 next-value 自举；Adam
+      3e-4 clip0.2 ent0.01。VecEnv 6 进程并行≈6k env-steps/s。
+      3 迭代链路冒烟 PASS，正式 3000 迭代(≈460万步) 后台训练中。
+- [x] **文档**：新增 docs/RL_BOT.md（帧协议表/观测动作奖励规范/训练评估命令/
+      Phase3 蒸馏方案）；DLL 路线保留注明回切条件。
+- [ ] **Phase3（下一步）**：权重定点化→inc/nn.inc+bot.asm 内联 MLP 前向；
+      难度分级（NN 档/规则档/削强旋钮）；验收线：贪心 vs 启发式 12 局≥10
+      胜 + 转圈脚本下 bot_dumb46 指标零罚站/摇头。自博弈升级（slot 双手动
+      互训）排在其后。
+- [x] **会话47B（同日追加，用户："先训练200轮…做一个服务端，玩家对战实时传输数据"）**：
+      ①训练 episode 由"整场"改"一回合"（roundsPlayed 变化即切断+重开）：
+      比赛级 2.8M 步实测只切出 ~500 局、win 恒 0/N（双方无限复活互耗局几乎
+      不终结），advantage 信噪比过低；回合级每窗口出 1~2 终局样本。
+      eval_greedy 同步改回合胜率（--rounds 60），旧 match 级权重归档
+      rl_policy_matchlevel.npz.bak，从零重训 200 迭代。
+      ②**实时对战推流服务端**：rlhost.asm 附 RlRecInit/RlRecPump
+      （`tankwar.exe rlrec[:ip:port]` 正常开窗口对战，WinMain tick 在
+      GameUpdate 后推 SNAP+inputTable 4槽×6 电平 = 3.6KB UDP 帧/60fps；
+      rlRecOn=0 默认时空转，自检基线 md5 a447dd1e… 复核不变）；
+      接收端 tools/rl_server.py（META 借 rlhost 握手自对齐布局、实况
+      行+落盘 .rlrec+丢帧统计）；转训练集 tools/rl_rec_extract.py
+      （obs90 slot0 视角+真人 act6+对手 act6（人机局=启发式真实决策）
+      +分段标记，供行为克隆/风格对照）。联机两端同样可录。
+- [x] **会话47C（同日追加）200 轮训练复盘+测量修正+超参重整**：
+      ①200 迭代跑完：win% 全程≈0、clip% 恒 0、贪心评估 0/40（阵亡比
+      40:8）——策略停在随机水平。新探针 tools/rl_probe47.py 逐项对账：
+      事件记录真实（3000 tick 内 die0=8/die1=1，与 R=-0.011 均值精确吻合），
+      回合胜负记账大体正确（7 次跳变 6 次当场加分），但存在"先加分后跳变、
+      跳变 tick 反被清零"的冻结帧形态会把胜者记成无人得分。
+      ②修正 rl_train.py：回合分改在"加分发生 tick"结算；胜负判定改用
+      episode 内正得分差累计（Vec.note → st.sc0/sc1），train 日志与
+      eval_greedy 均新增**阵亡比 die0:die1**（比 win% 更抗判定噪声的
+      真实进度信号）。
+      ③病根判定=更新量不足而非管道 bug：12 Adam 步/迭代×200=2400 步、
+      lr3e-4 推不动 90→128→128 小网（clip%≈0 佐证 logits 未位移）。
+      超参升为 lr1e-3/epochs8/mb384/horizon384（小网络标准配方），
+      600 迭代长训后台跑；旧权重归档 rl_policy_200it.bak.npz，
+      旧日志归档 rl_train_47C.log.bak。引擎零改动，基线不涉及。
+- [x] **会话47C-2（同日追加）"启发式 bot 不开火"实锤与训练对手重构**：
+      ①行为克隆线（rl_bc.py，换位 flags.bit1 采集 bot 电平做标签）冒烟当场
+      揭穿大事实：内置启发式对逐 tick 随机/平滑走位的移动目标 6000tick 仅
+      开火 1~4 弹（lv[4] 非零帧同为个位数）——回合结束主因是随机方自爆
+      (自弹误伤/技能)，8:1"阵亡比"实为对手几乎不出手。用户所报"玩家转圈
+      人机不知所措"的行为学根因即其开枪条件在非标走位下几乎从不满足；
+      克隆或对战它都学不到主动交火，BC 线对启发式作废（工具保留，真人
+      rlrec 数据仍可用于 BC）。
+      ②协议定论：应答帧尾 96B 电平为保留通道（BotThink 于 tick t 依
+      state(t-1) 写电平并同 tick 执行；出生 tick 快照 lv[4]=1 同帧可见），
+      BC 正确配对=上一 tick 观测↔本 tick 快照电平。
+      ③新增**进攻型脚本陪练** script_act（slot1 真人电平通道：追击+
+      3° 死区定瞄+430px 视距开火）：对随机策略 8000tick 击杀 20:2（信号
+      密度×~2500），rl_train 默认对手 heuristic→script（--opp 可切回）。
+      ④工程：影子构建 tankwar_new.exe（训练占用 exe 时并行推进）；新 exe
+      自检三件套先验绿（md5 a447dd1e…/ST_FAILS=0/want=123）再替换正主；
+      方向角标定 dir=0→+X,90→+Y(屏 Y 向下)，CW 增 dir。启发式时代权重/
+      日志归档 rl_policy_bcheur.npz.bak 等；从零起跑 1000 迭代 vs script。
+
+## 2026-10-24 会话47D：能力显式化训练 + 服务端直播化
+- 外部数据调研（用户委托 GitHub 检索）：坦克对战 RL 同类项目存在
+  （RL_battle_city/garlicdevs tank-battle/alphaTank/Cal Poly TankGame 对抗
+  DRL 论文等）但观测-动作空间与自研引擎全不同构，**无可直接迁移数据集**；
+  真人数据的正解=自研 rlrec 管道录自己对局（已打通，见下）。
+- 1000 迭代 vs script 收官：贪心峰值 71%(17/24, 阵亡 6:19)入 best，终局
+  17%——24 回合窗噪声大；60 回合正评揭示真短板：脚本对手下 28%（躲弹
+  63% 已学成、击杀43>阵亡34），**启发式对手下仅 22%**，诊断出"放风筝
+  不会打"：中位交战距离 477px、近身时车头平均偏敌 142°、瞄准占比 3%、
+  技能 0 发动（从不吃道具，skill 字段无来源→技能链死锁）。
+- 奖励四路新增（rl_train.py 会话47D ③④⑤）：锁瞄 +0.03/tick(12°角带)；
+  准星弹 +0.5（age==2 弹头距敌心<50px）；反放风筝 −0.006/tick(>520px)；
+  道具趋近塑形 ±0.02。技能归因查 engine 纠正第一版方向错误：skill=持有
+  待发动 id（引擎消费沿=发动），effOn 全为益己掩码不可当命中信号；
+  正确链=拾取+0.6/发动+0.3/发动后 40tick 敌方掉血+1.0。躲弹=势函数塑形
+  （Φ=−0.6·迎面弹威胁和，自弹权重0.35）。评估侧 Cap 能力卡把用户点名四
+  能力拆成独立读数（开火/千t、极限躲弹率[擦身40px]、技能发动/命中、
+  瞄准占比），EVAL 打印。
+- 服务端从"字节泵"升级为"数据台"（rl_server.py 重写）：①录 .rlrec 不变；
+  ②逐帧解码双方 HP/击杀/中弹/极限躲弹/技能发动命中/瞄准占比，终端每秒
+  实况；③浏览器面板 rl_server_status.html 2s 自刷 + 退出落
+  rl_server_stats.json。实测对局（bot 演示局）：2499 帧全解码 0 丢帧，
+  启发式 bot 开火密度 1.2 弹/千t 被面板直接量化（用户"转圈发呆"投诉的
+  数据化实锤）。口径与训练管线 Cap 完全一致→对局数据可无缝回灌 BC。
+- run#2（新奖励600迭代，from best）均值34.6%（run#1为25.6%）峰54%阵亡
+  9:18，归档 rl_policy_54pct.bak.npz；run#3（③④⑤对症加强）进行中
+  rl_train3.out。--init/--lr CLI 支持续训。GitHub 检索结论+新对手口径
+  写入 docs/RL_BOT.md。本轮纯 Python/文档，零引擎改动，自检基线不涉及。
+- run#3 复盘（60 回合三正评对照，vs script）：**run2-peak 28% >
+  run3-final 22% > run3-peak 13%**。run3-peak 塌方根因=RUNAWAY 罚项把
+  bot 逼蛮干（中弹 1.82/千t 贴脸换血）。事故另记：run3 首个噪声快评 42%
+  盖掉 54% 真最优（train.best 进程内变量）→ 加 `--best0` 续训传参，
+  rl_policy_best.npz 已 cp 还原 run2 权重。
+- run#4=课程对手+技能激励加码（--opp-var 每 env 换局重掷死区 2~8°/开火
+  260~470px，6 env 六档难度；SK_GRAB 0.6→1.2/SK_ACT 0.3→0.6/SK_BONUS
+  1.0→1.5；快评改非静默打印能力卡）。it566 观测：快评 33%→0~4% 衰减、
+  阵亡比恶化 24:16——与 run3 蛮干塌方同形，判定 RUNAWAY_P 二次投毒，
+  止损停跑。**RUNAWAY_P 永久关闭（0.006→0.0）**：反放风筝改由 AIM_RATE
+  锁瞄正奖励单边引导，罚项代码保留备档。能力卡漏斗实锤技能瓶颈=道具
+  在场 55%（7679/13873t）而拾取 0 次——旧权重根本没学过"走向道具"。
+  run#5 单变量复跑（课程+加码激励−RUNAWAY 罚，--best0 54 from run2 峰，
+  rl_train5.out），技能/瞄准爬坡由每 50 迭代能力卡直播。RL_BOT.md 补
+  课程对手/技能瓶颈诊断/--best0 三节，服务端节改写"三层可见作用"。
+
+## 2026-10-24 会话47E：击杀归因矫正——"装死等自爆"退化指认
+- run#5 收官 1000 迭代：快评峰 **58%**(阵亡 9:18) 入 BEST（--best0 防盖
+  生效），躲弹 66~81% 全程在线（四能力最扎实一门）；但两个 58% 档开火
+  仅 0.6/千t——低于启发式 1.2，且"击杀 18/自弹仅 9"账对不上。
+- 引擎侧查证（game.asm）：普通弹 age≥2 可命中射手（会话30 出膛宽限/
+  会话33 自伤规则）→脚本陪练贴墙开火常被自己反弹弹炸死；回合分判
+  "最后存活者"(:9379)；成就行 dmgSrc==victim 不记 kill(:6718)——引擎
+  自己都不认自爆，而训练 reward 的 kill+5 无归因 → **策略理性退化为
+  "不开火装死等对面自爆"**，与用户点名的开火/追踪/技能全背离。
+- 矫正（rl_train.py reward ④E + Cap + rl_server 三侧同口径）：伤害 tick
+  双证归因才记分——own 弹 prev/s 两池与受害盒重叠(own_gun_hit，引擎
+  命中同 tick 销弹故 prev 为主证)或技能发动 40t 窗口；致死 +5、未致死
+  +HIT_P 0.8（新增稠密"打中即赚"）、无证据 0。能力卡双轨 击杀(归因)/
+  捡漏；冒烟实锤：旧 BEST 6 回合"杀 0.00(归因)/捡漏 4"。
+- run5-BEST 60 回合双正评（新口径）：**vs script 40%(27:38,捡漏37/杀1)
+  vs heuristic 仅 15%(阵亡 49:29,躲弹 26%)**——装死流只在"会自爆的"
+  脚本陪练上刷分，对启发式（不自爆）即崩，Phase3 验收线(对启发式
+  ≥10/12)差 5 倍，归因改造必要性数据闭环。
+- run#6 起跑：同配方（--opp-var 课程/RUNAWAY 关/技能加码）+ 归因奖励，
+  --best0 58 --init run5 峰（rl_train6.out）；每 50 迭代能力卡直播
+  击杀(归因)爬坡。纯 Python/文档改动，零引擎触碰，自检基线不涉及。
+- run#6 收官 1000 迭代：**归因矫正有效**——开火 0.6→7~18/千t（超启发式
+  15 倍），快评峰 54%/阵亡 6:18，躲弹 55~82% 保持；**下一层短板现形**
+  ——击杀(归因)仅 0.06~0.54/千t（~150 发弹换 2~8 归因杀，命中率 ~3%）、
+  瞄准占比 1~3%、技能拾取全程 0（run5 的 58% 装死版仍占 BEST，已归档
+  rl_policy_turtle58.npz 退出竞争）。断供根因两条：**准星弹 age==2 判据
+  形同虚设**（弹头只离膛 5px，等价"50px 贴脸战才发"，477px 交战距瞄准
+  梯度永不吃到）；道具趋近塑形 ±0.02/tick 压不住"中心区=开阔弹道带"
+  避险惯性。run#7 三改：准星弹改"自弹首次入敌 20px 擦身带"一弹一销
+  （ACC_R=20）、AIM_RATE 0.03→0.05（run6 实证被躲弹塑形 0.1/tick 压制）、
+  道具进圈奖 +0.4（<80px 一次性，出圈复位）+塑形 ±0.03；best0 归零重开
+  （--init turtle 权重，rl_train7.out）。
+- run#7 收官 1000 迭代：**瞄准第一次爬坡**——快评档瞄占比 3~9%（此前
+  四代全程 ≤3%）、击杀(归因)峰 0.57/千t（命中率 ~3%→~9% 翻倍）、开火
+  4~21/千t 保持、快评峰 50% 入 BEST；躲弹 42~77% 略降（交战更激进
+  的正常代价）。技能仍 0 拾取 → 新探针 tools/item_probe47e.py 判死
+  病因：**最优权重距道具 p10=165px、80px 进圈率 0.0%，技能键按下率
+  却 33%**——"想用技能但从不走过去"，激励量级问题非机制问题（旧趋近
+  塑形仅兑现 0.003/tick ≈ 躲弹塑形 1/30，梯度被淹没）。run#8：道具
+  经济整体抬到击杀量级（拾取 5.0/进圈 2.0/发动 1.5/命中窗 2.0/塑形
+  系数 20±0.08），--best0 50 从 run7 峰续训（rl_train8.out）。
+- run#8 收官为**判决性反例**：中段有开火 10~19/千t、归因杀 0.32~0.58、
+  瞄 3~9% 的对拼窗口，但退火后滑回装死，BEST 存成 **79% 纯装死档**
+  （开火 0.9/千t、捡漏 19、进圈率仍 0.0%）——元凶在**选拔函数**：
+  对手会自爆+判据只看胜率 ⇒ 装死系统性收割 BEST，与奖励量级无关。
+  run#9 两项结构改造：①`--opp mix` 混合对手池（逐 env 对半
+  script/heuristic 换局重掷，启发式池不自爆→回合只能真打中才赢，
+  装死收益砍半）；②BEST 改复合分 comp=win%+100×归因杀/千t+20×(拾+发)
+  （装死 85 vs 对拼 100 起步），--best0 换 comp 量纲。从 run8 装死
+  权重冷启动（躲弹 76~84% 底子可用），rl_train9.out 每 50 迭代
+  能力卡+comp 直播。新探针 tools/item_probe47e.py（道具距离切片+
+  技能键按下率）保留为技能瓶颈回归工具。
+- run#9 收官**选拔函数验证生效**：后段 67%/50% 胜率 turtle 窗口
+  （开火 0.0/归因杀 0.00）comp 全部拒存，存档为对拼档 comp=92/96
+  （快评首现拾1/发1）。comp=96 双正评 **vs script 45%(27:60，躲弹79%)
+  / vs heuristic 32%**——双项历史最好（run5 40%/15%、run2 28%/22%），
+  mix 池确实逼出了对启发式也成立的胜率。但缺陷同场现形：正评开火
+  仅 0.4~0.7/千t、探针进圈带 0.1%/拾取带 0.0%（p10=219px）——快评
+  "技1拾"是 1/24 回合幸运事件，20分/次让白捡一次=+40 压过一切，
+  且开火不在 comp 维度，win4% 火11.6 杀0.65 的真打窗口(69)被运气档
+  挤掉。run#10 口径修正：`comp=win%+100×归因杀/千t+3×开火/千t+
+  100×(拾+发)/回合数`（技能按回合归一、开火入选拔），45/32 档备份
+  rl_policy_45_32run9.bak.npz 作 warm-start 对照，rl_train10.out 在跑。
+- run#10 收官：comp 42→110 单调爬升，末窗**火 8.2/归因杀 0.57/千t**全档
+  史最高，主档正评 vs script 33%（火 5.1/归因 0.35/躲 63%）、vs heuristic
+  25%（火 6.0/归因 0.45）——首次双池开火盖过启发式陪练(1.2~3/千t)且归因
+  击杀成立；run9 的 45%/32% 则是捡漏型（火 0.4、捡漏 39）。两档分别坐实
+  "打赢"与"捡分"两种上分方式，四能力里开火/追踪/躲弹已同时在场，唯技能
+  漏斗 0，且道具 p10 距离随战斗权重恶化（165→219→396px）：**交战卡距与
+  趋近道具互斥**，comp 单档技能项必输给开火项。run#11 双存档点：主档
+  comp 不变，新增 rl_policy_skbest.npz 按 (拾取+发动)/千t 历史最高守档
+  （开张档无论 comp 高低单独留住，收官双对照正评）；从 run10 战斗档
+  （rl_policy_10combat.bak.npz）warm-start，rl_train11.out 在跑。
+- run#11 收官：主档 comp 登顶竟是 **win-0 狂战档 129**（火 14.8/杀 0.84
+  白拿 128 分，die 24:12 每回合先死，压过 win38 的 124 档）——选拔第三
+  缺口=杀/火项无生存约束；技能守档则兑现设计意图：skbest 档（拾2/发2/
+  中2，sk=0.210/千t）正评 **vs script 55% 历史最好 / vs heuristic 18%**，
+  60 回合口径首次出现 拾取1/发动1，探针进圈带 0.1%→1.7%（17 倍）但
+  p10=388px 趋近仍未成立。三档并读（捡分型 45/32、战斗型 33/25、技能
+  守档型 55/18）钉死病灶：**道具趋近与交战卡距互斥**（p10 距离随开火
+  权重单调恶化 165→219→396px），奖励两条梯度反向、策略只能三档摇摆。
+  run#12 双刀：①comp +100×(敌亡−己亡)/回合数（狂战→78 出局、被动档
+  负分）；②reward ⑤ 趋近塑形威胁门控（同 tick threat 上升时正项清零，
+  负项不门控）逼火线切线抢道具。run10 战斗档 warm-start，rl_train12.out
+  在跑；sk55 档备份 rl_policy_sk11_55.bak.npz。中途插曲：bdnnke1bu 通知
+  误报 completed（进程实际健在至 it999），改挂 Wait-Process 守候器兜底。
+- run#12 收官：刀①生存 comp **生效**——win-0 狂战窗（火14.7/杀0.74/die
+  24:11）comp 压至 57~64 全出局（旧口径必登顶 128+）；刀②威胁门控**起效**
+  ——冠军档探针 p10=165px 回到近距带（不再随开火权重恶化）。但冠军
+  comp=148（火12.1/归因杀0.65/die16:20）正评仅 **12%/5% 全场史最差胜率**，
+  归因杀却全场史最高：杀穿对手、回合全输（die 43:42 无一次活到最后）——
+  **引擎经济学套利**：对手死后可复活反复 +5，回合胜利仅 +3，"刷杀输回合"
+  是本征最优解，选拔端堵不住只能改账本。run#13 回合经济重排三联动：
+  kill 5.0→3.5、回合胜利 +3→+8、选拔胜率地板 rate≥25% 才有主存资格
+  （技能守档不设地板），快评 24→36 回合降噪。冒烟验证：win22% 档 comp=-8
+  拒存、BEST md5 与 10combat 备份一致。rl_policy_best.npz 现仍为 run12
+  狂战档（12%/5%，仅作反例存档），run#13 从 10combat warm-start。
+- run#13 收官：胜率地板+回合经济重排**选拔端全对**——12/20 窗 win<25%
+  拒存，两个刷杀输回合档（杀0.60/火16.8/win8、杀0.64/火14.6/win3，旧口径
+  comp 均破百）被拦；冠军 comp=127（win25 过线/杀0.70/火11.4）正评
+  25%/13%（回血但不及 run10 33/25，vs heur 躲弹仅 7%）；探针 p10=606
+  又滑远（run12 冠军曾 165）——道具距离随选拔档抖动、趋近未固化。
+  三轮连判（129未存、148→12/5、127→25/13）坐实**快评 mix(3env×36)→
+  验收口径(4env×60 单池)转移性差**是选拔的最后一层病：公式怎么改都在
+  噪声里挑。run#14 终局协议：过地板窗按 comp 存前 3 候选槽
+  (rl_policy_cand1/2/3.npz)，收官每槽双池 60 回合正评，(script%+heur%)
+  和最高者覆写 BEST——选拔终点=验收口径；--finals -1|0|1 控制；2000 迭代
+  长训 lr 6e-4→2e-5，10combat warm-start。冒烟 b 用 sk55 档强制触发
+  候选+终局链路验证：注册/正评/冠军覆写全通，且快评排序(comp 53>48)与
+  终局正评排序(cand1 37+28=65 > cand2 32+23=55)**倒挂**——快评与验收
+  口径相关性连候选序都保不住，run9~13 选拔连翻车的总病根被终局协议
+  结构性关闭。（待办：smoke b 曾把 cand1 写入 BEST，起跑 run#14 前需
+  cp 10combat 备份复位。）
+- run#14 收官（2000 迭代+终局协议首战全胜）：冠军 **cand3（快评仅第3槽
+  comp=81）正评 vs script 50%（火10.9/躲弹68%）/ vs heuristic 32%
+  （火8.9）和=82 全场史最高**，首个高火力非捡漏冠军；快评榜首 cand1
+  (comp=82) 正评 18%/7% 被协议踢出局——旧口径必翻车，协议价值当场自证。
+  四分段：win 17→34 爬、火 7.6→2.1 尾塌、技能开张窗 13/40 尾段最密但
+  冠军窗仍 0 拾 0 发（p10=411、按下率 45.4%：意图浓趋近无）。
+  rl_policy_14champ.bak.npz 备份。run#15 观测侧最后一格：**道具编码
+  v2**（(在场,dx,dy,型)→(近因衰减,方位cos,方位sin,型)，方位角线性可读），
+  --obsv2 + obsv2 标记写入全部 npz 落盘点、eval/探针/init 自动认版本，
+  旧档零破坏；冠军 warm-start 1500 迭代在跑（rl_train15.out），终局
+  协议自动收官。当前能力账本：开火✓(10.9) 追踪✓(瞄占比爬+命中转化)
+  躲弹✓(68%) 技能△(守档 拾/发 开张、主档未合流)。
+  run#15 收官（v2 判决）：终局 cand2(comp=73 第2槽) 夺冠 **vs script
+  53%（单池史高）/ vs heur 27% 和=80**，险逊 run#14 的 82；三候选开火
+  0.2~3.5/千t 全线塌方（cand1 comp=76 正评 43%/13%、cand3 25%/18%，
+  快评-正评再倒挂由协议兜住），胜率改由 躲弹73~81%+捡漏 供给。技能
+  验收条**未过**：冠军探针 进圈带 0.2%（门槛>5%）、p10=365、拾1/发1
+  仅快评窗一现；且技能键按下率 45.4%→0.4% 异动——v2 换编码后 warm-start
+  旧权重对新 cos/sin 列误读，道具注意力被连带抹掉，**v2 属"被初始化
+  污染的单变量实验"，既没兑现漏斗也没被干净证伪**。结论：奖励/选拔/
+  观测三侧杠杆全部拉满，15 轮内技能趋近从未与高火力高胜率在主档稳定
+  共存——趋近-交战卡距冲突是策略几何问题。总排行定序：run14 cand3
+  和=82 火10.9（蒸馏首选，rl_policy_14champ.bak.npz）＞ run15 cand2
+  和=80 script 53%＞ run11 sk55 和=73（技能档代表）。纯 Python/文档
+  改动，引擎零触碰，自检基线 a447dd1e… 不变。
+  run#16 收官（fresh v2 终判）：清 CKPT+lr1e-3 原始配方去污染单测 v2，
+  火力全面恢复（正评 6.6~14.5/千t）反证 run15 塌火是暖启动初始化污染，
+  但胜率崩（冠军 cand3 30%/17% 和=47，从零 1500 迭代追不上暖启动血统）、
+  探针进圈带 0.0%（0/18027）拾0/发0——暖 v2 有胜无火、新 v2 有火无胜，
+  两边都不出趋近，**观测编码假设证伪，三侧杠杆（奖励/选拔/观测）全部
+  试毕**。终判：趋近-交战卡距是策略几何问题，纯 RL 16 轮学不会主动吃
+  道具。定版：Phase3 蒸馏对象=run14 冠军（和82 火10.9 obsv1），技能缺口
+  由 bot.asm 道具信标脚本层混合覆盖；best 已恢复 14champ（md5 e0048ff8…
+  与备份核对一致），16champ 另存 rl_policy_16champ.bak.npz 留 v2 标本。
+
+## 2026-10-24 会话48：Phase3 蒸馏落地——run14 冠军网络进 exe（NN 接管 slot0）+ 道具信标叠加层
+
+- 用户授权"进行下一步"执行 Phase3 蒸馏。产出四件套（详见 docs/RL_BOT.md
+  §Phase3）：① src/rlbot.asm 纯 x87 MLP 推理（90→128→128→36，tanh 4097 点
+  插值表、三角查 cosTBL/sinTBL、决策段 fldcw 截断取整）；② 权重烤入
+  inc/rlw.inc（tools/gen_rlbot_data.py 从 rl_policy_14champ.bak.npz 逐位
+  转 [out][in] hex 字面量，round-trip 自检）；③ 道具信标叠加层逐式复刻
+  rl_beacon_probe.beacon_bonus（三门/三带/9 组 mv×tn 偏置，只 mul/add/fsqrt）
+  补 16 轮 RL 判死的"趋近-交战几何冲突"技能缺口；④ 接线：bot.asm BotThink
+  分派 bt rlBotMask 自驱动、game.asm 四处 BOT_* 数值豁免（NN 槽吃玩家物理
+  =训练谱系待遇）、main.asm GUI `rlbot [rlbotdump]` 与训练管
+  `rlhost rlbot [rlbotdump]` 双入口。
+- **对拍验证链**（tools/）：rl_distill_check.py（664B 记录影子复算）
+  A/B/C=100%、max|Δraw|≈3e-5；rl_obs_pipe_check.py（管道内同 tick
+  asm-obs vs python build_obs）1200×90 列失配仅 0.0037%（pickup 生成
+  tick 时序+三角表 5e-4），act 一致 94.67%——**蒸馏数值层通过**。
+- **两大误判翻案**：①"冠军=右侧出生几何"不成立——PickRandomSpawns
+  (game.asm:1801) 出生点每局随公共流抽取，slot0/slot1 皆在训练分布内，
+  NN@slot0 接线维持原样；②"全倒车塌缩"非 bug——python 贪心同局也
+  1200/1200 倒车，这就是冠军风筝风格；GUI run2 整局 0 开火是该局
+  idle 对手不入射界，管道/后续实时局开火 82/197、443/1200 正常。
+- **扫出并修一颗生产雷**：main.asm start 的 rlhost 扫描 `mov ecx,7` 含
+  串尾 NUL=强制 rlhost 为最后一个参数词——管道加任何额外参数即静默落穿
+  GUI 消息循环（曾被连环误读为 NN 崩/挂：EOF、"13% CPU"实为 GUI 主循环、
+  113 条 trace 实为落穿后的真机人机局）。改 6 字符子串匹配；四参数分流
+  实测通过。此雷同样解释了"信标探针此前 EOF"——探针用的单参数 rlhost
+  本不受累，但调试期附加参数即触发，排查时间多耗于此。
+- GUI 早期退出（rlbot/bot/play2 均 8~14s rc=0）确认为交互桌面外部输入
+  经 matchOver"按键回菜单"→ MenuActivate 项6"退出"正常关闭路径，非回归。
+- build 零警告；基线 selftest md5 a447dd1ef888bc9b17ef1fa43ce345db ×6
+  逐字节稳定 + ST_FAILS=0（默认 rlBotMask=0 全门闭，旧行为位级不变）。
+
+## 2026-10-25 会话49：夜间自主优化——达标线实测未达（42%）、信标叠加层判顶、探针三雷清扫
+
+- 用户授权"跑完继续自己找事做到明早9点"。队列五件套执行记录（全部 tools/
+  层，**引擎文件零改动**，会话48 基线仍有效，无需重验）：
+- **① 反转圈专项**（新 tools/rl_dumb_nn.py 管道侧口径 + rl_dumb_hang.py
+  挂墙细看）：vs script/heuristic 各 2400t——**摇头 0、罚站段 0、白转窗 0**，
+  无呆行为；"挂墙"3 段全为假挂（m=倒车 且 12/12 帧在转、dir 88°→110°，
+  是倒顶转向绕墙正常脱壁）；倒车 100% 再证=冠军风筝风格非缺陷。
+- **② 达标线实测：未达**。贪心 vs 内置启发式 12 局 = **5/12=42%**（线=
+  ≥10/12）。与 run14 选拔档案"和=82（script 53+heur 27）"一致——复合分里
+  heur 池只占和的一半权重，冠军本就是"会打脚本、平庸打启发式"。
+- **③ 探针三连雷**（rl_beacon_probe.py run()，会话47E 埋下）：Ⅰ `while
+  cnt<per[j]` 无 `cnt+=1`=**每 env 无限开新局**——旧 off 探针跑 2h 不出
+  结果的直接原因（不是 tick 慢）；Ⅱ 胜负判定 `X if not (ep%2500) else
+  False` **写反**——常规局(not 非零=False)一律记负、只有超时局才比 sc，
+  修复前所有"回合胜"数字全废（修后 off 4/12=33%）；Ⅲ 我加的进度打印
+  引用循环后才定义的 tag → UnboundLocalError，已前置。三雷修复后 off/on
+  链与 B.run 全部畅通复跑。
+- **④ 信标叠加层判顶**：带内 627/627 tick bonus 全非零，但冠军 logits
+  top1-top2 margin 中位 0.44，km=1.2 |bonus|≤0.79 → **翻转率 0%**（exe
+  现烤值≈no-op，无害）；扫描 km3 翻转 20.9% 胜 42%（±1 局=噪声）、km6
+  距道具 p50 412→208px 但胜 38%、km24 翻转 100% 即毁策略；"末段压制"
+  变体（d<260 罚倒车远离，tools/rl_beacon_v2_try.py）零触发——风筝流
+  从不进 d<260，末段根本到不了。**定论：趋近-风筝几何冲突连运行时
+  叠加层也解不开，判顶收档；信标模块保留（未来换网络即可用）**。
+- **⑤ EOF 悬案降级为"观察"**：B.run 曾 4/4 崩在 vec.step 管道 EOF；
+  ③-Ⅰ/Ⅱ 修复+卸载 off 探针负载后 2/2 全绿，soak（新 tools/rl_soak_av.py）
+  20000t×16 局 0 崩。取证已焊进 rl_env.py：EOF 时 settle-poll 真退出码+
+  在途命令+收发字节计数；HKCU WER LocalDumps 开至 dumps/（type2 全量）。
+  现有证据（无 dump、无 WerFault、父死子即退）指向 RLH_Done 正常退路
+  =管道语义冲突而非 AV；若再复现，rc/last/wbytes+dump 直接钉死。
+- **⑥ run16 微调尝试（失败）**：冠军暖启动 --opp heuristic 单池 150 iters
+  → 开火 0.0/千t、6/36=17%、die=26:8——启发式几乎不攻击 ⇒ 无击杀信号 ⇒
+  网络塌回装死（run8 教训重演）。win≥25% 地板守住 BEST：冠军 npz md5
+  e0048ff8… 与 rlw.inc 均未污染，**exe 无需重烤**。副产品：再证
+  "对启发式要赢必须真打中人，训它等于训装死"。
+- **队列修正**：原"削强旋钮"（怕 bot 太强）撤销——实测强度不足，方向反转。
+- 下一步建议（待用户定夺）：A. 修冠军的对启发式开火，走"训练侧"=提高
+  heuristic 池陪练开火频率（rl_env 侧改不动 exe 启发式，需 game.asm
+  BotThink 陪练分支加'对移动目标开火'豁免开关）；B. 或接受 42% 档定版
+  （bot 定位=娱乐陪练而非竞技）。
+
+## 2026-10-25 会话50：botAggro 激进陪练开关重做——"惜弹=信号不足"假说被数据证伪
+
+- ① 引擎开关（用户定案 A）：`src/bot.asm` botAggro + `src/rlhost.asm` RESET flags
+  bit2 注入 + `tools/rl_env.py` reset(aggro=) + `tools/rl_train.py` --opp
+  heurA/mixA（Vec._aggro，初值与 reseed 都带）。首版语义"误差闸 4°→12°"
+  被仪表证伪（净闸内 tick 94.5% 本已 ≤4°，误差档无头寸），50b/c 重定义为：
+  开火闸=误差上限 6° + 视线闸三级抢救（预瞄直视→靶心 BotLos→`BotAggroCorr`
+  盲射走廊：自车沿 bAimA 36..180px 五点全空放行，回弹拐弯射法，靶后兜底墙
+  扫描对盲射不适用）；驾驶闸=`BT_AgBand` 贴身缠斗（后撤带 130→90px、中距
+  28/4 收油窗删除、全程顶进）。botAggro=0（GUI/selftest/旧池）全程位级
+  不变，基线 a447dd1e ×6 两轮复验（抢救分支、距离带改版各一次）。
+- ② 根因案（本课最大教训）：开关上线后四轮冒烟 OFF/ON 逐字节同——bisect
+  硬写 4 仍读 0——真凶是 **botAggro 初插位置落在 BotSt 镜像区内**：暂存区
+  以 OFFSET bTgtIdx 起 49 dword 整块 `rep movsd`（BotLoadState/BotStoreState
+  每 tick 装载/回存），插进 bErrDeg 之后=镜像最后一格，每 tick 被 bState
+  未初始化镜像值(0)回填清零。**规约：bot.asm 新增跨 tick 全局一律放镜像区
+  之外（bState 之后、bTgtIdx 之前）**；已在定义处注释焊死。
+- ③ 仪表：rlhost 分支（`src/main.asm` NoRlBdH 后）新增 "bottrace" 子串扫描
+  → 管道模式可落启发式 bot 逐 tick 决策 CSV；CSV 尾新增 `aggro` 列（开关
+  实值，永久保留）。新工具 `tools/rl_aggro_trace.py`（罚站/游走 × OFF/ON
+  四场景逐闸通过率+距靶轨迹：实测 los 闸拒 91% tick——卡点是接触不是误差）、
+  `tools/rl_kill_probe.py`（A/B 击杀探针；教训：漏 `vec.note()` 记分簿恒
+  初值、杀数全 0 假象）。
+- ④ 构建纪律：build 后必须核对 tankwar.exe mtime（本轮 MSYS 时间列误读曾
+  让取证对旧 exe 空转一轮）；本会话构建链本身无误（errorlevel 门齐全）。
+- ⑤ A/B 实测（champion NN 贪心，同协议）：opp 发数 1.2→2.0/千t(+64%) 但
+  opp 杀数 0.57→0.52-0.56/千t 不变、opp 自亡 0.53→0.78(+47%，盲射回弹
+  代价) ⇒ **"陪练惜弹=击杀信号不足"证伪**（单发命中 27% 已高，缺的是接触
+  下击杀意愿之外的东西，贴身带也补不动）。真收益在另一维：**NN 自己开火
+  7.4→10.7/千t(+45%)、局均 3546→2895t、32 局胜 34%→44%**（Δ≈1σ 方向性）
+  ——heurA 打破"对面互瞪冻结"均衡（run16 装死塌方机制）。达标线 12 局双
+  对手均 50%，昨日 42% 属 ±1 局噪声，线宽 ≈±8pp。
+- ⑥ 行动：run17 已起（--opp mixA=script/激进各半，暖启动冠军，300 iters,
+  lr 2e-4）；终判走 finals 协议（和=script%+heur%），达标才重烤 rlw.inc。
+- ⑦ run17 终判=失败+finals 漏洞修复：三候选双池正评 cand3 script33+heur27
+  =和60、cand2=50、cand1=57，**全部低于在位冠军和=82** ⇒ mixA 微调不提反
+  降，不重烤 rlw.inc（exe 侧零影响）。过程事故：finals 收官原先**无条件**
+  用候选内和最高者覆写 BEST（--best0 只防中途快评噪声），run17 把
+  rl_policy_best.npz 刷成和=60 档——当场发现：cand3 存档
+  rl_policy_17cand3.npz、BEST 用 14champ 备份还原（md5 e0048ff8），复验
+  32 局逐指标复现冠军（11/32=34% 火7.4/千t 杀0.17）；`rl_train.py` finals
+  加护栏：覆写前按同协议复评"现 BEST"和，新不高于旧即保留。A 案全链至此
+  收档：开关与仪表留用（默认 0 位级不变），强度提升需另寻训练目标函数
+  （接触率/击杀质量在启发式侧已到顶，加弹不如改奖励结构）。
+
+
+## 2026-10-25 会话51：单位案自纠+开火地板+run19 加宽预铺（run18 复盘）
+- ① 新工具 `tools/rl_archive_finals.py`（8 档历史网络按 finals 同协议今日
+  重烤）。**首版翻车自纠**：把 `eval_greedy` 首值（胜"数"）当百分比打印，
+  14champ 打成 "script=30 heur=19 和=49"，我据此编出"和=82 不可复现、
+  环境漂移、冠军分布外"的整套假说——当日复核 100*30/60=50%、100*19/60≈32%
+  ⇒ **和=82 逐字复现，引擎从未漂移**。修正单位后重烤全表（今日实测）：
+  14champ 82(火10.9/8.9)、15champ 80(火1.9/0.8!)、16champ 47、turtle58 55、
+  skbest 37、cand1-3 槽位现为 run18 网络（槽文件被后续 run 覆盖的教训兑现，
+  长期存档自此一律独立命名：rl_policy_18champ/18cand1/2.npz）。
+- ② run18（800it 从零 mix，`--best0 1e9` 把 BEST 写盘点收缩到 finals）：
+  三候选双池正评 cand1 和62/cand3 和62/cand2 和42，**均低于冠军 82** ⇒
+  从零重训不提强度。但 finals 期间我加的旧 BEST 护栏自身犯了同款单位 bug
+  （old=rs0+rh0 计数尺 49 vs 候选百分比尺 62）→ 误判"62>49 可覆写"，
+  BEST 一度被 cand3 篡位。当场识破：护栏改 `100*w/n` 同尺复评，
+  BEST 从 14champ.bak 复位（md5 e0048ff8）；rlw.inc/exe 全程未动，蒸馏
+  冠军无损。
+- ③ 开火地板（用户拍板"加地板再选"）：cand1/cand3 和虽 62 但火 0.2~0.7/千t
+  （旧冠 1/20 以下），纯胜率选拔会把违背"四能力"的**神龟**选上朝——run17
+  日志里 cand3 和=60 的"惜弹"苗头当时未当回事，run18 坐实。finals 加
+  `fire_floor`（默认 4.0/千t≈冠军之半，CLI `--fire-floor`）：候选须过闸
+  方可按和排序，全不过闸="神龟不登基"直接保留在位 BEST。本批三候选全数
+  被拒（含地板线上 3.36 的 cand2）。历史佐证值得警惕：15champ 火 1.9/0.8
+  也拿过和=80——高胜率龟战并非 run18 首创，若以四能力为准它同样该拒。
+- ④ run19 加宽预铺（只改源不构建→验证后置）：`rl_train.py --width`
+  （仅 init_nn 用全局 H，forward/梯度/评估/探针本就从 npz 形状反推，零新
+  标记）；`gen_rlbot_data.py` 矩阵维度由 l1w.shape 推导并落新文件
+  `inc/rlw_cfg.inc`（RL_HW equ N）；`rlbot.asm` 头部 include cfg +
+  IFNDEF 128 兜底，rlH1/rlH2 `dd RL_HW dup(?)`，RlForward 六处 128→RL_HW。
+  H=128 时产物位级等价实证：build 零警告 + 自检 `ST_FAILS=0` +
+  selftest.log md5 a447dd1e ×6 稳定。
+- ⑤ 现状与下一手：在位冠军=14champ（和82，已复位），exe 蒸馏一致未受扰。
+  提强度候选路线：(a) run19=加宽(256)从零——链路已铺好只差起跑；
+  (b) 奖励结构抬交战/击杀转化（HIT_P/ACC_SHOT/win 配比）再训——注意 run13
+  "杀穿但输回合"套利先例，过地板+和双闸验收。从零 mix 复训已被 run18 证伪
+  （同配方只是重掷色子且色子更差），(b) 或 (a)+(b) 优于再刷 (a) 单变量。
+- ⑥ run19 起跑（当日拍板"加宽+交战奖励合跑"）：`--iters 800 --width 256
+  --opp mix --best0 1e9` + HIT_P/ACC_SHOT 改 env 常量默认 1.1/0.8（回滚
+  对照 RL_HITP=0.8 RL_ACCSHOT=0.5）。冒烟 3it 已过（顺带修掉模块级
+  `global H` SyntaxError）；256 宽 sps≈4,000 比旧观感便宜一半时间。
+  验收三重：开火地板→同尺和>82（现场复评）→才重烤 rlw.inc（cfg 会落
+  RL_HW equ 256，基线须再 ×6）。日志 rl_train_19w256.log。
+- ⑦ run19 终判：容量证实、均衡未破。cand2 和=92（script58+heur33，双池
+  全面超冠军）但火 0.1/千t，cand3 和=78 火 0.0，cand1 和=45 火 2.9——
+  地板 4.0 三连拒（"[finals] 全部候选不过开火地板…神龟不登基"），BEST
+  全程未写（复位后 md5 e0048ff8 复验）。HIT_P/ACC_SHOT 上浮对开火意愿
+  零拉动⇒开火在当前奖励地形里是净亏动作（阵亡-5 的恐惧压过 +3.5/1.1 的
+  击杀期望；mix 池对面 heur 命中率 0.4~0.6/千t 足以致命）。存档
+  19turtle92/19cand1/19cand3 独立命名。结论：**下一杠杆不在容量/学习率，
+  在反龟均衡的目标函数**——候选手段：阵亡成本下调或"久不试射"持续罚
+  （温和、开火即停罚）二选一或并用；验收仍是地板→同尺和>82→重烤。
+- ⑧ run20 起跑（反龟均衡专刀）：reward() 新增**静默罚** IDLE_G=250/
+  IDLE_P=0.006（ego 存活且距上一发自弹>250tick 则每 tick −0.006，开火沿
+  即停罚；自弹判据=弹池同槽 inactive→active & owner==0）。宽限换算恰是
+  4 发/千t=地板同尺。冒烟 3it 过（R 均值下探=罚在随机策略期已生效）。
+  配方=run19 原样（256 宽 mix 800it lr1e-3 best0 1e9），唯一变量静默罚。
+  若本轮仍是"过地板者不过和 82 / 过和者不过地板"双杀，则说明该引擎
+  奖励地形下交战与胜率天然互斥，届时回到 14champ 长期在位+改观测/改
+  蒸馏结构（信标之外给 NN 一个"敌弹入带必还击"的动作先验）另案论证。
+- ⑨ run20 终判：静默罚**机制有效但剂量不足**——三候选和 68/63/73 较
+  run19(92/78/45) 明显掉档（龟策被正确定价贬值），训练中段还冒出
+  火 4.3/千t 的窗口（run18/19 全程 0~3 未见），但该类窗口胜率不足以进
+  comp 前三，终选仍 火计 0.0 三连拒，BEST 未写。判读：在 win+8/kill+3.5/
+  die-5 的地形里，0.006/tick 的静默成本仍低于"交战死亡风险"的期望，
+  从零 PPO 探索不到"开火→命中→击杀→胜率"的完整链条。
+- ⑩ BC 旧案复核（放弃克隆路线）：rl_bc 补齐 --width（顺带修掉
+  main 内 `import os.path` 致 os 局部化的陈年 UnboundLocalError），
+  256 宽 12 万帧克隆 val_acc 64.7%，但 finals 口径实测 **火 0.3/千t
+  躲 23% 和=67**——argmax 吃掉多数类+采集视角存疑（obs ego=1 vs 标签
+  inputTable[0]），47C"拜启发式为师"路线至今没产出过可用起点，封存。
+- ⑪ run21 起跑（暖启动精调，最保守一版）：init=在位冠军（火 10/千t
+  天然在 250tick 免罚窗内——静默罚对它零干扰，反成"别退化回龟"的保险
+  栏），lr 1e-4（run17 暖启动之败归因于高 lr 摧毁策略，本次砍到 1/10），
+  池回 mix（与冠军出身同源，不再换池），300it。三重验收不变：地板→
+  同尺和>现场复评旧 BEST→才覆写/才谈重烤。若本臂仍双杀，结论收束：
+  14champ 即当前引擎+目标函数下的帕累托点，提强度需改**观测或动作
+  结构**（非奖励标量），另案。
+- ⑫ run21 终判+四连跑收束：**双杀预言成真**。cand2 和=77 火 0.6 /
+  cand3 和=68 火 1.1 被地板拒；cand1 和=60 火 11.1（史上首个过地板的
+  候选）进入同尺和比对后被护栏正确拒绝（60<82）——护栏+地板第一次
+  全链条按设计运转，BEST 全程未写（md5 e0048ff8 复验）。暖启动 lr 1e-4
+  300it 也挽不回（每个训练窗都劣于冠军本尊）⇒ run18~21 四连 11 个候选
+  （62/62/42 · 45/92/78 · 68/63/73 · 77/68/60）**无一同时过双闸**，
+  结论成立：14champ(和=82，火 8.9~10.9) 是 obsv1 观测×36 通道动作×
+  当前标量奖励地形的**帕累托点**，提强度的标量杠杆已穷尽。后续若再攻
+  强度需动结构（动作解耦/观测增列），属另行立项的大手术；当前工程
+  重心回归联机主线（森林冰火人技术验证）。存档 21turtle77/21shooter60。
+- ⑬ 联机回归覆盖面加密（当日拍板，纯 tools/ 零引擎改动）：先复跑基线
+  net_loopback_test.py 与 relay_loopback_test.py 双双 PASS（协议 v1 经受住
+  15 个会话的 bot 侧折腾）。新建 tools/net_loopback_test2.py 补基线四洞：
+  A 共享流一致（rngMatch+pick+雷池 m0↔m1 交叉）、B 反向驱动（驱动 guest
+  验 host 镜像收敛，双向通路都要活）、C 输入隔离 B3（host 窗 P2↑ 零响应
+  +连按 R 不重开：tick 不回卷 G 行不重发）、D 弹数交叉映射（host.b0 与
+  guest.b1 同现，比基线"两端 b1>=1"更区分归属）+D2 事件后复采、E 掉线
+  netLost。调试四轮定型（全部是套件判据/环境问题，未揪出真失步——本身
+  即健康信号）：①rngMatch"采样序列相等"判据过严——两端 netTick 自由跑格
+  （实测差 ~150 tick），公共流每事件耗一发、落地错峰，3.3Hz 采样漏中间值
+  必假报（run#5 实测 host=[2845,554,200] guest=[2845,462] 恰为同链
+  2845→357→554→462→200）；改**链式判据**：沿 RngNextMatch(xor13/shr17/
+  shl5) 前推建链，要求两侧全采样值同链且链序严格递增，真发散（脱链/倒退）
+  检出力反而更强；②出生槽全凭种子，run#3 两车垂直仅隔 37px、W 正前顶死
+  对方车体被误判"驾驶死"→B 场景改 W/S/D+W/A+S 多向试驱任一挪动即通过，
+  失败时附带"焦点误投到 host"诊断；③loopback 发现握手偶发整对超时自退
+  （guest 连 dump 都没建，同机 LSP 广播怪癖的陈年复发面）→起跑加一次整对
+  重启重试；④EnumWindows 偶发枚举不到在活窗口（疑重绘期标题瞬读空）→
+  pid_hwnd 4 次重试+全量同名窗口诊断。清场纪律：只按精确 PID 杀
+  （tasklist 枚举→逐个 taskkill /PID，含被 auto 模式拒 /IM 后的改写）。
+  终态：判据定型后 run7/run8 两连全绿（六场景全过，静置与事件窗链判据
+  均同链同跨度），此前 5 轮红全部归因上四条套件自身问题。md5 基线
+  a447dd1e 无涉（未动 src/）。
+- ⑭ run22 躲弹专项（用户判"躲子弹训练非常差"，拍板走 A 奖励/选拔侧）：
+  诊断=躲弹率在旧口径下被两重失真——①度量：判据"敌弹贴身<40px 消亡未中"
+  把打偏流弹也算躲（turtle58 纯逃跑 76% 反超冠军 68%）；②均衡：受击即时
+  零成本（3HP 可换，死才 −5），躲的收益 ±0.1/tick 是零头 ⇒ 能开火的候选
+  交战躲仅 45%（run21 cand1），"换弹"是理性均衡不是训练失败。动刀四处
+  （全在 tools/rl_train.py，零引擎改动）：①受击计价 HIT_M=1.0/HP（RL_HITM
+  可回滚，致死仍额外 −5，全丢 3HP=−8+判负）；②塑形 DODGE_K 0.6→1.2、
+  CLIP 0.10→0.15（env 可调），AIM_RATE 0.05→0.08 对冲（run6"塑形压锁瞄"
+  教训）；③新陪练池 --opp gun=死区3°/视距500px 脚本+heurA 交替（弹流
+  密度翻倍：主躲遭遇 67 vs heur 池 20，躲的学分信号才有密度）；④新增
+  "主躲"记账（弹道在威胁窗内指向 ego 且贴身<40px 才算遭遇）——但四档
+  存档策略实测**主躲率仍无区分力**（turtle77/92 贴身主躲 81~89% 反超
+  shooter 76%，逃跑天然少挨贴脸弹），故闸门不用率、改用**受击暴露**：
+  finals 第三闸 dodge_floor=候选双池 中弹/千t 上限（0=关；本次设 0.60，
+  冠军同尺≈0.56，木桩档 0.73 被拦）。主躲保留为能力卡描述读数。暖启动
+  init=14champ lr1e-4 300it best0 1e9，三重验收不变：火≥4.0 → 暴露≤0.60
+  → 同尺和>现场复评旧 BEST 才覆写。冒烟 3it 过，冠军 md5 e0048ff8 复验
+  未污染。日志 rl_train_22dodge.log。若交战躲真被定价抬起来（候选暴露
+  <0.5 且和不掉），下步才谈 B 案观测增列 CPA 特征（动 asm+重蒸，另行
+  立项）；仍双杀则坐实 90 维裸 dx/dy/vx/vy 是躲弹的表征天花板。
+- ⑮ run22 终判+B 案预铺（会话51 续）：run22 四把手术刀终判——过火闸候选
+  头一回把受击暴露压到 0.57/0.56（同档 shooter60 旧尺 0.73）⇒ 受击计价
+  实证有效；但双候选和=62/67 < 现场复评旧 BEST 82 被护栏正确拦下，
+  turtle87 被暴露闸拦下（神龟不登基）⇒ 帕累托权衡仍在，坐实 90 维裸
+  dx/dy/vx/vy 是躲弹表征天花板，用户拍板 B 案预铺。Python 侧 OBS_V3
+  完成：观测尾追加 12 维（6 弹槽×(latN,τN)，ego 静止参照直线弹预测），
+  前 90 维偏移一格不动（探针/工具全兼容），npz 带 obsv3 标记自动对齐，
+  90 维旧档补零暖启动（新特征行从 0 学起，起点=冠军本尊，冒烟验证）。
+  run23 两首修教训：①eval_greedy 收内存权重时按"无标记"无条件复位
+  OBS=90（train init 时已 pop 标记），50it 快评即炸 matmul——改为按
+  l1w 列宽对齐（列宽是比标记更硬的证据）；②τN 量纲案：v 是 16.16
+  定点，到 CPA 拍数须 t*=dot·65536/s2，原式 dot/s2 恒≈0 ⇒ τN 塌成
+  approaching 旗标全窗无梯度；修正后 t*(100px)=37.0 ticks 合物理期望。
+  asm 镜像同步完成（src/rlbot.asm）：RL_OBSCPA（IFNDEF 0）+RL_OBSN=
+  90+12*RL_OBSCPA；rlObs 缓冲/清零、RlDot 计数、L1 行距、trace 记录
+  尺寸全走 RL_OBSN 参数化；尾 12 列在弹槽循环内 FPU 计算暂存 rlB6lat/
+  rlB6tau（raw dot 须在首次 RlSetF4 前抢存 rlV3d——RlSetF4 毁 eax；
+  背离/空槽双列置零、τN 负值回 0、s2=0 经 dot=0 蕴含走零支，与 python
+  双门逐条件等价），RlBuildObs 末尾按槽序统一写入 90..101；默认
+  RL_OBSCPA=0 时所有 .text/.data 增量被 IF 排除（目标=构建逐位不变）；
+  gen_rlbot_data/rl_distill_check 的 obsv3 对齐与 RL_OBSCPA=1 蒸馏随
+  run23 验收才铺开（无实证赢家不重蒸契约不变）。基线核验闭环：链接曾被
+  8 个僵死 tankwar 实例占用（温和 taskkill 报"须强制"、tasklist /V 查询
+  挂死=消息泵已死，判定为测试遗魂非用户对局），精确 PID /F 清理后重建
+  零警告，ST_FAILS=0 ×6，selftest.log md5 a447dd1e ×6 逐位不变——默认
+  RL_OBSCPA=0 构建与旧版行为全等实证成立。run23 终判（300it 跑完，exit
+  0）：三候选全被火闸拦下（火计 0.0/0.3/0.5 <4.0），但暴露 0.44/0.44/
+  0.50 首破冠军同尺 0.56、cand3 和=92>82 仍被"神龟不登基"正确拒绝
+  ⇒ CPA 特征实证把躲弹成本压低（表征手术有效），同时把"逃跑"推成严格
+  占优均衡（补零暖启动自冠军行为，~150it 内退化为静默龟，胜全靠捡漏
+  24~27 而归因击杀≈0）——瓶颈从"表征不够"移到了"开火激励守不住"。
+  无赢家⇒不重蒸不换 exe，镜像保持默认关，冠军 md5 e0048ff8 复验在位。
+  行尾雪崩案（自查自省）：批量替换把
+  rl_train.py rb→decode→文本模式回写，\n 重编码成 \r\n 与既有 CRLF
+  叠成 \r\r\n，universal decode 每行多插一空行，7 处反斜杠续行被
+  SyntaxError 咬死（报错行 884 还是误导位）——bytes 级 \r\r\n→\r\n
+  修复，V1 冠军快评逐字节复现旧读数证明语义无损；本仓源码自此禁
+  文本模式往返回写。归档：rl_policy_22eng57/22turtle87/22eng67.npz；
+  run23 配方=14champ 暖启动 --obsv3 --opp gun lr1e-4 300it best0 1e9
+  fire-floor 4.0 dodge-floor 0.6 finals 自动，日志 rl_train_23cpa.log。
+- ⑯ run24 激励加固（用户拍板 A 案续）：定价三把（HIT_P 1.1→1.6 /
+  ACC_SHOT 0.8→1.0 / IDLE_P 0.006→0.02，全 env 化零代码改动；池不动——
+  选项文案"改 gun+heurA 交替"系口误，gun 池本就这么配）V3 重跑 300it。
+  终判=惜败非塌方：候选火计 2.0/3.1/3.5（run23 仅 0.0~0.5）暴露 0.46~
+  0.58 全过闸，cand1 差 0.5 火不过 4.0 地板、cand3 和=82 打平冠军未过
+  "严格大于"护栏；it50 快评仍见火 14.4 莽夫形态随训练回落，说明杠杆
+  方向单调有效、缺的是量级非机制。归档 cand1/cand3 为
+  rl_policy_24gun35/24gun20.npz（均 102 列 obsv3=1）。run25=同配方第二
+  步加价（HITP 2.2 / ACCSHOT 1.3 / IDLEP 0.04）已在跑（
+  rl_train_25fire2.log）；判读预案：若仍不过火闸，定价杠杆宣告穷尽，
+  转 B 反射叠加层（logits 层 CPA 躲避先验，仿 rlBeacon，躲火不再抢
+  MLP 容量，asm 可镜像——bot.asm AGGRO 闸有先例）。
+- ⑰ run25 终判=定价穷尽实锤+均衡双峰化：加价一档（HITP2.2/ACCSHOT1.3/
+  IDLEP0.04）反而更糟——cand1 comp=125 纯龟（火0.0/暴露0.38/和95 双项
+  历史最优），cand2 莽夫档火3.4 但暴露0.89/和47；价格拉不出"又打又躲"
+  的中间态，只会挑角落 ⇒ 坐实躲与火在抢同一张 MLP 容量，B 案由"特征
+  增列"升格为"反射叠加"。用户拍板 B0=免训练探针先行（零风险定生死）：
+  tools/rl_reflex_probe.py 仿 rl_beacon_probe 管道——14champ 权重不动，
+  每 tick logits 加 CPA 威胁先验（迎面 dot3>0 ∧ t*<tau=48 ∧ |lat|<
+  line=26px，偏置=u·(kr·直行横向分量+kt·转向横向分量)，符号统一取
+  "增大|lat|方向"；自弹不过滤=回弹同躲；算术只用 mul/add/sqrt+dir 表，
+  asm 镜像可逐式照抄），双池正评读 火/暴露/和 对照裸冠军（基准：火
+  8~10/暴露0.56/和82）。判据：火≥4 ∧ 暴露<0.56 ∧ 和>82 三样全中才谈
+  训练侧融合与 asm 镜像；任一不中则 B 训练改造同判死刑，RL 线收束转
+  C（联机收尾）。
+- ⑱ B0 探针终判=FAIL（叠加层"活而反噬"，非死代码）：裸冠军短尺基线
+  脚本池 47%/暴露0.48/火10.7，heur 池 37%/暴露0.68/火7.0（双池合尺与
+  finals 在位记录互证无漂移）。密门四档（tau≤32/line≤26）与裸冠军逐
+  tick 几乎全同=偏置从未咬动 argmax；默认门（kr1.2/tau48）触发 3.1%
+  翻转 0.23% 读数全在噪声带；正对照狂力档（kr6/kt4/line40/tau60）触发
+  5.4% 翻转 2.78%——行为大改但暴露 0.48→0.89、胜 50→25、火 10.7→7.9
+  ⇒ 每次反射咬合都是误判。病根可解释：CPA 假设 ego 静止+弹直线，而
+  冠军学成的躲法已内建墙体/雷池/瞄线代价（主躲 70%），几何先验把它
+  从最优点拽开。三重意义收束：感知层（run23 特征有效但诱发逃跑占优）
+  +激励层（run24/25 定价穷尽均衡双峰）+接口层（B0 叠加反噬）全部实证
+  ⇒ 14champ 的 0.48~0.56 暴露即现实最优天花板，"躲弹训练差"的用户
+  直观完整归因=旧度量虚高（打偏流弹计躲）+换弹理性均衡，非训练事故。
+  四能力终态：开火✓追踪✓技能✓躲弹✓(贴身 70%/暴露 0.48，达引擎博弈
+  上界附近)。RL 线归档待拍板，转 C 联机收尾（双机 LAN/ZeroTier/M3.5）。
+- ⑲ 用户拍板 C=RL 线正式收束（会话51 尾）：docs/RL_BOT.md 增"躲弹专项
+  终章与 RL 线收束"章——度量/感知/激励/接口四层穷尽的完整叙事与终判
+  （四能力 14champ 全绿；在位冠军不更动，exe/rlw.inc 全程未动，md5
+  e0048ff8/基线 a447dd1e 终验在位；--obsv3 全链与 RL_OBSCPA 预铺保留
+  待未来重蒸一并落地）。下一步=会话36待办三件：双机 LAN 手测、ZeroTier
+  跨网终验、M3.5 STUN，皆森林冰火人终局的直接里程碑。B0 探针工具与
+  全部中间归档（22/24 系 npz、四份训练日志、reflex 探针带 --stat 计数）
+  留仓可复现。
+- ⑳ 会话51 收尾双交付：一、docs/ONLINE_PLAY.md 第六节联测清单（局域网
+  双机 9 项表+跨网 ZeroTier 终验步骤+记录方式，把手测口径固化成可打勾
+  清单）。二、**STUN 步A 全链落地**（M3.5 余账：中继早已会话37 交付，
+  欠的是观测点反射）：'S' NET_STUN 18B（game.inc `STRUCT 1` pack(1)——
+  /Zp8 下 room@10 会插 pad 变 20B 静默废掉 len>=18 门，先探针实测
+  SIZEOF=18 再落库）；relay_server 槽位+cookie 常新，配对态每次 'J' ack
+  向双方各发一发（互报观测源 addr:port=STUN 映射回执），收包侧 'S' 不
+  转发；客户端 NetHandleJP 三道闸（relayMode ∧ room==relayRoom ∧
+  cookie==本机 lobbySeed）采信后**仅存储** stunIp（裸网络序可直进
+  sockaddr）/stunPort（.386 无 bswap，xchg al,ah 换算，首编译即报错
+  教训）/stunSeen，peerAddr 钉死服务器行为零变化=旧端忽略 'S' 向后兼容；
+  可见化两处：大厅 y282 小字 `STUN ip:port`（UiStunStr 复用 IpToStr 返回
+  长度定位冒号）+netdump B/T 行尾三列——**证据列必须挂 T 不挂 B**：首跑
+  FAIL 实测后启实例大厅不足 16 tick 即开局，B 行整局 0 发。验收：新组
+  T54 七断言（采信/裸IP/端口换算/错房/错cookie/短包/非中继全拒），54组
+  124断言 ST_FAILS=0，前缀 diff 证旧 123 断言行逐字节不变，新基线
+  9515866948bb0c23bb8478c030ba02a3 ×7 稳定；relay_loopback_test 新增 1b
+  交叉对账（本端 stunPort==对端 H 行自报监听口、环回裸dw=16777343）
+  全链 PASS 且原 G/镜像/开火/RTT/netLost 五档零回归；build+build_server
+  双零警告。文档：PROTOCOL.md 升 v1.1+STUN（包表/'S' 节/服务器规则/
+  dump 22~24 列），ONLINE_PLAY 方案C 观测点双用法（NAT 自查+抄地址试
+  手输直连）、第四节状态改"步A 已实现"、联测清单补第 5 条中继重跑项。
+  **步B**（自动直连升级：对观测点探测+双向验证→改道、失败回落中继）
+  与双机 LAN/ZeroTier 手测同为下一步。

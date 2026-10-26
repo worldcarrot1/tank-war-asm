@@ -428,6 +428,68 @@ T46M_PARSE_IP(expect7)=7
 T46N_ROLE_SPAWN_POOL(expect3)=3
  want 3
  OK
+MARK=356
+
+T47A_PARSE_SPEC(expect9)=9
+ want 9
+ OK
+T47B_RELAY_FLAGS(expect3)=3
+ want 3
+ OK
+MARK=357
+
+T48C_BOT_LIVES(expect3)=3
+ want 3
+ OK
+T48A_BOT_AIM_DIR(expect5)=5
+ want 5
+ OK
+T48B_BOT_LOS(expect3)=3
+ want 3
+ OK
+MARK=358
+
+T48D_MOVE_BOT6_PLAYER5(expect2)=2
+ want 2
+ OK
+T48E_BOT_KILLS_TARGET(expect2)=2
+ want 2
+ OK
+MARK=359
+
+T49A_TWO_BOTS_ISOLATE(expect4)=4
+ want 4
+ OK
+MARK=360
+
+T49B_BFS_ROUTE_OUT(expect2)=2
+ want 2
+ OK
+MARK=361
+
+T50_MIRROR_EXTRAP(expect10)=10
+ want 10
+ OK
+MARK=362
+
+T51_ACHIEVEMENTS(expect30)=30
+ want 30
+ OK
+MARK=363
+
+T52_BOT_SMART(expect3)=3
+ want 3
+ OK
+MARK=364
+
+T53_BOT_DODGE_UTIL(expect2)=2
+ want 2
+ OK
+MARK=365
+
+T54_STUN_REFLECT(expect7)=7
+ want 7
+ OK
 MARK=342
 
 ST_FAILS=0

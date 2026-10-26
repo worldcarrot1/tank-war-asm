@@ -1,0 +1,7 @@
+LIBRARY "tankwar_rl"
+EXPORTS
+  RL_Reset  @1
+  RL_SetAct @2
+  RL_Tick   @3
+  RL_Ptrs   @4
+  RL_Meta   @5
